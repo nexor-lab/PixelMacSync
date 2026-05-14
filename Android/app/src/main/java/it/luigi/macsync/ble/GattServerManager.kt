@@ -24,13 +24,21 @@ class GattServerManager(private val context: Context) {
     // Usiamo lo STESSO UUID del servizio usato finora
     private val SERVICE_UUID = UUID.fromString("E20A39F4-73F5-4BC4-A12F-17D1AD07A961")
 
-    // Creiamo un UUID nuovo per la Caratteristica (il canale dove passeranno gli appunti)
-    // Ho cambiato solo la prima parte per comodità
+    // Canale Appunti (Scrittura/Lettura)
     private val CLIPBOARD_CHARACTERISTIC_UUID = UUID.fromString("11111111-73F5-4BC4-A12F-17D1AD07A961")
+
+    // Canale Telemetria (Lettura/Notifica)
+    private val TELEMETRY_UUID = UUID.fromString("33333333-73F5-4BC4-A12F-17D1AD07A961")
 
     // Variabile reattiva per far aggiornare la UI di Compose
     private val _connectionState = MutableStateFlow("In attesa di connessione...")
     val connectionState: StateFlow<String> = _connectionState
+
+    // Funzione di supporto per leggere la batteria in tempo reale dal sistema Android
+    private fun getBatteryLevel(): Int {
+        val batteryManager = context.getSystemService(Context.BATTERY_SERVICE) as android.os.BatteryManager
+        return batteryManager.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY)
+    }
 
     // Questo è il "centralino" che risponde quando il Mac fa qualcosa
     private val gattServerCallback = object : BluetoothGattServerCallback() {
@@ -48,7 +56,25 @@ class GattServerManager(private val context: Context) {
             }
         }
 
-        // 2. Il Mac prova a scriverci dentro un dato (es. testo copiato)
+        // 2. Il Mac ci chiede di LEGGERE un dato (es. Telemetria)
+        override fun onCharacteristicReadRequest(
+            device: BluetoothDevice, requestId: Int, offset: Int,
+            characteristic: BluetoothGattCharacteristic
+        ) {
+            super.onCharacteristicReadRequest(device, requestId, offset, characteristic)
+
+            // Se il Mac sta chiedendo il canale della Telemetria...
+            if (characteristic.uuid == TELEMETRY_UUID) {
+                val batteryLevel = getBatteryLevel()
+                val data = batteryLevel.toString().toByteArray()
+
+                // Rispondiamo al Mac con il valore
+                gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, data)
+                Log.d("MacSync", "Inviato livello batteria al Mac: $batteryLevel%")
+            }
+        }
+
+        // 3. Il Mac prova a SCRIVERCI dentro un dato (es. testo copiato)
         override fun onCharacteristicWriteRequest(
             device: BluetoothDevice, requestId: Int, characteristic: BluetoothGattCharacteristic,
             preparedWrite: Boolean, responseNeeded: Boolean, offset: Int, value: ByteArray
@@ -77,16 +103,26 @@ class GattServerManager(private val context: Context) {
     private fun setupService() {
         val service = BluetoothGattService(SERVICE_UUID, BluetoothGattService.SERVICE_TYPE_PRIMARY)
 
-        // Creiamo la caratteristica che permette sia la Lettura che la Scrittura
+        // 1. Configurazione Caratteristica Appunti
         val clipboardCharacteristic = BluetoothGattCharacteristic(
             CLIPBOARD_CHARACTERISTIC_UUID,
             BluetoothGattCharacteristic.PROPERTY_READ or BluetoothGattCharacteristic.PROPERTY_WRITE,
             BluetoothGattCharacteristic.PERMISSION_READ or BluetoothGattCharacteristic.PERMISSION_WRITE
         )
 
+        // 2. Configurazione Caratteristica Telemetria
+        val telemetryCharacteristic = BluetoothGattCharacteristic(
+            TELEMETRY_UUID,
+            BluetoothGattCharacteristic.PROPERTY_READ or BluetoothGattCharacteristic.PROPERTY_NOTIFY,
+            BluetoothGattCharacteristic.PERMISSION_READ
+        )
+
+        // Aggiungiamo entrambe al servizio
         service.addCharacteristic(clipboardCharacteristic)
+        service.addCharacteristic(telemetryCharacteristic)
+
         gattServer?.addService(service)
-        Log.d("MacSync", "Servizio e Caratteristica configurati nel server.")
+        Log.d("MacSync", "Servizio e Caratteristiche configurati nel server.")
     }
 
     fun stopServer() {

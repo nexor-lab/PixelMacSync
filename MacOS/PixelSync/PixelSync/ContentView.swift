@@ -31,6 +31,22 @@ struct ContentView: View {
                 ProgressView()
                     .padding(.top, 10)
             } else if bleManager.connectionStatus.contains("Connesso") {
+                // Widget Telemetria
+                HStack {
+                    Image(systemName: "battery.100") // Qui in futuro potremo mappare l'icona in base alla %
+                        .foregroundStyle(.green)
+                        .font(.title2)
+                    
+                    Text("Batteria Pixel: ")
+                        .fontWeight(.semibold)
+                    
+                    Text(bleManager.batteryLevel)
+                        .monospacedDigit()
+                }
+                .padding()
+                .background(Color.primary.opacity(0.05))
+                .cornerRadius(12)
+                .padding(.top, 20)
                 Image(systemName: "checkmark.circle.fill")
                     .foregroundColor(.green)
                     .font(.title)
