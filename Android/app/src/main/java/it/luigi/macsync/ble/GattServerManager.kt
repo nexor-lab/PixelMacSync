@@ -4,12 +4,17 @@ import android.annotation.SuppressLint
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCharacteristic
+import android.bluetooth.BluetoothGattDescriptor // FIX: Aggiunta l'importazione mancante per il Descrittore
 import android.bluetooth.BluetoothGattServer
 import android.bluetooth.BluetoothGattServerCallback
 import android.bluetooth.BluetoothGattService
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.os.BatteryManager
 import android.util.Log
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -21,71 +26,84 @@ class GattServerManager(private val context: Context) {
     private val bluetoothManager: BluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
     private var gattServer: BluetoothGattServer? = null
 
-    // Usiamo lo STESSO UUID del servizio usato finora
+    // Salviamo il riferimento al Mac connesso e alla caratteristica
+    private var connectedMac: BluetoothDevice? = null
+    private var telemetryCharacteristic: BluetoothGattCharacteristic? = null
+
     private val SERVICE_UUID = UUID.fromString("E20A39F4-73F5-4BC4-A12F-17D1AD07A961")
-
-    // Canale Appunti (Scrittura/Lettura)
-    private val CLIPBOARD_CHARACTERISTIC_UUID = UUID.fromString("11111111-73F5-4BC4-A12F-17D1AD07A961")
-
-    // Canale Telemetria (Lettura/Notifica)
     private val TELEMETRY_UUID = UUID.fromString("33333333-73F5-4BC4-A12F-17D1AD07A961")
+    // Descrittore standard BLE per abilitare le Notifiche (CCCD)
+    private val CCC_DESCRIPTOR_UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
 
-    // Variabile reattiva per far aggiornare la UI di Compose
     private val _connectionState = MutableStateFlow("In attesa di connessione...")
     val connectionState: StateFlow<String> = _connectionState
 
-    // Funzione di supporto per leggere la batteria in tempo reale dal sistema Android
-    private fun getBatteryLevel(): Int {
-        val batteryManager = context.getSystemService(Context.BATTERY_SERVICE) as android.os.BatteryManager
-        return batteryManager.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY)
+    // 1. NOVITÀ: Ricevitore che ascolta i cambiamenti della batteria da Android
+    private val batteryReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == Intent.ACTION_BATTERY_CHANGED) {
+                val level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
+                val scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
+
+                if (level != -1 && scale != -1) {
+                    val batteryPct = (level * 100) / scale
+                    notifyMacTelemetry(batteryPct)
+                }
+            }
+        }
     }
 
-    // Questo è il "centralino" che risponde quando il Mac fa qualcosa
-    private val gattServerCallback = object : BluetoothGattServerCallback() {
+    // 2. NOVITÀ: Funzione che "spinge" il nuovo dato al Mac
+    private fun notifyMacTelemetry(batteryLevel: Int) {
+        val mac = connectedMac
+        val characteristic = telemetryCharacteristic
 
-        // 1. Il Mac si connette o si disconnette
+        if (mac != null && characteristic != null && gattServer != null) {
+            val data = batteryLevel.toString().toByteArray()
+            // Invia la notifica (usando la sintassi moderna per API 33+)
+            gattServer?.notifyCharacteristicChanged(mac, characteristic, false, data)
+            Log.d("MacSync", "Aggiornamento batteria push inviato: $batteryLevel%")
+        }
+    }
+
+    private fun getBatteryLevel(): Int {
+        val batteryManager = context.getSystemService(Context.BATTERY_SERVICE) as BatteryManager
+        return batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+    }
+
+    private val gattServerCallback = object : BluetoothGattServerCallback() {
         override fun onConnectionStateChange(device: BluetoothDevice, status: Int, newState: Int) {
             super.onConnectionStateChange(device, status, newState)
-
             if (newState == BluetoothProfile.STATE_CONNECTED) {
-                Log.d("MacSync", "Dispositivo connesso: ${device.address}")
+                connectedMac = device // Memorizziamo chi si è connesso
                 _connectionState.value = "Connesso al Mac! 🍏"
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-                Log.d("MacSync", "Dispositivo disconnesso")
+                connectedMac = null
                 _connectionState.value = "Disconnesso. In attesa..."
             }
         }
 
-        // 2. Il Mac ci chiede di LEGGERE un dato (es. Telemetria)
         override fun onCharacteristicReadRequest(
             device: BluetoothDevice, requestId: Int, offset: Int,
             characteristic: BluetoothGattCharacteristic
         ) {
             super.onCharacteristicReadRequest(device, requestId, offset, characteristic)
-
-            // Se il Mac sta chiedendo il canale della Telemetria...
             if (characteristic.uuid == TELEMETRY_UUID) {
                 val batteryLevel = getBatteryLevel()
                 val data = batteryLevel.toString().toByteArray()
-
-                // Rispondiamo al Mac con il valore
                 gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, data)
-                Log.d("MacSync", "Inviato livello batteria al Mac: $batteryLevel%")
             }
         }
 
-        // 3. Il Mac prova a SCRIVERCI dentro un dato (es. testo copiato)
-        override fun onCharacteristicWriteRequest(
-            device: BluetoothDevice, requestId: Int, characteristic: BluetoothGattCharacteristic,
+        // 4. NOVITÀ: Il Mac scrive nel descrittore per attivare le notifiche
+        override fun onDescriptorWriteRequest(
+            device: BluetoothDevice, requestId: Int, descriptor: BluetoothGattDescriptor,
             preparedWrite: Boolean, responseNeeded: Boolean, offset: Int, value: ByteArray
         ) {
-            super.onCharacteristicWriteRequest(device, requestId, characteristic, preparedWrite, responseNeeded, offset, value)
+            super.onDescriptorWriteRequest(device, requestId, descriptor, preparedWrite, responseNeeded, offset, value)
 
-            if (characteristic.uuid == CLIPBOARD_CHARACTERISTIC_UUID) {
-                val testoRicevuto = String(value)
-                Log.d("MacSync", "Dal Mac ho ricevuto: $testoRicevuto")
-
-                // Diciamo al Mac "Ok, messaggio ricevuto!"
+            if (descriptor.uuid == CCC_DESCRIPTOR_UUID) {
+                Log.d("MacSync", "Il Mac si è iscritto alle notifiche della batteria! 🚀")
                 if (responseNeeded) {
                     gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
                 }
@@ -94,38 +112,43 @@ class GattServerManager(private val context: Context) {
     }
 
     fun startServer() {
-        Log.d("MacSync", "Avvio del GATT Server...")
         gattServer = bluetoothManager.openGattServer(context, gattServerCallback)
-
         setupService()
+
+        // Registriamo il ricevitore per ascoltare i cambi di batteria
+        context.registerReceiver(batteryReceiver, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
     }
 
     private fun setupService() {
         val service = BluetoothGattService(SERVICE_UUID, BluetoothGattService.SERVICE_TYPE_PRIMARY)
 
-        // 1. Configurazione Caratteristica Appunti
-        val clipboardCharacteristic = BluetoothGattCharacteristic(
-            CLIPBOARD_CHARACTERISTIC_UUID,
-            BluetoothGattCharacteristic.PROPERTY_READ or BluetoothGattCharacteristic.PROPERTY_WRITE,
-            BluetoothGattCharacteristic.PERMISSION_READ or BluetoothGattCharacteristic.PERMISSION_WRITE
-        )
-
-        // 2. Configurazione Caratteristica Telemetria
-        val telemetryCharacteristic = BluetoothGattCharacteristic(
+        // FIX: Usiamo una costante locale per evitare l'errore di nullabilità su "telemetryCharacteristic?.addDescriptor"
+        val localTelemetryCharacteristic = BluetoothGattCharacteristic(
             TELEMETRY_UUID,
             BluetoothGattCharacteristic.PROPERTY_READ or BluetoothGattCharacteristic.PROPERTY_NOTIFY,
             BluetoothGattCharacteristic.PERMISSION_READ
         )
 
-        // Aggiungiamo entrambe al servizio
-        service.addCharacteristic(clipboardCharacteristic)
-        service.addCharacteristic(telemetryCharacteristic)
+        // Creiamo il "registro delle iscrizioni" e lo attacchiamo alla caratteristica
+        val clientConfigDescriptor = BluetoothGattDescriptor(
+            CCC_DESCRIPTOR_UUID,
+            BluetoothGattDescriptor.PERMISSION_READ or BluetoothGattDescriptor.PERMISSION_WRITE
+        )
 
+        // Assegniamo il descrittore alla variabile locale, che è sicuramente non nulla
+        localTelemetryCharacteristic.addDescriptor(clientConfigDescriptor)
+
+        // Aggiungiamo la caratteristica al servizio
+        service.addCharacteristic(localTelemetryCharacteristic)
         gattServer?.addService(service)
-        Log.d("MacSync", "Servizio e Caratteristiche configurati nel server.")
+
+        // Infine salviamo il riferimento globale per usarlo in notifyMacTelemetry()
+        telemetryCharacteristic = localTelemetryCharacteristic
     }
 
     fun stopServer() {
+        // Pulizia quando spegniamo il server
+        context.unregisterReceiver(batteryReceiver)
         gattServer?.close()
     }
 }
