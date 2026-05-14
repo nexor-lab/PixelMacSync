@@ -16,17 +16,20 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import it.luigi.macsync.ble.GattServerManager
+import it.luigi.macsync.ble.BLEAdvertiser // <-- Importato l'Advertiser
 import it.luigi.macsync.ui.theme.MacSyncTheme
 
 class MainActivity : ComponentActivity() {
 
     private lateinit var gattServerManager: GattServerManager
+    private lateinit var bleAdvertiser: BLEAdvertiser // <-- Dichiarato
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Inizializziamo il nostro manager
+        // Inizializziamo i nostri due manager
         gattServerManager = GattServerManager(this)
+        bleAdvertiser = BLEAdvertiser(this) // <-- Inizializzato
 
         setContent {
             MacSyncTheme {
@@ -34,7 +37,8 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    MainScreen(gattServerManager)
+                    // Passiamo entrambi alla UI
+                    MainScreen(gattServerManager, bleAdvertiser)
                 }
             }
         }
@@ -42,25 +46,25 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun MainScreen(gattServerManager: GattServerManager) {
+fun MainScreen(gattServerManager: GattServerManager, bleAdvertiser: BLEAdvertiser) {
     var permissionsGranted by remember { mutableStateOf(false) }
 
-    // Questo è il launcher che fa comparire il popup di sistema "Consenti a MacSync di usare il Bluetooth?"
+    // Questo è il launcher che fa comparire il popup di sistema
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions: Map<String, Boolean> ->
         val allGranted = permissions.entries.all { it.value }
         permissionsGranted = allGranted
 
-        // Se l'utente ha detto sì, accendiamo il server!
+        // Se l'utente ha detto sì, accendiamo tutto!
         if (allGranted) {
             gattServerManager.startServer()
+            bleAdvertiser.startAdvertising() // <-- Accendiamo il faro per il Mac!
         }
     }
 
     // Appena la schermata viene disegnata, lanciamo la richiesta
     LaunchedEffect(Unit) {
-        // Avendo impostato API 36 minima, non serve più il check SDK_INT!
         permissionLauncher.launch(
             arrayOf(
                 Manifest.permission.BLUETOOTH_CONNECT,
@@ -69,7 +73,7 @@ fun MainScreen(gattServerManager: GattServerManager) {
         )
     }
 
-    // Interfaccia utente ultra-minimale per ora
+    // Interfaccia utente ultra-minimale
     Column(
         modifier = Modifier.fillMaxSize(),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -77,7 +81,7 @@ fun MainScreen(gattServerManager: GattServerManager) {
     ) {
         if (permissionsGranted) {
             Text(text = "Server BLE Attivo! 🚀")
-            Text(text = "Il Pixel è visibile come MacSync.")
+            Text(text = "In trasmissione verso il Mac...")
         } else {
             Text(text = "Richiesta permessi Bluetooth in corso...")
         }

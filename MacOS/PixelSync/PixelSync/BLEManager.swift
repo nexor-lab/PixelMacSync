@@ -14,7 +14,7 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
     var pixelPeripheral: CBPeripheral? // Aggiunto per memorizzare il dispositivo
     
     // Inserisci qui lo stesso UUID che abbiamo messo su Android
-    let serviceUUID = CBUUID(string: "1234")
+    let serviceUUID = CBUUID(string: "E20A39F4-73F5-4BC4-A12F-17D1AD07A961")
 
     @Published var isSwitchedOn = false
     @Published var connectionStatus = "Disconnesso" // Aggiunto per l'interfaccia utente
