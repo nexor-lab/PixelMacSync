@@ -16,20 +16,20 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import it.luigi.macsync.ble.GattServerManager
-import it.luigi.macsync.ble.BLEAdvertiser // <-- Importato l'Advertiser
+import it.luigi.macsync.ble.BLEAdvertiser
 import it.luigi.macsync.ui.theme.MacSyncTheme
 
 class MainActivity : ComponentActivity() {
 
     private lateinit var gattServerManager: GattServerManager
-    private lateinit var bleAdvertiser: BLEAdvertiser // <-- Dichiarato
+    private lateinit var bleAdvertiser: BLEAdvertiser
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         // Inizializziamo i nostri due manager
         gattServerManager = GattServerManager(this)
-        bleAdvertiser = BLEAdvertiser(this) // <-- Inizializzato
+        bleAdvertiser = BLEAdvertiser(this)
 
         setContent {
             MacSyncTheme {
@@ -49,6 +49,9 @@ class MainActivity : ComponentActivity() {
 fun MainScreen(gattServerManager: GattServerManager, bleAdvertiser: BLEAdvertiser) {
     var permissionsGranted by remember { mutableStateOf(false) }
 
+    // 1. NOVITÀ: Ascoltiamo in tempo reale lo stato della connessione dal manager!
+    val statusText by gattServerManager.connectionState.collectAsState()
+
     // Questo è il launcher che fa comparire il popup di sistema
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
@@ -59,7 +62,7 @@ fun MainScreen(gattServerManager: GattServerManager, bleAdvertiser: BLEAdvertise
         // Se l'utente ha detto sì, accendiamo tutto!
         if (allGranted) {
             gattServerManager.startServer()
-            bleAdvertiser.startAdvertising() // <-- Accendiamo il faro per il Mac!
+            bleAdvertiser.startAdvertising()
         }
     }
 
@@ -81,7 +84,9 @@ fun MainScreen(gattServerManager: GattServerManager, bleAdvertiser: BLEAdvertise
     ) {
         if (permissionsGranted) {
             Text(text = "Server BLE Attivo! 🚀")
-            Text(text = "In trasmissione verso il Mac...")
+
+            // 2. NOVITÀ: Qui usiamo la variabile reattiva invece del testo fisso
+            Text(text = statusText)
         } else {
             Text(text = "Richiesta permessi Bluetooth in corso...")
         }
