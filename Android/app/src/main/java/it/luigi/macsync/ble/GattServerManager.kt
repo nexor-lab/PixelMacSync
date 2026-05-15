@@ -21,7 +21,21 @@ import kotlinx.coroutines.flow.StateFlow
 import java.util.UUID
 
 @SuppressLint("MissingPermission")
-class GattServerManager(private val context: Context) {
+// NOVITÀ: Aggiunto 'private constructor'
+class GattServerManager private constructor(private val context: Context) {
+
+    // NOVITÀ: Aggiunto il Singleton pattern
+    companion object {
+        @SuppressLint("StaticFieldLeak")
+        @Volatile
+        private var INSTANCE: GattServerManager? = null
+
+        fun getInstance(context: Context): GattServerManager {
+            return INSTANCE ?: synchronized(this) {
+                INSTANCE ?: GattServerManager(context.applicationContext).also { INSTANCE = it }
+            }
+        }
+    }
 
     private val bluetoothManager: BluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
     private var gattServer: BluetoothGattServer? = null

@@ -8,7 +8,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
-import androidx.activity.enableEdgeToEdge // NOVITÀ: Import per l'edge-to-edge
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.Button
@@ -21,30 +21,27 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import it.luigi.macsync.ble.GattServerManager
-import it.luigi.macsync.ble.BLEAdvertiser
 import it.luigi.macsync.ui.theme.MacSyncTheme
 
 class MainActivity : ComponentActivity() {
 
     private lateinit var gattServerManager: GattServerManager
-    private lateinit var bleAdvertiser: BLEAdvertiser
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        // NOVITÀ: Abilita le barre trasparenti prima del super.onCreate!
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
 
-        gattServerManager = GattServerManager(this)
-        bleAdvertiser = BLEAdvertiser(this)
+        // FIX 1: Usiamo il Singleton per condividere la stessa istanza col Servizio
+        gattServerManager = GattServerManager.getInstance(this)
 
         setContent {
             MacSyncTheme {
                 Surface(
-                    // rimosso systemBarsPadding() da qui! La Surface ora prende tutto lo schermo al 100%
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    MainScreen(gattServerManager, bleAdvertiser)
+                    // Non passiamo più il bleAdvertiser, ci pensa il servizio in background
+                    MainScreen(gattServerManager)
                 }
             }
         }
@@ -52,7 +49,7 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun MainScreen(gattServerManager: GattServerManager, bleAdvertiser: BLEAdvertiser) {
+fun MainScreen(gattServerManager: GattServerManager) {
     var permissionsGranted by remember { mutableStateOf(false) }
     var showAppSelection by remember { mutableStateOf(false) }
 
@@ -66,8 +63,10 @@ fun MainScreen(gattServerManager: GattServerManager, bleAdvertiser: BLEAdvertise
         permissionsGranted = allGranted
 
         if (allGranted) {
-            gattServerManager.startServer()
-            bleAdvertiser.startAdvertising()
+            // FIX 2: Avviamo SOLO il servizio di sistema!
+            // Sarà lui a chiamare internamente startServer() e startAdvertising()
+            val intent = Intent(context, MacSyncBleService::class.java)
+            context.startForegroundService(intent)
         }
     }
 
@@ -90,7 +89,7 @@ fun MainScreen(gattServerManager: GattServerManager, bleAdvertiser: BLEAdvertise
                 onClick = { showAppSelection = false },
                 modifier = Modifier
                     .padding(16.dp)
-                    .statusBarsPadding() // NOVITÀ: Spinge solo il bottone sotto l'orologio/notch
+                    .statusBarsPadding()
             ) {
                 Text("← Torna alla Home")
             }
