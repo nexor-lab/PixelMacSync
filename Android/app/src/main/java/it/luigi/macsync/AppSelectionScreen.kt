@@ -54,7 +54,11 @@ fun AppSelectionScreen() {
             CircularProgressIndicator()
         }
     } else {
-        LazyColumn(modifier = Modifier.fillMaxSize()) {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            // NOVITÀ: Fa scorrere la lista sotto la navbar trasparente in modo nativo!
+            contentPadding = WindowInsets.navigationBars.asPaddingValues()
+        ) {
             items(appList, key = { it.packageName }) { appItem ->
                 AppRow(appItem = appItem) { isChecked ->
                     // Aggiorniamo la UI

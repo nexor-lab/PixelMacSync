@@ -8,6 +8,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge // NOVITÀ: Import per l'edge-to-edge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.Button
@@ -29,6 +30,8 @@ class MainActivity : ComponentActivity() {
     private lateinit var bleAdvertiser: BLEAdvertiser
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // NOVITÀ: Abilita le barre trasparenti prima del super.onCreate!
+        enableEdgeToEdge()
         super.onCreate(savedInstanceState)
 
         gattServerManager = GattServerManager(this)
@@ -37,6 +40,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             MacSyncTheme {
                 Surface(
+                    // rimosso systemBarsPadding() da qui! La Surface ora prende tutto lo schermo al 100%
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
@@ -50,8 +54,6 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun MainScreen(gattServerManager: GattServerManager, bleAdvertiser: BLEAdvertiser) {
     var permissionsGranted by remember { mutableStateOf(false) }
-
-    // NOVITÀ: Variabile per gestire quale schermata mostrare
     var showAppSelection by remember { mutableStateOf(false) }
 
     val statusText by gattServerManager.connectionState.collectAsState()
@@ -78,25 +80,23 @@ fun MainScreen(gattServerManager: GattServerManager, bleAdvertiser: BLEAdvertise
         )
     }
 
-    // NOVITÀ: Gestione del tasto "Indietro" di Android per chiudere le impostazioni
     BackHandler(enabled = showAppSelection) {
         showAppSelection = false
     }
 
-    // Se la variabile è true, mostriamo la lista delle app
     if (showAppSelection) {
         Column(modifier = Modifier.fillMaxSize()) {
             Button(
                 onClick = { showAppSelection = false },
-                modifier = Modifier.padding(16.dp)
+                modifier = Modifier
+                    .padding(16.dp)
+                    .statusBarsPadding() // NOVITÀ: Spinge solo il bottone sotto l'orologio/notch
             ) {
                 Text("← Torna alla Home")
             }
-            // Richiamiamo la schermata creata prima
             AppSelectionScreen()
         }
     } else {
-        // Altrimenti mostriamo la Home classica
         Column(
             modifier = Modifier.fillMaxSize(),
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -105,25 +105,18 @@ fun MainScreen(gattServerManager: GattServerManager, bleAdvertiser: BLEAdvertise
             if (permissionsGranted) {
                 Text(text = "Server BLE Attivo! \uD83D\uDE80", style = MaterialTheme.typography.titleLarge)
                 Spacer(modifier = Modifier.height(8.dp))
-
                 Text(text = statusText)
-
                 Spacer(modifier = Modifier.height(32.dp))
 
-                // Bottone per scegliere le app (White-list)
                 Button(onClick = { showAppSelection = true }) {
                     Text("Configura App Notifiche")
                 }
-
                 Spacer(modifier = Modifier.height(8.dp))
-
-                // Bottone rapido per dare il permesso di sistema ad Android
                 Button(onClick = {
                     context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
                 }) {
                     Text("Permesso Sistema Notifiche")
                 }
-
             } else {
                 Text(text = "Richiesta permessi Bluetooth in corso...")
             }
