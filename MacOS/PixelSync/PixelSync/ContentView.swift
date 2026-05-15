@@ -39,13 +39,19 @@ struct ContentView: View {
                 Spacer()
                 
                 if bleManager.connectionStatus.contains("Connesso") {
+
                     // Segnale di Rete
                     HStack(spacing: 4) {
-                        Text(bleManager.networkType)
+                        Text(bleManager.networkType) // Qui arriverà "5G", "4G" o "Tuo_WiFi"
                             .font(.system(size: 10, weight: .bold))
                             .foregroundColor(.secondary)
                         
-                        // Uso corretto del variableValue per riempire le tacche dinamicamente (es. 3/4 = 0.75)
+                        // Icona Wi-Fi (visibile solo se connesso al Wi-Fi)
+                        if bleManager.isWifi {
+                            Image(systemName: "wifi")
+                                .foregroundColor(.primary)
+                        }
+                        
                         Image(systemName: "cellularbars", variableValue: Double(bleManager.signalStrength) / 4.0)
                             .foregroundColor(.primary)
                     }

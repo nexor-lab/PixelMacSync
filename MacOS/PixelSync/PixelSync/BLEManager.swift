@@ -17,6 +17,7 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
     @Published var isCharging: Bool = false
     @Published var networkType: String = "5G"
     @Published var signalStrength: Int = 3 // Da 0 a 4
+    @Published var isWifi: Bool = false
     @Published var isHotspotActive: Bool = false
     @Published var isPlaying: Bool = false
     @Published var songTitle: String = "Nessun media in riproduzione"
@@ -87,6 +88,7 @@ extension BLEManager: CBPeripheralDelegate {
     }
     
     func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
+        
         // Gestione Telemetria
         if characteristic.uuid == telemetryUUID, let data = characteristic.value,
            let payload = String(data: data, encoding: .utf8) {
@@ -94,14 +96,12 @@ extension BLEManager: CBPeripheralDelegate {
             let parts = payload.components(separatedBy: "\u{001F}")
             
             DispatchQueue.main.async {
-                if parts.count >= 4 {
+                if parts.count >= 5 { // Ora ci aspettiamo 5 parametri!
                     self.batteryLevel = "\(parts[0])%"
                     self.isCharging = (parts[1] == "true")
                     self.networkType = parts[2]
                     self.signalStrength = Int(parts[3]) ?? 0
-                } else {
-                    // Fallback nel caso in cui arrivi il vecchio formato
-                    self.batteryLevel = "\(payload)%"
+                    self.isWifi = (parts[4] == "true")
                 }
             }
         }

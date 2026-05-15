@@ -14,7 +14,16 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.PackageManager
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.wifi.WifiManager
 import android.os.BatteryManager
+import android.telephony.SignalStrength
+import android.telephony.TelephonyCallback
+import android.telephony.TelephonyDisplayInfo
+import android.telephony.TelephonyManager
 import android.util.Log
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -23,7 +32,6 @@ import java.util.UUID
 @SuppressLint("MissingPermission")
 class GattServerManager private constructor(private val context: Context) {
 
-    // Singleton pattern
     companion object {
         @SuppressLint("StaticFieldLeak")
         @Volatile
@@ -38,12 +46,9 @@ class GattServerManager private constructor(private val context: Context) {
 
     private val bluetoothManager: BluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
     private var gattServer: BluetoothGattServer? = null
-
-    // Riferimenti al Mac e alle caratteristiche
     private var connectedMac: BluetoothDevice? = null
     private var telemetryCharacteristic: BluetoothGattCharacteristic? = null
 
-    // UUID
     private val SERVICE_UUID = UUID.fromString("E20A39F4-73F5-4BC4-A12F-17D1AD07A961")
     private val TELEMETRY_UUID = UUID.fromString("33333333-73F5-4BC4-A12F-17D1AD07A961")
     private val CCC_DESCRIPTOR_UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
@@ -53,13 +58,99 @@ class GattServerManager private constructor(private val context: Context) {
     private val _connectionState = MutableStateFlow("In attesa di connessione...")
     val connectionState: StateFlow<String> = _connectionState
 
-    // --- NUOVE VARIABILI DI STATO ---
+    // --- VARIABILI DI STATO ---
     private var currentBatteryLevel = 0
     private var isCharging = false
-    private var currentNetwork = "5G" // Placeholder
-    private var currentSignal = 3     // Placeholder da 0 a 4
+    private var currentCellularNetwork = "--"
+    private var currentSignal = 0
+    private var isWifiConnected = false
+    private var wifiSSID = "Wi-Fi"
 
-    // 1. Ricevitore che ascolta i cambiamenti della batteria e ricarica
+    private val telephonyManager = context.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
+    private val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+
+    // 1. Ascoltatore del Wi-Fi
+    private val networkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) {
+            isWifiConnected = networkCapabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
+            if (isWifiConnected) {
+                wifiSSID = getWifiName()
+            }
+            notifyMacTelemetry()
+        }
+
+        override fun onLost(network: Network) {
+            isWifiConnected = false
+            wifiSSID = "Wi-Fi" // O stringa vuota "", a seconda di come la gestisci su Mac
+            notifyMacTelemetry()
+        }
+    }
+
+    // Estrazione del nome della rete Wi-Fi (Richiede GPS Acceso su Android!)
+    private fun getWifiName(): String {
+        try {
+            if (context.checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+                val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+                val info = wifiManager.connectionInfo
+                // Android restituisce "<unknown ssid>" se il GPS è spento
+                if (info != null && info.ssid != null && info.ssid != "<unknown ssid>") {
+                    return info.ssid.replace("\"", "")
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("MacSync", "Errore estrazione Wi-Fi: ${e.message}")
+        }
+        return "Wi-Fi"
+    }
+
+    // Traduttore dei codici di rete di Android
+    private fun getNetworkString(networkType: Int): String {
+        return when (networkType) {
+            TelephonyManager.NETWORK_TYPE_NR -> "5G"
+            TelephonyManager.NETWORK_TYPE_LTE -> "4G"
+            TelephonyManager.NETWORK_TYPE_HSPAP,
+            TelephonyManager.NETWORK_TYPE_HSPA,
+            TelephonyManager.NETWORK_TYPE_UMTS -> "3G"
+            TelephonyManager.NETWORK_TYPE_EDGE,
+            TelephonyManager.NETWORK_TYPE_GPRS -> "E"
+            else -> "--"
+        }
+    }
+
+    // 2. Ascoltatore Segnale Cellulare MIGLIORATO
+    private val telephonyCallback = object : TelephonyCallback(),
+        TelephonyCallback.SignalStrengthsListener,
+        TelephonyCallback.DisplayInfoListener,
+        TelephonyCallback.DataConnectionStateListener {
+
+        override fun onSignalStrengthsChanged(signalStrength: SignalStrength) {
+            currentSignal = signalStrength.level
+            notifyMacTelemetry()
+        }
+
+        // Questo scatta per le reti avanzate (es. 5G NSA o 4G+)
+        @SuppressLint("MissingPermission")
+        override fun onDisplayInfoChanged(telephonyDisplayInfo: TelephonyDisplayInfo) {
+            currentCellularNetwork = when (telephonyDisplayInfo.overrideNetworkType) {
+                TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NR_NSA,
+                TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NR_ADVANCED -> "5G"
+                TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_LTE_ADVANCED_PRO,
+                TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_LTE_CA -> "4G+"
+                else -> getNetworkString(telephonyDisplayInfo.networkType)
+            }
+            notifyMacTelemetry()
+        }
+
+        // Questo scatta ISTANTANEAMENTE appena si attivano i dati mobili
+        override fun onDataConnectionStateChanged(state: Int, networkType: Int) {
+            if (state == TelephonyManager.DATA_CONNECTED) {
+                currentCellularNetwork = getNetworkString(networkType)
+                notifyMacTelemetry()
+            }
+        }
+    }
+
+    // 3. Ascoltatore Batteria
     private val batteryReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == Intent.ACTION_BATTERY_CHANGED) {
@@ -69,53 +160,43 @@ class GattServerManager private constructor(private val context: Context) {
 
                 if (level != -1 && scale != -1) {
                     currentBatteryLevel = (level * 100) / scale
-                    // Controlliamo se è in carica
                     isCharging = status == BatteryManager.BATTERY_STATUS_CHARGING || status == BatteryManager.BATTERY_STATUS_FULL
-
-                    // Spingiamo il pacchetto completo al Mac
                     notifyMacTelemetry()
                 }
             }
         }
     }
 
-    // 2. Ricevitore che ascolta le notifiche intercettate dal Listener
     private val notificationReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == "it.luigi.macsync.NEW_NOTIFICATION") {
                 val payload = intent.getStringExtra("payload")
-                if (payload != null) {
-                    sendNotificationToMac(payload)
-                }
+                if (payload != null) sendNotificationToMac(payload)
             }
         }
     }
 
-    // --- FUNZIONE PER INVIARE LA TELEMETRIA MULTIPLA ---
+    // --- INVIO PACCHETTO AL MAC ---
     private fun notifyMacTelemetry() {
         val mac = connectedMac
         val characteristic = telemetryCharacteristic
 
         if (mac != null && characteristic != null && gattServer != null) {
-            // Assembliamo il payload col separatore invisibile
-            val payload = "$currentBatteryLevel\u001F$isCharging\u001F$currentNetwork\u001F$currentSignal"
+            val networkStringToUse = if (isWifiConnected) wifiSSID else currentCellularNetwork
+            val payload = "$currentBatteryLevel\u001F$isCharging\u001F$networkStringToUse\u001F$currentSignal\u001F$isWifiConnected"
             val data = payload.toByteArray(Charsets.UTF_8)
 
             gattServer?.notifyCharacteristicChanged(mac, characteristic, false, data)
-            Log.d("MacSync", "Telemetria inviata: $payload")
         }
     }
 
-    // Funzione per inviare la notifica al Mac
     fun sendNotificationToMac(payload: String) {
         val mac = connectedMac
         val characteristic = notificationsCharacteristic
 
         if (mac != null && characteristic != null && gattServer != null) {
-            // Tagliamo la stringa per sicurezza
             val safePayload = payload.take(150).toByteArray()
             gattServer?.notifyCharacteristicChanged(mac, characteristic, false, safePayload)
-            Log.d("MacSync", "Notifica inoltrata al Mac: $payload")
         }
     }
 
@@ -123,38 +204,30 @@ class GattServerManager private constructor(private val context: Context) {
         override fun onConnectionStateChange(device: BluetoothDevice, status: Int, newState: Int) {
             super.onConnectionStateChange(device, status, newState)
             if (newState == BluetoothProfile.STATE_CONNECTED) {
-                connectedMac = device // Memorizziamo chi si è connesso
+                connectedMac = device
                 _connectionState.value = "Connesso al Mac! \uD83C\uDF4F"
+                // Forziamo un aggiornamento immediato della telemetria appena si connette
+                notifyMacTelemetry()
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                 connectedMac = null
                 _connectionState.value = "Disconnesso. In attesa..."
             }
         }
 
-        override fun onCharacteristicReadRequest(
-            device: BluetoothDevice, requestId: Int, offset: Int,
-            characteristic: BluetoothGattCharacteristic
-        ) {
+        override fun onCharacteristicReadRequest(device: BluetoothDevice, requestId: Int, offset: Int, characteristic: BluetoothGattCharacteristic) {
             super.onCharacteristicReadRequest(device, requestId, offset, characteristic)
             if (characteristic.uuid == TELEMETRY_UUID) {
-                // Se il Mac chiede una lettura diretta, inviamo il nuovo pacchetto multiplo
-                val payload = "$currentBatteryLevel\u001F$isCharging\u001F$currentNetwork\u001F$currentSignal"
+                val networkStringToUse = if (isWifiConnected) wifiSSID else currentCellularNetwork
+                val payload = "$currentBatteryLevel\u001F$isCharging\u001F$networkStringToUse\u001F$currentSignal\u001F$isWifiConnected"
                 val data = payload.toByteArray(Charsets.UTF_8)
                 gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, data)
             }
         }
 
-        override fun onDescriptorWriteRequest(
-            device: BluetoothDevice, requestId: Int, descriptor: BluetoothGattDescriptor,
-            preparedWrite: Boolean, responseNeeded: Boolean, offset: Int, value: ByteArray
-        ) {
+        override fun onDescriptorWriteRequest(device: BluetoothDevice, requestId: Int, descriptor: BluetoothGattDescriptor, preparedWrite: Boolean, responseNeeded: Boolean, offset: Int, value: ByteArray) {
             super.onDescriptorWriteRequest(device, requestId, descriptor, preparedWrite, responseNeeded, offset, value)
-
-            if (descriptor.uuid == CCC_DESCRIPTOR_UUID) {
-                Log.d("MacSync", "Il Mac si è iscritto alle notifiche di una caratteristica! \uD83D\uDE80")
-                if (responseNeeded) {
-                    gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
-                }
+            if (descriptor.uuid == CCC_DESCRIPTOR_UUID && responseNeeded) {
+                gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
             }
         }
     }
@@ -163,14 +236,15 @@ class GattServerManager private constructor(private val context: Context) {
         gattServer = bluetoothManager.openGattServer(context, gattServerCallback)
         setupService()
 
-        // Registriamo i ricevitori
         context.registerReceiver(batteryReceiver, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+        context.registerReceiver(notificationReceiver, IntentFilter("it.luigi.macsync.NEW_NOTIFICATION"), Context.RECEIVER_NOT_EXPORTED)
+        connectivityManager.registerDefaultNetworkCallback(networkCallback)
 
-        context.registerReceiver(
-            notificationReceiver,
-            IntentFilter("it.luigi.macsync.NEW_NOTIFICATION"),
-            Context.RECEIVER_NOT_EXPORTED
-        )
+        if (context.checkSelfPermission(android.Manifest.permission.READ_PHONE_STATE) == PackageManager.PERMISSION_GRANTED) {
+            telephonyManager.registerTelephonyCallback(context.mainExecutor, telephonyCallback)
+            // Inizializza il valore di partenza per evitare il "--" iniziale
+            currentCellularNetwork = getNetworkString(telephonyManager.dataNetworkType)
+        }
     }
 
     private fun setupService() {
@@ -206,9 +280,10 @@ class GattServerManager private constructor(private val context: Context) {
     }
 
     fun stopServer() {
-        // Pulizia totale
         context.unregisterReceiver(batteryReceiver)
         context.unregisterReceiver(notificationReceiver)
+        telephonyManager.unregisterTelephonyCallback(telephonyCallback)
+        connectivityManager.unregisterNetworkCallback(networkCallback)
         gattServer?.close()
     }
 }
