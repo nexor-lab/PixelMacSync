@@ -26,7 +26,7 @@ class MacSyncBleService : Service() {
         val notification = NotificationCompat.Builder(this, channelId)
             .setContentTitle("MacSync Attivo")
             .setContentText("In ascolto in background...")
-            .setSmallIcon(R.mipmap.ic_launcher_round) // Sostituiremo poi con un'iconina vettoriale pulita
+            .setSmallIcon(R.mipmap.ic_launcher) // Sostituiremo poi con un'iconina vettoriale pulita
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
 
