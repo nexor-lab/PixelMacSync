@@ -3,10 +3,13 @@ package it.luigi.macsync
 import android.content.Context
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Clear
@@ -15,17 +18,96 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.Outline
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.asComposePath
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.core.graphics.drawable.toBitmap
-// NOVITÀ: Importiamo i coroutines dispatcher per il background
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import androidx.compose.foundation.selection.toggleable
+// Import per le forme avanzate di Material Design 3
+import androidx.graphics.shapes.Morph
+import androidx.graphics.shapes.RoundedPolygon
+import androidx.graphics.shapes.star
+import androidx.graphics.shapes.toPath
+import androidx.graphics.shapes.CornerRounding
+
+// Classe necessaria per far digerire le forme avanzate a Jetpack Compose
+class MorphShape(
+    private val morph: Morph,
+    private val progress: Float
+) : Shape {
+    override fun createOutline(
+        size: Size,
+        layoutDirection: LayoutDirection,
+        density: Density
+    ): Outline {
+        val androidPath = morph.toPath(progress)
+        val matrix = android.graphics.Matrix()
+        matrix.setScale(size.width / 2f, size.height / 2f)
+        matrix.postTranslate(size.width / 2f, size.height / 2f)
+        androidPath.transform(matrix)
+        return Outline.Generic(androidPath.asComposePath())
+    }
+}
+
+@Composable
+fun MorphingLoadingIndicator() {
+    val infiniteTransition = rememberInfiniteTransition(label = "morphing")
+
+    // Rotazione fluida
+    val rotation by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(3000, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ), label = "rotation"
+    )
+
+    // NOVITÀ: Usiamo i Keyframes per creare le "pause" di visualizzazione!
+    val morphProgress by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = keyframes {
+                durationMillis = 1200 // Durata per una singola "andata"
+
+                0f at 0 // Inizia dal biscotto
+                0f at 200 with FastOutSlowInEasing // Resta un biscotto perfetto per i primi 200ms
+                1f at 1000 // Usa i successivi 800ms per fondersi nel sole
+                1f at 1200 // Resta un sole perfetto per gli ultimi 200ms
+            },
+            repeatMode = RepeatMode.Reverse // Torna indietro dolcemente
+        ), label = "morph"
+    )
+
+    // Le nostre due forme preferite
+    val cookie = remember { RoundedPolygon.star(numVerticesPerRadius = 4, innerRadius = 0.5f, rounding = CornerRounding(radius = 0.2f)) }
+    val sunny = remember { RoundedPolygon.star(numVerticesPerRadius = 8, innerRadius = 0.7f, rounding = CornerRounding(radius = 0.15f)) }
+    val morph = remember { Morph(cookie, sunny) }
+
+    Box(
+        modifier = Modifier
+            .size(48.dp)
+            .graphicsLayer {
+                rotationZ = rotation
+            }
+            .clip(MorphShape(morph, morphProgress))
+            .background(MaterialTheme.colorScheme.primary)
+    )
+}
 
 data class AppItem(val name: String, val packageName: String, val isEnabled: Boolean, val icon: ImageBitmap)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AppSelectionScreen(onBackClick: () -> Unit) {
@@ -39,7 +121,6 @@ fun AppSelectionScreen(onBackClick: () -> Unit) {
     var activeSearch by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
-        // NOVITÀ: Spostiamo tutto il calcolo pesante fuori dal Main Thread della UI!
         withContext(Dispatchers.IO) {
             val pm = context.packageManager
             val savedApps = prefs.getStringSet("enabled_apps", emptySet()) ?: emptySet()
@@ -49,7 +130,6 @@ fun AppSelectionScreen(onBackClick: () -> Unit) {
                     (appInfo.flags and ApplicationInfo.FLAG_SYSTEM) == 0 || appInfo.packageName == "com.google.android.apps.messaging"
                 }
                 .map { appInfo ->
-                    // Questa conversione prima bloccava l'app, ora è in background
                     val iconBitmap = pm.getApplicationIcon(appInfo).toBitmap(128, 128).asImageBitmap()
 
                     AppItem(
@@ -61,7 +141,6 @@ fun AppSelectionScreen(onBackClick: () -> Unit) {
                 }
                 .sortedBy { it.name }
 
-            // Torniamo sul thread principale solo per aggiornare la lista
             withContext(Dispatchers.Main) {
                 appList = apps
                 isLoading = false
@@ -106,9 +185,13 @@ fun AppSelectionScreen(onBackClick: () -> Unit) {
         }
     ) { innerPadding ->
         if (isLoading) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                // Ora l'animazione di caricamento sarà fluidissima fin dal primo millisecondo
-                CircularProgressIndicator()
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(innerPadding),
+                contentAlignment = Alignment.Center
+            ) {
+                MorphingLoadingIndicator()
             }
         } else {
             LazyColumn(
@@ -148,7 +231,6 @@ fun AppRow(appItem: AppItem, onCheckedChange: (Boolean) -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            // NOVITÀ: Tutta la riga è cliccabile e innesca l'interruttore!
             .toggleable(
                 value = appItem.isEnabled,
                 onValueChange = { onCheckedChange(it) }
@@ -171,7 +253,7 @@ fun AppRow(appItem: AppItem, onCheckedChange: (Boolean) -> Unit) {
 
         Switch(
             checked = appItem.isEnabled,
-            onCheckedChange = null // Messo a null perché ora il click è gestito dalla Row!
+            onCheckedChange = null
         )
     }
 }

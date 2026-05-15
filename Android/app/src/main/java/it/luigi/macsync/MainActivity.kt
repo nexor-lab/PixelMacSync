@@ -24,6 +24,8 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import it.luigi.macsync.ble.GattServerManager
 import it.luigi.macsync.ui.theme.MacSyncTheme
+import androidx.compose.animation.*
+import androidx.compose.animation.core.tween
 
 class MainActivity : ComponentActivity() {
 
@@ -56,8 +58,28 @@ fun AppNavigation(gattServerManager: GattServerManager) {
     // NOVITÀ: Controller di navigazione per le transizioni
     val navController = rememberNavController()
 
-    NavHost(navController = navController, startDestination = "home") {
+    NavHost(
+        navController = navController,
+        startDestination = "home",
+        // L'animazione quando APRI la lista (Sale dal basso e sfuma)
+        enterTransition = {
+            slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Up, tween(300)) + fadeIn(tween(300))
+        },
+        // L'animazione della Home che va in background (Si rimpicciolisce leggermente)
+        exitTransition = {
+            scaleOut(targetScale = 0.95f, animationSpec = tween(300)) + fadeOut(tween(300))
+        },
+        // L'animazione della Home quando TORNI INDIETRO (Si ringrandisce)
+        popEnterTransition = {
+            scaleIn(initialScale = 0.95f, animationSpec = tween(300)) + fadeIn(tween(300))
+        },
+        // L'animazione della lista che si CHIUDE (Scivola verso il basso)
+        popExitTransition = {
+            slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.Down, tween(300)) + fadeOut(tween(300))
+        }
+    ) {
         composable("home") {
+// ... [resto del codice dei composable identico]
             MainScreen(gattServerManager) {
                 // Azione per aprire le impostazioni
                 navController.navigate("app_selection")
