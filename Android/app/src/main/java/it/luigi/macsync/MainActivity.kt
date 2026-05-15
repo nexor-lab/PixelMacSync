@@ -5,21 +5,21 @@ import android.content.Intent
 import android.os.Bundle
 import android.provider.Settings
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
-import androidx.compose.material3.Button
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
+import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+// NOVITÀ: Import per la navigazione
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.rememberNavController
 import it.luigi.macsync.ble.GattServerManager
 import it.luigi.macsync.ui.theme.MacSyncTheme
 
@@ -31,7 +31,6 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
 
-        // FIX 1: Usiamo il Singleton per condividere la stessa istanza col Servizio
         gattServerManager = GattServerManager.getInstance(this)
 
         setContent {
@@ -40,8 +39,7 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    // Non passiamo più il bleAdvertiser, ci pensa il servizio in background
-                    MainScreen(gattServerManager)
+                    AppNavigation(gattServerManager)
                 }
             }
         }
@@ -49,10 +47,28 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun MainScreen(gattServerManager: GattServerManager) {
-    var permissionsGranted by remember { mutableStateOf(false) }
-    var showAppSelection by remember { mutableStateOf(false) }
+fun AppNavigation(gattServerManager: GattServerManager) {
+    // NOVITÀ: Controller di navigazione per le transizioni
+    val navController = rememberNavController()
 
+    NavHost(navController = navController, startDestination = "home") {
+        composable("home") {
+            MainScreen(gattServerManager) {
+                // Azione per aprire le impostazioni
+                navController.navigate("app_selection")
+            }
+        }
+        composable("app_selection") {
+            AppSelectionScreen(
+                onBackClick = { navController.popBackStack() }
+            )
+        }
+    }
+}
+
+@Composable
+fun MainScreen(gattServerManager: GattServerManager, onNavigateToAppSelection: () -> Unit) {
+    var permissionsGranted by remember { mutableStateOf(false) }
     val statusText by gattServerManager.connectionState.collectAsState()
     val context = LocalContext.current
 
@@ -63,8 +79,6 @@ fun MainScreen(gattServerManager: GattServerManager) {
         permissionsGranted = allGranted
 
         if (allGranted) {
-            // FIX 2: Avviamo SOLO il servizio di sistema!
-            // Sarà lui a chiamare internamente startServer() e startAdvertising()
             val intent = Intent(context, MacSyncBleService::class.java)
             context.startForegroundService(intent)
         }
@@ -79,46 +93,28 @@ fun MainScreen(gattServerManager: GattServerManager) {
         )
     }
 
-    BackHandler(enabled = showAppSelection) {
-        showAppSelection = false
-    }
+    Column(
+        modifier = Modifier.fillMaxSize(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        if (permissionsGranted) {
+            Text(text = "Server BLE Attivo! \uD83D\uDE80", style = MaterialTheme.typography.titleLarge)
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(text = statusText)
+            Spacer(modifier = Modifier.height(32.dp))
 
-    if (showAppSelection) {
-        Column(modifier = Modifier.fillMaxSize()) {
-            Button(
-                onClick = { showAppSelection = false },
-                modifier = Modifier
-                    .padding(16.dp)
-                    .statusBarsPadding()
-            ) {
-                Text("← Torna alla Home")
+            Button(onClick = onNavigateToAppSelection) { // NOVITÀ: Trigger per la navigazione
+                Text("Configura App Notifiche")
             }
-            AppSelectionScreen()
-        }
-    } else {
-        Column(
-            modifier = Modifier.fillMaxSize(),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
-        ) {
-            if (permissionsGranted) {
-                Text(text = "Server BLE Attivo! \uD83D\uDE80", style = MaterialTheme.typography.titleLarge)
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(text = statusText)
-                Spacer(modifier = Modifier.height(32.dp))
-
-                Button(onClick = { showAppSelection = true }) {
-                    Text("Configura App Notifiche")
-                }
-                Spacer(modifier = Modifier.height(8.dp))
-                Button(onClick = {
-                    context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
-                }) {
-                    Text("Permesso Sistema Notifiche")
-                }
-            } else {
-                Text(text = "Richiesta permessi Bluetooth in corso...")
+            Spacer(modifier = Modifier.height(8.dp))
+            Button(onClick = {
+                context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+            }) {
+                Text("Permesso Sistema Notifiche")
             }
+        } else {
+            Text(text = "Richiesta permessi Bluetooth in corso...")
         }
     }
 }
