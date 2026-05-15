@@ -3,7 +3,7 @@ package it.luigi.macsync
 import android.content.Context
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
-import android.graphics.drawable.Drawable
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -15,14 +15,17 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-// NOVITÀ: Import per Coil
-import coil.compose.AsyncImage
+import androidx.core.graphics.drawable.toBitmap
+// NOVITÀ: Importiamo i coroutines dispatcher per il background
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import androidx.compose.foundation.selection.toggleable
 
-// Ora l'icona è un Drawable nativo che passiamo a Coil
-data class AppItem(val name: String, val packageName: String, var isEnabled: Boolean, val icon: Drawable)
-
+data class AppItem(val name: String, val packageName: String, val isEnabled: Boolean, val icon: ImageBitmap)
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AppSelectionScreen(onBackClick: () -> Unit) {
@@ -32,42 +35,48 @@ fun AppSelectionScreen(onBackClick: () -> Unit) {
     var appList by remember { mutableStateOf<List<AppItem>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
 
-    // NOVITÀ: Stati per la barra di ricerca
     var searchQuery by remember { mutableStateOf("") }
     var activeSearch by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
-        val pm = context.packageManager
-        val savedApps = prefs.getStringSet("enabled_apps", emptySet()) ?: emptySet()
+        // NOVITÀ: Spostiamo tutto il calcolo pesante fuori dal Main Thread della UI!
+        withContext(Dispatchers.IO) {
+            val pm = context.packageManager
+            val savedApps = prefs.getStringSet("enabled_apps", emptySet()) ?: emptySet()
 
-        val apps = pm.getInstalledApplications(PackageManager.GET_META_DATA)
-            .filter { appInfo ->
-                (appInfo.flags and ApplicationInfo.FLAG_SYSTEM) == 0 || appInfo.packageName == "com.google.android.apps.messaging"
-            }
-            .map { appInfo ->
-                AppItem(
-                    name = pm.getApplicationLabel(appInfo).toString(),
-                    packageName = appInfo.packageName,
-                    isEnabled = savedApps.contains(appInfo.packageName),
-                    icon = pm.getApplicationIcon(appInfo) // Passiamo il Drawable crudo
-                )
-            }
-            .sortedBy { it.name }
+            val apps = pm.getInstalledApplications(PackageManager.GET_META_DATA)
+                .filter { appInfo ->
+                    (appInfo.flags and ApplicationInfo.FLAG_SYSTEM) == 0 || appInfo.packageName == "com.google.android.apps.messaging"
+                }
+                .map { appInfo ->
+                    // Questa conversione prima bloccava l'app, ora è in background
+                    val iconBitmap = pm.getApplicationIcon(appInfo).toBitmap(128, 128).asImageBitmap()
 
-        appList = apps
-        isLoading = false
+                    AppItem(
+                        name = pm.getApplicationLabel(appInfo).toString(),
+                        packageName = appInfo.packageName,
+                        isEnabled = savedApps.contains(appInfo.packageName),
+                        icon = iconBitmap
+                    )
+                }
+                .sortedBy { it.name }
+
+            // Torniamo sul thread principale solo per aggiornare la lista
+            withContext(Dispatchers.Main) {
+                appList = apps
+                isLoading = false
+            }
+        }
     }
 
-    // Filtriamo la lista in base alla ricerca
     val filteredList = if (searchQuery.isEmpty()) {
         appList
     } else {
         appList.filter { it.name.contains(searchQuery, ignoreCase = true) }
     }
 
-    Scaffold(
+    Scaffold(contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
-            // NOVITÀ: SearchBar integrata stile Pixel
             SearchBar(
                 query = searchQuery,
                 onQueryChange = { searchQuery = it },
@@ -92,20 +101,20 @@ fun AppSelectionScreen(onBackClick: () -> Unit) {
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 8.dp)
-                    .statusBarsPadding() // Non si sovrappone alla status bar
+                    .statusBarsPadding()
             ) {}
         }
     ) { innerPadding ->
         if (isLoading) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                // Ora l'animazione di caricamento sarà fluidissima fin dal primo millisecondo
                 CircularProgressIndicator()
             }
         } else {
             LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(innerPadding), // Applica il padding del Scaffold per la top bar
-                contentPadding = WindowInsets.navigationBars.asPaddingValues() // Passa sotto la barra dei gesti in basso
+                    .padding(innerPadding),
             ) {
                 items(filteredList, key = { it.packageName }) { appItem ->
                     AppRow(appItem = appItem) { isChecked ->
@@ -126,6 +135,9 @@ fun AppSelectionScreen(onBackClick: () -> Unit) {
                         editor.apply()
                     }
                 }
+                item {
+                    Spacer(modifier = Modifier.windowInsetsBottomHeight(WindowInsets.navigationBars))
+                }
             }
         }
     }
@@ -136,12 +148,16 @@ fun AppRow(appItem: AppItem, onCheckedChange: (Boolean) -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 12.dp), // Aumentato un po' il padding verticale
+            // NOVITÀ: Tutta la riga è cliccabile e innesca l'interruttore!
+            .toggleable(
+                value = appItem.isEnabled,
+                onValueChange = { onCheckedChange(it) }
+            )
+            .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // NOVITÀ: Coil renderizza l'icona nativa senza sforzo
-        AsyncImage(
-            model = appItem.icon,
+        Image(
+            bitmap = appItem.icon,
             contentDescription = "Icona di ${appItem.name}",
             modifier = Modifier.size(48.dp)
         )
@@ -155,7 +171,7 @@ fun AppRow(appItem: AppItem, onCheckedChange: (Boolean) -> Unit) {
 
         Switch(
             checked = appItem.isEnabled,
-            onCheckedChange = onCheckedChange
+            onCheckedChange = null // Messo a null perché ora il click è gestito dalla Row!
         )
     }
 }
