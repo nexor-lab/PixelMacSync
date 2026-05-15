@@ -122,38 +122,35 @@ extension BLEManager: CBPeripheralDelegate {
                     content.body = body
                     content.sound = UNNotificationSound.default
                     
-                    // --- INIZIO GESTIONE ICONE ---
-                    
-                    // Dizionario per mappare il Bundle ID al nome del file .png (senza estensione)
-                    // Attenzione al case-sensitive: i valori a destra devono essere IDENTICI al nome file in Xcode
-                    let appIconMap: [String: String] = [
-                        "com.whatsapp": "WhatsApp", // es: WhatsApp.png
-                        "org.telegram": "Telegram", // es: Telegram.png
-                        "com.google.android.apps.messaging": "Messages",
-                        "com.instagram": "Instagram",
-                        "com.google.android.apps.tasks": "Tasks" // Il file che hai appena esportato!
-                    ]
-                    
-                    // Cerchiamo una corrispondenza
-                    var matchedImageName: String? = nil
-                    for (key, imageName) in appIconMap {
-                        if bundleId.lowercased().contains(key.lowercased()) {
-                            matchedImageName = imageName
-                            break
+                    /// --- INIZIO GESTIONE ICONE DINAMICA NELLA CARTELLA IMMAGINI ---
+                    let fileManager = FileManager.default
+
+                    if let picturesURL = fileManager.urls(for: .picturesDirectory, in: .userDomainMask).first {
+                        // Creiamo una cartella chiamata "MacSyncIcons" dentro la tua cartella Immagini di sistema
+                        let iconsFolderURL = picturesURL.appendingPathComponent("MacSyncIcons", isDirectory: true)
+                        
+                        // Creazione automatica della cartella se mancante (scatterà alla prima notifica)
+                        if !fileManager.fileExists(atPath: iconsFolderURL.path) {
+                            try? fileManager.createDirectory(at: iconsFolderURL, withIntermediateDirectories: true, attributes: nil)
+                            print("MacSync: Creata cartella icone in: \(iconsFolderURL.path)")
+                        }
+                        
+                        // Il file deve chiamarsi esattamente come il pacchetto Android (es: com.instagram.android.png)
+                        let iconFileURL = iconsFolderURL.appendingPathComponent("\(bundleId).png")
+                        
+                        if fileManager.fileExists(atPath: iconFileURL.path) {
+                            do {
+                                let attachment = try UNNotificationAttachment(identifier: bundleId, url: iconFileURL, options: nil)
+                                content.attachments = [attachment]
+                                print("MacSync: Icona custom caricata correttamente da Immagini per \(bundleId)")
+                            } catch {
+                                print("MacSync: Errore nella creazione dell'allegato per \(bundleId): \(error)")
+                            }
+                        } else {
+                            print("MacSync: Icona non trovata in Immagini/MacSyncIcons per \(bundleId).")
                         }
                     }
-                    
-                    // Se troviamo l'immagine, l'alleghiamo al banner
-                    if let imageName = matchedImageName,
-                       let imageURL = Bundle.main.url(forResource: imageName, withExtension: "png") {
-                        do {
-                            let attachment = try UNNotificationAttachment(identifier: imageName, url: imageURL, options: nil)
-                            content.attachments = [attachment]
-                        } catch {
-                            print("MacSync: Errore nel caricare l'icona per \(imageName): \(error)")
-                        }
-                    }
-                    // --- FINE GESTIONE ICONE ---
+                    // --- FINE GESTIONE ICONE DINAMICA ---
                     
                     // Mostriamo il banner
                     let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
