@@ -1,64 +1,123 @@
-//
-//  ContentView.swift
-//  PixelSync
-//
-//  Created by Luigi Quitadamo on 14/05/2026.
-//
 import SwiftUI
 
 struct ContentView: View {
-    // Inizializziamo il nostro BLEManager.
-    // @StateObject assicura che l'istanza sopravviva ai ricaricamenti dell'interfaccia
     @StateObject private var bleManager = BLEManager()
     
-    var body: some View {
-        VStack(spacing: 20) {
-            Image(systemName: bleManager.isSwitchedOn ? "bluetooth" : "bluetooth.slash")
-                .font(.system(size: 60))
-                .foregroundStyle(bleManager.isSwitchedOn ? .blue : .gray)
-            
-            Text("PixelSync")
-                .font(.largeTitle)
-                .fontWeight(.bold)
-            
-            // Mostriamo lo stato della connessione in tempo reale
-            Text(bleManager.connectionStatus)
-                .font(.headline)
-                .foregroundStyle(.secondary)
-            
-            // Un piccolo indicatore visivo se sta cercando o è connesso
-            if bleManager.connectionStatus.contains("Scansione") {
-                ProgressView()
-                    .padding(.top, 10)
-            } else if bleManager.connectionStatus.contains("Connesso") {
-               
-                Image(systemName: "checkmark.circle.fill")
-                    .foregroundColor(.green)
-                    .font(.title)
-                    .padding(.top, 10)
-                // Widget Telemetria
-                HStack {
-                    Image(systemName: "battery.100") // Qui in futuro potremo mappare l'icona in base alla %
-                        .foregroundStyle(.green)
-                        .font(.title2)
-                    
-                    Text("Batteria Pixel: ")
-                        .fontWeight(.semibold)
-                    
-                    Text(bleManager.batteryLevel)
-                        .monospacedDigit()
-                }
-                .padding()
-                .background(Color.primary.opacity(0.05))
-                .cornerRadius(12)
-                .padding(.top, 20)
-            }
+    // Funzione di supporto corretta per l'icona della batteria
+    var batteryIconName: String {
+        // Se è in carica, Apple richiede l'uso dell'unica icona col fulmine disponibile
+        if bleManager.isCharging {
+            return "battery.100.bolt"
         }
-        .padding()
-        .frame(minWidth: 300, minHeight: 250)
+        
+        // Se non è in carica, calcola lo scaglione corretto
+        let level = Int(bleManager.batteryLevel.replacingOccurrences(of: "%", with: "")) ?? 50
+        if level <= 12 { return "battery.0" }
+        if level <= 37 { return "battery.25" }
+        if level <= 62 { return "battery.50" }
+        if level <= 87 { return "battery.75" }
+        return "battery.100"
     }
-}
-
-#Preview {
-    ContentView()
+    
+    var body: some View {
+        VStack(spacing: 16) {
+            
+            // --- SEZIONE 1: STATO CONNESSIONE E DISPOSITIVO ---
+            HStack {
+                // Sostituiti i loghi Bluetooth con le antenne di sistema
+                if bleManager.isSwitchedOn && bleManager.connectionStatus.contains("Connesso") {
+                    Image(systemName: "candybarphone")
+                        .foregroundColor(.primary)
+                } else {
+                    Image(systemName: bleManager.isSwitchedOn ? "antenna.radiowaves.left.and.right" : "antenna.radiowaves.left.and.right.slash")
+                        .foregroundColor(bleManager.isSwitchedOn ? .blue : .red)
+                }
+                
+                Text(bleManager.connectionStatus.contains("Connesso") ? "Pixel 7 Pro" : bleManager.connectionStatus)
+                    .font(.headline)
+                
+                Spacer()
+                
+                if bleManager.connectionStatus.contains("Connesso") {
+                    // Segnale di Rete
+                    HStack(spacing: 4) {
+                        Text(bleManager.networkType)
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundColor(.secondary)
+                        
+                        // Uso corretto del variableValue per riempire le tacche dinamicamente (es. 3/4 = 0.75)
+                        Image(systemName: "cellularbars", variableValue: Double(bleManager.signalStrength) / 4.0)
+                            .foregroundColor(.primary)
+                    }
+                    
+                    // Batteria
+                    HStack(spacing: 4) {
+                        Text(bleManager.batteryLevel)
+                            .font(.caption)
+                            .monospacedDigit()
+                        
+                        Image(systemName: batteryIconName)
+                            .symbolRenderingMode(.hierarchical)
+                            .foregroundColor(bleManager.isCharging ? .green : (levelColor(for: bleManager.batteryLevel)))
+                    }
+                    .padding(.leading, 4)
+                }
+            }
+            
+            Divider()
+            
+            // --- SEZIONE 2: MEDIA CONTROL ---
+            HStack {
+                VStack(alignment: .leading) {
+                    Text(bleManager.songTitle)
+                        .font(.subheadline)
+                        .bold()
+                        .lineLimit(1)
+                    Text(bleManager.songArtist)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                }
+                
+                Spacer()
+                
+                Button(action: { /* Indietro */ }) {
+                    Image(systemName: "backward.fill")
+                }.buttonStyle(.plain)
+                
+                Button(action: { bleManager.isPlaying.toggle() }) {
+                    Image(systemName: bleManager.isPlaying ? "pause.fill" : "play.fill")
+                        .font(.title2)
+                }.buttonStyle(.plain)
+                
+                Button(action: { /* Avanti */ }) {
+                    Image(systemName: "forward.fill")
+                }.buttonStyle(.plain)
+            }
+            
+            Divider()
+            
+            // --- SEZIONE 3: HOTSPOT ---
+            Toggle(isOn: $bleManager.isHotspotActive) {
+                HStack {
+                    Image(systemName: "personalhotspot")
+                        .foregroundColor(bleManager.isHotspotActive ? .blue : .secondary)
+                    Text("Hotspot Remoto")
+                        .font(.subheadline)
+                }
+            }
+            .toggleStyle(.switch)
+            .tint(.blue)
+            
+        }
+        .padding(16)
+        .frame(width: 320)
+    }
+    
+    // Helper per colorare di rosso se la batteria scende sotto il 20%
+    func levelColor(for levelStr: String) -> Color {
+        let level = Int(levelStr.replacingOccurrences(of: "%", with: "")) ?? 50
+        if level <= 20 { return .red }
+        return .primary
+    }
 }

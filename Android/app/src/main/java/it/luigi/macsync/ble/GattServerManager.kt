@@ -21,10 +21,9 @@ import kotlinx.coroutines.flow.StateFlow
 import java.util.UUID
 
 @SuppressLint("MissingPermission")
-// NOVITÀ: Aggiunto 'private constructor'
 class GattServerManager private constructor(private val context: Context) {
 
-    // NOVITÀ: Aggiunto il Singleton pattern
+    // Singleton pattern
     companion object {
         @SuppressLint("StaticFieldLeak")
         @Volatile
@@ -40,38 +39,47 @@ class GattServerManager private constructor(private val context: Context) {
     private val bluetoothManager: BluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
     private var gattServer: BluetoothGattServer? = null
 
-    // Salviamo il riferimento al Mac connesso e alla caratteristica
+    // Riferimenti al Mac e alle caratteristiche
     private var connectedMac: BluetoothDevice? = null
     private var telemetryCharacteristic: BluetoothGattCharacteristic? = null
 
-    //UUID
+    // UUID
     private val SERVICE_UUID = UUID.fromString("E20A39F4-73F5-4BC4-A12F-17D1AD07A961")
     private val TELEMETRY_UUID = UUID.fromString("33333333-73F5-4BC4-A12F-17D1AD07A961")
-    // Descrittore standard BLE per abilitare le Notifiche (CCCD)
     private val CCC_DESCRIPTOR_UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
-    // Canale Notifiche (Solo Notifica verso il Mac)
     private val NOTIFICATIONS_UUID = UUID.fromString("22222222-73F5-4BC4-A12F-17D1AD07A961")
     private var notificationsCharacteristic: BluetoothGattCharacteristic? = null
 
     private val _connectionState = MutableStateFlow("In attesa di connessione...")
     val connectionState: StateFlow<String> = _connectionState
 
-    // 1. Ricevitore che ascolta i cambiamenti della batteria da Android
+    // --- NUOVE VARIABILI DI STATO ---
+    private var currentBatteryLevel = 0
+    private var isCharging = false
+    private var currentNetwork = "5G" // Placeholder
+    private var currentSignal = 3     // Placeholder da 0 a 4
+
+    // 1. Ricevitore che ascolta i cambiamenti della batteria e ricarica
     private val batteryReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == Intent.ACTION_BATTERY_CHANGED) {
                 val level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
                 val scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
+                val status = intent.getIntExtra(BatteryManager.EXTRA_STATUS, -1)
 
                 if (level != -1 && scale != -1) {
-                    val batteryPct = (level * 100) / scale
-                    notifyMacTelemetry(batteryPct)
+                    currentBatteryLevel = (level * 100) / scale
+                    // Controlliamo se è in carica
+                    isCharging = status == BatteryManager.BATTERY_STATUS_CHARGING || status == BatteryManager.BATTERY_STATUS_FULL
+
+                    // Spingiamo il pacchetto completo al Mac
+                    notifyMacTelemetry()
                 }
             }
         }
     }
 
-    // 2. NOVITÀ: Ricevitore che ascolta le notifiche intercettate dal Listener
+    // 2. Ricevitore che ascolta le notifiche intercettate dal Listener
     private val notificationReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == "it.luigi.macsync.NEW_NOTIFICATION") {
@@ -83,15 +91,18 @@ class GattServerManager private constructor(private val context: Context) {
         }
     }
 
-    // Funzione che "spinge" il nuovo dato al Mac (Telemetria)
-    private fun notifyMacTelemetry(batteryLevel: Int) {
+    // --- FUNZIONE PER INVIARE LA TELEMETRIA MULTIPLA ---
+    private fun notifyMacTelemetry() {
         val mac = connectedMac
         val characteristic = telemetryCharacteristic
 
         if (mac != null && characteristic != null && gattServer != null) {
-            val data = batteryLevel.toString().toByteArray()
+            // Assembliamo il payload col separatore invisibile
+            val payload = "$currentBatteryLevel\u001F$isCharging\u001F$currentNetwork\u001F$currentSignal"
+            val data = payload.toByteArray(Charsets.UTF_8)
+
             gattServer?.notifyCharacteristicChanged(mac, characteristic, false, data)
-            Log.d("MacSync", "Aggiornamento batteria push inviato: $batteryLevel%")
+            Log.d("MacSync", "Telemetria inviata: $payload")
         }
     }
 
@@ -101,16 +112,11 @@ class GattServerManager private constructor(private val context: Context) {
         val characteristic = notificationsCharacteristic
 
         if (mac != null && characteristic != null && gattServer != null) {
-            // Tagliamo la stringa per sicurezza, per non sforare l'MTU standard del Bluetooth
+            // Tagliamo la stringa per sicurezza
             val safePayload = payload.take(150).toByteArray()
             gattServer?.notifyCharacteristicChanged(mac, characteristic, false, safePayload)
             Log.d("MacSync", "Notifica inoltrata al Mac: $payload")
         }
-    }
-
-    private fun getBatteryLevel(): Int {
-        val batteryManager = context.getSystemService(Context.BATTERY_SERVICE) as BatteryManager
-        return batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
     }
 
     private val gattServerCallback = object : BluetoothGattServerCallback() {
@@ -118,7 +124,7 @@ class GattServerManager private constructor(private val context: Context) {
             super.onConnectionStateChange(device, status, newState)
             if (newState == BluetoothProfile.STATE_CONNECTED) {
                 connectedMac = device // Memorizziamo chi si è connesso
-                _connectionState.value = "Connesso al Mac! 🍏"
+                _connectionState.value = "Connesso al Mac! \uD83C\uDF4F"
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                 connectedMac = null
                 _connectionState.value = "Disconnesso. In attesa..."
@@ -131,13 +137,13 @@ class GattServerManager private constructor(private val context: Context) {
         ) {
             super.onCharacteristicReadRequest(device, requestId, offset, characteristic)
             if (characteristic.uuid == TELEMETRY_UUID) {
-                val batteryLevel = getBatteryLevel()
-                val data = batteryLevel.toString().toByteArray()
+                // Se il Mac chiede una lettura diretta, inviamo il nuovo pacchetto multiplo
+                val payload = "$currentBatteryLevel\u001F$isCharging\u001F$currentNetwork\u001F$currentSignal"
+                val data = payload.toByteArray(Charsets.UTF_8)
                 gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, data)
             }
         }
 
-        // Il Mac scrive nel descrittore per attivare le notifiche (ora vale per entrambe le caratteristiche)
         override fun onDescriptorWriteRequest(
             device: BluetoothDevice, requestId: Int, descriptor: BluetoothGattDescriptor,
             preparedWrite: Boolean, responseNeeded: Boolean, offset: Int, value: ByteArray
@@ -145,7 +151,7 @@ class GattServerManager private constructor(private val context: Context) {
             super.onDescriptorWriteRequest(device, requestId, descriptor, preparedWrite, responseNeeded, offset, value)
 
             if (descriptor.uuid == CCC_DESCRIPTOR_UUID) {
-                Log.d("MacSync", "Il Mac si è iscritto alle notifiche di una caratteristica! 🚀")
+                Log.d("MacSync", "Il Mac si è iscritto alle notifiche di una caratteristica! \uD83D\uDE80")
                 if (responseNeeded) {
                     gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
                 }
@@ -157,10 +163,9 @@ class GattServerManager private constructor(private val context: Context) {
         gattServer = bluetoothManager.openGattServer(context, gattServerCallback)
         setupService()
 
-        // Registriamo il ricevitore per la batteria
+        // Registriamo i ricevitori
         context.registerReceiver(batteryReceiver, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
 
-        // Registriamo il ricevitore per le notifiche (usiamo RECEIVER_NOT_EXPORTED per sicurezza su Android 13+)
         context.registerReceiver(
             notificationReceiver,
             IntentFilter("it.luigi.macsync.NEW_NOTIFICATION"),
@@ -201,7 +206,7 @@ class GattServerManager private constructor(private val context: Context) {
     }
 
     fun stopServer() {
-        // Pulizia totale quando spegniamo il server
+        // Pulizia totale
         context.unregisterReceiver(batteryReceiver)
         context.unregisterReceiver(notificationReceiver)
         gattServer?.close()
