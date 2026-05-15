@@ -26,7 +26,8 @@ struct ContentView: View {
             HStack {
                 // Sostituiti i loghi Bluetooth con le antenne di sistema
                 if bleManager.isSwitchedOn && bleManager.connectionStatus.contains("Connesso") {
-                    Image(systemName: "candybarphone")
+                    // MODIFICA QUI: Icona moderna!
+                    Image(systemName: "iphone")
                         .foregroundColor(.primary)
                 } else {
                     Image(systemName: bleManager.isSwitchedOn ? "antenna.radiowaves.left.and.right" : "antenna.radiowaves.left.and.right.slash")
