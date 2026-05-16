@@ -56,10 +56,32 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
     }
     
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
-        connectionStatus = "Ricerca..."
-        self.pixelPeripheral = nil
-        self.batteryLevel = "--%"
-        centralManager.scanForPeripherals(withServices: [serviceUUID], options: nil)
+        print("MacSync: Dispositivo disconnesso. Motivo: \(error?.localizedDescription ?? "Nessuno")")
+        
+        DispatchQueue.main.async {
+            self.connectionStatus = "Ricerca..."
+            self.pixelPeripheral = nil
+            self.batteryLevel = "--%"
+            self.networkType = "---"
+            self.isWifi = false
+            
+            // Diamo a CoreBluetooth 1.5 secondi per resettare la sua coda interna prima di ripartire
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                if self.centralManager.state == .poweredOn {
+                    print("MacSync: Riavvio scansione in background...")
+                    self.centralManager.scanForPeripherals(withServices: [self.serviceUUID], options: nil)
+                }
+            }
+        }
+    }
+    
+    // Aggiungi anche questo per gestire i tentativi di connessione falliti a metà
+    func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
+        print("MacSync: Connessione fallita.")
+        DispatchQueue.main.async {
+            self.pixelPeripheral = nil
+            self.centralManager.scanForPeripherals(withServices: [self.serviceUUID], options: nil)
+        }
     }
 }
 

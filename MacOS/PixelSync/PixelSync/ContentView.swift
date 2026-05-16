@@ -9,7 +9,7 @@ struct ContentView: View {
         if bleManager.isCharging {
             return "battery.100.bolt"
         }
-        
+       
         // Se non è in carica, calcola lo scaglione corretto
         let level = Int(bleManager.batteryLevel.replacingOccurrences(of: "%", with: "")) ?? 50
         if level <= 12 { return "battery.0" }
@@ -44,8 +44,11 @@ struct ContentView: View {
                     // Segnale di Rete
                     HStack(spacing: 4) {
                         Text(bleManager.networkType) // Qui arriverà "5G", "4G" o "Tuo_WiFi"
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundColor(.secondary)
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundColor(.secondary)
+                        .lineLimit(1) // Impedisce di andare a capo
+                        .minimumScaleFactor(0.6) // Se non ci sta, scala il font fino al 60% della sua grandezza originale
+                        .fixedSize(horizontal: true, vertical: false) // Dice a SwiftUI "Dagli lo spazio che chiede in orizzontale"
                         
                         // Icona Wi-Fi (visibile solo se connesso al Wi-Fi)
                         if bleManager.isWifi {
