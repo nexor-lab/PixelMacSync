@@ -6,7 +6,6 @@ object GattConfig {
     // Service UUIDs
     val SYSTEM_SERVICE_UUID: UUID = UUID.fromString("b4250001-1000-4000-8000-00805f9b34fb")
     val NOTIF_SERVICE_UUID: UUID = UUID.fromString("b4250002-1000-4000-8000-00805f9b34fb")
-    val MEDIA_SERVICE_UUID: UUID = UUID.fromString("b4250003-1000-4000-8000-00805f9b34fb")
 
     // Characteristic UUIDs - System
     val PROTOCOL_VERSION_CHAR: UUID = UUID.fromString("b4250010-1000-4000-8000-00805f9b34fb")
@@ -19,10 +18,6 @@ object GattConfig {
 
     // Characteristic UUIDs - Notif
     val ACTIVE_NOTIF_CHAR: UUID = UUID.fromString("b4250021-1000-4000-8000-00805f9b34fb")
-
-    // Characteristic UUIDs - Media
-    val MEDIA_STATE_CHAR: UUID = UUID.fromString("b4250031-1000-4000-8000-00805f9b34fb")
-    val MEDIA_COMMAND_CHAR: UUID = UUID.fromString("b4250032-1000-4000-8000-00805f9b34fb")
 
     const val DELIMITER = "\u001F"
 }

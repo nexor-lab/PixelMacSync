@@ -23,7 +23,8 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true // Attiva R8 per offuscare e rimuovere il codice morto
+            isShrinkResources = true // Rimuove file grafici e XML inutilizzati
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
