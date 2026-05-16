@@ -11,10 +11,8 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
     let serviceUUID = CBUUID(string: "E20A39F4-73F5-4BC4-A12F-17D1AD07A961")
     let telemetryUUID = CBUUID(string: "33333333-73F5-4BC4-A12F-17D1AD07A961")
     let notificationsUUID = CBUUID(string: "22222222-73F5-4BC4-A12F-17D1AD07A961")
-    // NOVITÀ: Il canale per dare ordini ad Android
     let commandUUID = CBUUID(string: "44444444-73F5-4BC4-A12F-17D1AD07A961")
     
-    // Riferimento per poterci scrivere sopra in qualsiasi momento
     var commandCharacteristic: CBCharacteristic?
     
     @Published var isSwitchedOn = false
@@ -25,9 +23,6 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
     @Published var signalStrength: Int = 3
     @Published var isWifi: Bool = false
     @Published var isHotspotActive: Bool = false
-    @Published var isPlaying: Bool = false
-    @Published var songTitle: String = "Nessun media in riproduzione"
-    @Published var songArtist: String = "---"
 
     override init() {
         super.init()
@@ -61,7 +56,7 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
             self.connectionStatus = "Ricerca..."
             self.pixelPeripheral?.delegate = nil
             self.pixelPeripheral = nil
-            self.commandCharacteristic = nil // Puliamo anche questo
+            self.commandCharacteristic = nil
             
             self.batteryLevel = "--%"
             self.isCharging = false
@@ -69,9 +64,6 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
             self.signalStrength = 0
             self.isWifi = false
             self.isHotspotActive = false
-            self.songTitle = "Nessun media in riproduzione"
-            self.songArtist = "---"
-            self.isPlaying = false
             
             if self.centralManager.state == .poweredOn {
                 self.centralManager.scanForPeripherals(withServices: [self.serviceUUID], options: nil)
@@ -101,9 +93,6 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
             signalStrength = 0
             isWifi = false
             isHotspotActive = false
-            songTitle = "Nessun media in riproduzione"
-            songArtist = "---"
-            isPlaying = false
         }
     }
 
@@ -153,9 +142,6 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
             self.signalStrength = 0
             self.isWifi = false
             self.isHotspotActive = false
-            self.songTitle = "Nessun media in riproduzione"
-            self.songArtist = "---"
-            self.isPlaying = false
             
             self.centralManager.stopScan()
             
@@ -180,7 +166,6 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
         }
     }
     
-    // --- NOVITÀ: FUNZIONE PER INVIARE IL COMANDO AL PIXEL ---
     func setRemoteHotspot(enable: Bool) {
         guard let peripheral = pixelPeripheral, let characteristic = commandCharacteristic else {
             print("MacSync: Impossibile inviare il comando. Dispositivo o canale non pronto.")
@@ -192,7 +177,6 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
             peripheral.writeValue(data, for: characteristic, type: .withResponse)
             print("MacSync: Inviato comando -> \(commandString)")
             
-            // Aggiorniamo ottimisticamente l'interfaccia del Mac
             DispatchQueue.main.async {
                 self.isHotspotActive = enable
             }
@@ -215,7 +199,6 @@ extension BLEManager: CBPeripheralDelegate {
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
         guard let services = peripheral.services else { return }
         for service in services where service.uuid == serviceUUID {
-            // Aggiungiamo anche commandUUID alla ricerca
             peripheral.discoverCharacteristics([telemetryUUID, notificationsUUID, commandUUID], for: service)
         }
     }
@@ -233,7 +216,6 @@ extension BLEManager: CBPeripheralDelegate {
                 peripheral.setNotifyValue(true, for: characteristic)
             }
             
-            // NOVITÀ: Salviamo il riferimento al canale dei comandi!
             if characteristic.uuid == commandUUID {
                 print("MacSync: Canale Comandi armato e pronto al fuoco!")
                 self.commandCharacteristic = characteristic

@@ -5,12 +5,10 @@ struct ContentView: View {
     
     // Funzione di supporto corretta per l'icona della batteria
     var batteryIconName: String {
-        // Se è in carica, Apple richiede l'uso dell'unica icona col fulmine disponibile
         if bleManager.isCharging {
             return "battery.100.bolt"
         }
        
-        // Se non è in carica, calcola lo scaglione corretto
         let level = Int(bleManager.batteryLevel.replacingOccurrences(of: "%", with: "")) ?? 50
         if level <= 12 { return "battery.0" }
         if level <= 37 { return "battery.25" }
@@ -24,9 +22,7 @@ struct ContentView: View {
             
             // --- SEZIONE 1: STATO CONNESSIONE E DISPOSITIVO ---
             HStack {
-                // Sostituiti i loghi Bluetooth con le antenne di sistema
                 if bleManager.isSwitchedOn && bleManager.connectionStatus.contains("Connesso") {
-                    // MODIFICA QUI: Icona moderna!
                     Image(systemName: "iphone")
                         .foregroundColor(.primary)
                 } else {
@@ -43,14 +39,13 @@ struct ContentView: View {
 
                     // Segnale di Rete
                     HStack(spacing: 4) {
-                        Text(bleManager.networkType) // Qui arriverà "5G", "4G" o "Tuo_WiFi"
+                        Text(bleManager.networkType)
                         .font(.system(size: 10, weight: .bold))
                         .foregroundColor(.secondary)
-                        .lineLimit(1) // Impedisce di andare a capo
-                        .minimumScaleFactor(0.6) // Se non ci sta, scala il font fino al 60% della sua grandezza originale
-                        .fixedSize(horizontal: true, vertical: false) // Dice a SwiftUI "Dagli lo spazio che chiede in orizzontale"
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.6)
+                        .fixedSize(horizontal: true, vertical: false)
                         
-                        // Icona Wi-Fi (visibile solo se connesso al Wi-Fi)
                         if bleManager.isWifi {
                             Image(systemName: "wifi")
                                 .foregroundColor(.primary)
@@ -76,38 +71,7 @@ struct ContentView: View {
             
             Divider()
             
-            // --- SEZIONE 2: MEDIA CONTROL ---
-            HStack {
-                VStack(alignment: .leading) {
-                    Text(bleManager.songTitle)
-                        .font(.subheadline)
-                        .bold()
-                        .lineLimit(1)
-                    Text(bleManager.songArtist)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .lineLimit(1)
-                }
-                
-                Spacer()
-                
-                Button(action: { /* Indietro */ }) {
-                    Image(systemName: "backward.fill")
-                }.buttonStyle(.plain)
-                
-                Button(action: { bleManager.isPlaying.toggle() }) {
-                    Image(systemName: bleManager.isPlaying ? "pause.fill" : "play.fill")
-                        .font(.title2)
-                }.buttonStyle(.plain)
-                
-                Button(action: { /* Avanti */ }) {
-                    Image(systemName: "forward.fill")
-                }.buttonStyle(.plain)
-            }
-            
-            Divider()
-            
-            // --- SEZIONE 3: HOTSPOT ---
+            // --- SEZIONE 2: HOTSPOT ---
             Toggle(isOn: $bleManager.isHotspotActive) {
                 HStack {
                     Image(systemName: "personalhotspot")
@@ -118,7 +82,6 @@ struct ContentView: View {
             }
             .toggleStyle(.switch)
             .onChange(of: bleManager.isHotspotActive) { oldValue, newValue in
-                // Quando clicchi l'interruttore, spariamo il comando al Pixel!
                 bleManager.setRemoteHotspot(enable: newValue)
             }
             
@@ -127,7 +90,6 @@ struct ContentView: View {
         .frame(width: 320)
     }
     
-    // Helper per colorare di rosso se la batteria scende sotto il 20%
     func levelColor(for levelStr: String) -> Color {
         let level = Int(levelStr.replacingOccurrences(of: "%", with: "")) ?? 50
         if level <= 20 { return .red }
