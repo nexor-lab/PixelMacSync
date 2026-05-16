@@ -2,6 +2,7 @@ import Foundation
 import CoreBluetooth
 import Combine
 import UserNotifications
+import AppKit // NOVITÀ: Ci serve per capire quando apri/chiudi il Mac!
 
 class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
     var centralManager: CBCentralManager!
@@ -16,7 +17,7 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
     @Published var batteryLevel: String = "--%"
     @Published var isCharging: Bool = false
     @Published var networkType: String = "5G"
-    @Published var signalStrength: Int = 3 // Da 0 a 4
+    @Published var signalStrength: Int = 3
     @Published var isWifi: Bool = false
     @Published var isHotspotActive: Bool = false
     @Published var isPlaying: Bool = false
@@ -30,6 +31,45 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, error in
             print("MacSync: Permessi notifiche macOS concessi: \(granted)")
         }
+        
+        // --- NOVITÀ: ASCOLTIAMO IL COPERCHIO DEL MAC ---
+        NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(macDidSleep), name: NSWorkspace.willSleepNotification, object: nil)
+        NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(macDidWake), name: NSWorkspace.didWakeNotification, object: nil)
+    }
+
+    // Metodo chiamato nell'esatto istante in cui chiudi il coperchio
+    @objc func macDidSleep() {
+        print("MacSync: Coperchio chiuso. Mac in Stop. Sgancio il Bluetooth preventivamente.")
+        if let peripheral = pixelPeripheral {
+            centralManager.cancelPeripheralConnection(peripheral)
+        }
+        centralManager.stopScan()
+    }
+
+    // Metodo chiamato nell'esatto istante in cui riapri il coperchio
+    @objc func macDidWake() {
+        print("MacSync: Coperchio aperto. Mac Sveglio. Riavvio motore Bluetooth pulito.")
+        
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+            self.connectionStatus = "Ricerca..."
+            self.pixelPeripheral?.delegate = nil
+            self.pixelPeripheral = nil
+            
+            // Azzeriamo i dati a schermo
+            self.batteryLevel = "--%"
+            self.isCharging = false
+            self.networkType = "---"
+            self.signalStrength = 0
+            self.isWifi = false
+            self.isHotspotActive = false
+            self.songTitle = "Nessun media in riproduzione"
+            self.songArtist = "---"
+            self.isPlaying = false
+            
+            if self.centralManager.state == .poweredOn {
+                self.centralManager.scanForPeripherals(withServices: [self.serviceUUID], options: nil)
+            }
+        }
     }
 
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
@@ -37,14 +77,14 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
             isSwitchedOn = true
             connectionStatus = "Scansione..."
             
-            // Un micro-ritardo assicura che l'antenna sia 100% pronta prima di scansionare
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 self.centralManager.scanForPeripherals(withServices: [self.serviceUUID], options: nil)
             }
         } else {
-            // Se spegniamo il Bluetooth, puliamo tutto! Altrimenti al riavvio si incanta.
             isSwitchedOn = false
             connectionStatus = "Bluetooth OFF"
+            
+            pixelPeripheral?.delegate = nil
             pixelPeripheral = nil
             
             batteryLevel = "--%"
@@ -60,20 +100,25 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
     }
 
     func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral, advertisementData: [String : Any], rssi RSSI: NSNumber) {
+        guard self.pixelPeripheral == nil else { return }
+        
         centralManager.stopScan()
         self.pixelPeripheral = peripheral
         self.pixelPeripheral?.delegate = self
         centralManager.connect(peripheral, options: nil)
         
-        // NUOVO: Timeout di sicurezza anti-blocco
         DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) {
-            // Se dopo 4 secondi siamo ancora "appesi" e non connessi...
             if self.pixelPeripheral?.identifier == peripheral.identifier && peripheral.state != .connected {
                 print("MacSync: Timeout connessione! Il Pixel non risponde. Riavvio scansione...")
                 self.centralManager.cancelPeripheralConnection(peripheral)
+                
+                self.pixelPeripheral?.delegate = nil
                 self.pixelPeripheral = nil
                 self.connectionStatus = "Ricerca..."
-                self.centralManager.scanForPeripherals(withServices: [self.serviceUUID], options: nil)
+                
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                    self.centralManager.scanForPeripherals(withServices: [self.serviceUUID], options: nil)
+                }
             }
         }
     }
@@ -88,9 +133,10 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
         
         DispatchQueue.main.async {
             self.connectionStatus = "Ricerca..."
+            
+            self.pixelPeripheral?.delegate = nil
             self.pixelPeripheral = nil
             
-            // Azzeriamo esplicitamente TUTTI i dati visivi per evitare i "dati fantasma"
             self.batteryLevel = "--%"
             self.isCharging = false
             self.networkType = "---"
@@ -101,17 +147,25 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
             self.songArtist = "---"
             self.isPlaying = false
             
-            // Fermiamo eventuali scansioni incastrate e facciamo ripartire la ricerca pulita
             self.centralManager.stopScan()
-            self.centralManager.scanForPeripherals(withServices: [self.serviceUUID], options: nil)
+            
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                if self.centralManager.state == .poweredOn {
+                    self.centralManager.scanForPeripherals(withServices: [self.serviceUUID], options: nil)
+                }
+            }
         }
     }
     
     func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
         print("MacSync: Connessione fallita.")
         DispatchQueue.main.async {
+            self.pixelPeripheral?.delegate = nil
             self.pixelPeripheral = nil
-            self.centralManager.scanForPeripherals(withServices: [self.serviceUUID], options: nil)
+            
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                self.centralManager.scanForPeripherals(withServices: [self.serviceUUID], options: nil)
+            }
         }
     }
 }
@@ -119,11 +173,10 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
 // MARK: - Gestione Telemetria e Notifiche
 extension BLEManager: CBPeripheralDelegate {
     
-    // NUOVO METODO: Intercetta quando l'app su Android viene killata (il servizio sparisce)
     func peripheral(_ peripheral: CBPeripheral, didModifyServices invalidatedServices: [CBService]) {
         for service in invalidatedServices {
             if service.uuid == serviceUUID {
-                print("MacSync: Il servizio Android è sparito (App chiusa?). Forzo la disconnessione.")
+                print("MacSync: Il servizio Android è sparito. Forzo la disconnessione.")
                 centralManager.cancelPeripheralConnection(peripheral)
                 break
             }
@@ -154,7 +207,6 @@ extension BLEManager: CBPeripheralDelegate {
     
     func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
         
-        // Gestione Telemetria
         if characteristic.uuid == telemetryUUID, let data = characteristic.value,
            let payload = String(data: data, encoding: .utf8) {
             
@@ -171,7 +223,6 @@ extension BLEManager: CBPeripheralDelegate {
             }
         }
         
-        // Gestione Notifiche in arrivo
         if characteristic.uuid == notificationsUUID {
             if let data = characteristic.value, let payload = String(data: data, encoding: .utf8) {
                 
@@ -194,7 +245,6 @@ extension BLEManager: CBPeripheralDelegate {
                         
                         if !fileManager.fileExists(atPath: iconsFolderURL.path) {
                             try? fileManager.createDirectory(at: iconsFolderURL, withIntermediateDirectories: true, attributes: nil)
-                            print("MacSync: Creata cartella icone in: \(iconsFolderURL.path)")
                         }
                         
                         let iconFileURL = iconsFolderURL.appendingPathComponent("\(bundleId).png")
@@ -203,19 +253,14 @@ extension BLEManager: CBPeripheralDelegate {
                             do {
                                 let attachment = try UNNotificationAttachment(identifier: bundleId, url: iconFileURL, options: nil)
                                 content.attachments = [attachment]
-                                print("MacSync: Icona custom caricata correttamente da Immagini per \(bundleId)")
                             } catch {
-                                print("MacSync: Errore nella creazione dell'allegato per \(bundleId): \(error)")
+                                print("MacSync: Errore nella creazione dell'allegato: \(error)")
                             }
-                        } else {
-                            print("MacSync: Icona non trovata in Immagini/MacSyncIcons per \(bundleId).")
                         }
                     }
                     
                     let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
                     UNUserNotificationCenter.current().add(request)
-                    
-                    print("MacSync: Notifica nativa lanciata -> \(title): \(body)")
                 }
             }
         }
