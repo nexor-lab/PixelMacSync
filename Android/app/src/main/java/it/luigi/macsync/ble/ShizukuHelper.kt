@@ -136,9 +136,9 @@ object ShizukuHelper {
                 Log.d(TAG, "Tethering binder descriptor: ${binder.interfaceDescriptor}")
 
                 if (enable) {
-                    startTetheringViaParcel(binder, context.packageName)
+                    startTetheringViaParcel(binder)
                 } else {
-                    stopTetheringViaParcel(binder, context.packageName)
+                    stopTetheringViaParcel(binder)
                 }
 
             } catch (e: Exception) {
@@ -147,7 +147,7 @@ object ShizukuHelper {
         }.start()
     }
 
-    private fun startTetheringViaParcel(binder: IBinder, packageName: String) {
+    private fun startTetheringViaParcel(binder: IBinder) {
         val data = Parcel.obtain()
         val reply = Parcel.obtain()
 
@@ -163,21 +163,35 @@ object ShizukuHelper {
         try {
             data.writeInterfaceToken("android.net.ITetheringConnector")
 
-            // TetheringRequestParcel (non null → writeInt(1) + campi)
+            // 1. Diciamo al sistema che il TetheringRequestParcel NON è nullo
             data.writeInt(1)
-            data.writeInt(TETHERING_WIFI)   // tetheringType
+
+            // 2. STABLE AIDL: Salviamo la posizione e mettiamo un placeholder per la dimensione
+            val startPos = data.dataPosition()
+            data.writeInt(0) // Spazio vuoto che riempiremo tra poco
+
+            // 3. Scriviamo i campi del Parcelable
+            data.writeInt(TETHERING_WIFI)    // tetheringType
             data.writeInt(0)                 // localIPv4Address = null
             data.writeInt(0)                 // staticIpv4ClientAddress = null
             data.writeInt(0)                 // exemptFromEntitlementCheck = false
             data.writeInt(1)                 // showProvisioningUi = true
             data.writeInt(0)                 // connectivityScope = GLOBAL
+            data.writeInt(0)                 // softApConfig = null (Aggiunto per stabilità)
 
-            data.writeString(packageName)
+            // 4. Magia Nera: Calcoliamo la dimensione totale e andiamo a sovrascrivere il placeholder
+            val endPos = data.dataPosition()
+            data.setDataPosition(startPos)
+            data.writeInt(endPos - startPos) // Scriviamo la vera dimensione in byte!
+            data.setDataPosition(endPos)     // Riportiamo il cursore in fondo
+
+            // 5. Ora scriviamo gli argomenti della funzione MASCHERANDO L'IDENTITÀ
+            data.writeString("com.android.shell") // <-- IDENTITÀ FAKE: Siamo Shizuku!
             data.writeString(null)           // attributionTag
-            data.writeStrongBinder(listener) // listener — non più null!
+            data.writeStrongBinder(listener)
 
-            val result = binder.transact(1, data, reply, 0)
-            reply.readException()
+            val result = binder.transact(4, data, reply, 0)
+            reply.readException() // Se tutto è allineato, qui passerà liscio
             Log.d(TAG, "startTethering transact ok, result=$result")
 
         } finally {
@@ -186,7 +200,7 @@ object ShizukuHelper {
         }
     }
 
-    private fun stopTetheringViaParcel(binder: IBinder, packageName: String) {
+    private fun stopTetheringViaParcel(binder: IBinder) {
         val data = Parcel.obtain()
         val reply = Parcel.obtain()
 
@@ -202,11 +216,12 @@ object ShizukuHelper {
             data.writeInterfaceToken("android.net.ITetheringConnector")
 
             data.writeInt(TETHERING_WIFI)    // type
-            data.writeString(packageName)
+            data.writeString("com.android.shell") // <-- IDENTITÀ FAKE: Siamo Shizuku!
             data.writeString(null)            // attributionTag
-            data.writeStrongBinder(listener)  // listener
+            data.writeStrongBinder(listener)
 
-            val result = binder.transact(2, data, reply, 0)
+            // FIX APPLICATO QUI: Transazione 4 invece di 2
+            val result = binder.transact(5, data, reply, 0)
             reply.readException()
             Log.d(TAG, "stopTethering transact ok, result=$result")
 
