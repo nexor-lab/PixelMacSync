@@ -19,6 +19,12 @@
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" tools:ignore="BackgroundLocationPolicy" />
+    <uses-permission android:name="moe.shizuku.manager.permission.API_V23" />
+
+    <!-- NECESSARIO: permette ad Android 11+ di vedere il processo Shizuku -->
+    <queries>
+        <package android:name="moe.shizuku.privileged.api" />
+    </queries>
 
     <application
         android:allowBackup="true"
@@ -29,7 +35,6 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.MacSync"
         android:enableOnBackInvokedCallback="true">
-
 
         <activity
             android:name=".MainActivity"
@@ -56,6 +61,15 @@
             android:name=".MacSyncBleService"
             android:foregroundServiceType="connectedDevice"
             android:exported="false" />
+
+        <!-- OBBLIGATORIO: provider Shizuku che consegna il binder all'app -->
+        <provider
+            android:name="rikka.shizuku.ShizukuProvider"
+            android:authorities="${applicationId}.shizuku"
+            android:multiprocess="false"
+            android:enabled="true"
+            android:exported="true"
+            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
 
     </application>
 

@@ -31,7 +31,7 @@ struct ContentView: View {
                         .foregroundColor(.primary)
                 } else {
                     Image(systemName: bleManager.isSwitchedOn ? "antenna.radiowaves.left.and.right" : "antenna.radiowaves.left.and.right.slash")
-                        .foregroundColor(bleManager.isSwitchedOn ? .blue : .red)
+                        .foregroundColor(bleManager.isSwitchedOn ? .accentColor : .red)
                 }
                 
                 Text(bleManager.connectionStatus.contains("Connesso") ? "Pixel 7 Pro" : bleManager.connectionStatus)
@@ -111,13 +111,16 @@ struct ContentView: View {
             Toggle(isOn: $bleManager.isHotspotActive) {
                 HStack {
                     Image(systemName: "personalhotspot")
-                        .foregroundColor(bleManager.isHotspotActive ? .blue : .secondary)
+                        .foregroundColor(bleManager.isHotspotActive ? .accentColor : .secondary)
                     Text("Hotspot Remoto")
                         .font(.subheadline)
                 }
             }
             .toggleStyle(.switch)
-            .tint(.blue)
+            .onChange(of: bleManager.isHotspotActive) { oldValue, newValue in
+                // Quando clicchi l'interruttore, spariamo il comando al Pixel!
+                bleManager.setRemoteHotspot(enable: newValue)
+            }
             
         }
         .padding(16)

@@ -2,7 +2,7 @@ import Foundation
 import CoreBluetooth
 import Combine
 import UserNotifications
-import AppKit // NOVITÀ: Ci serve per capire quando apri/chiudi il Mac!
+import AppKit
 
 class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
     var centralManager: CBCentralManager!
@@ -11,6 +11,11 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
     let serviceUUID = CBUUID(string: "E20A39F4-73F5-4BC4-A12F-17D1AD07A961")
     let telemetryUUID = CBUUID(string: "33333333-73F5-4BC4-A12F-17D1AD07A961")
     let notificationsUUID = CBUUID(string: "22222222-73F5-4BC4-A12F-17D1AD07A961")
+    // NOVITÀ: Il canale per dare ordini ad Android
+    let commandUUID = CBUUID(string: "44444444-73F5-4BC4-A12F-17D1AD07A961")
+    
+    // Riferimento per poterci scrivere sopra in qualsiasi momento
+    var commandCharacteristic: CBCharacteristic?
     
     @Published var isSwitchedOn = false
     @Published var connectionStatus = "Disconnesso"
@@ -32,12 +37,10 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
             print("MacSync: Permessi notifiche macOS concessi: \(granted)")
         }
         
-        // --- NOVITÀ: ASCOLTIAMO IL COPERCHIO DEL MAC ---
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(macDidSleep), name: NSWorkspace.willSleepNotification, object: nil)
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(macDidWake), name: NSWorkspace.didWakeNotification, object: nil)
     }
 
-    // Metodo chiamato nell'esatto istante in cui chiudi il coperchio
     @objc func macDidSleep() {
         print("MacSync: Coperchio chiuso. Mac in Stop. Sgancio il Bluetooth preventivamente.")
         if let peripheral = pixelPeripheral {
@@ -46,24 +49,20 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
         centralManager.stopScan()
     }
 
-    // Metodo chiamato nell'esatto istante in cui riapri il coperchio
     @objc func macDidWake() {
         print("MacSync: Coperchio aperto. Mac Sveglio. Riavvio motore Bluetooth pulito.")
         
-        // 1. Cerchiamo e distruggiamo le connessioni fantasma tenute in vita dall'hardware
         let ghostPeripherals = centralManager.retrieveConnectedPeripherals(withServices: [serviceUUID])
         for ghost in ghostPeripherals {
-            print("MacSync: Trovato dispositivo fantasma in memoria! Forzo la disconnessione.")
             centralManager.cancelPeripheralConnection(ghost)
         }
         
-        // 2. Facciamo il solito ripristino con 2 secondi di respiro
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
             self.connectionStatus = "Ricerca..."
             self.pixelPeripheral?.delegate = nil
             self.pixelPeripheral = nil
+            self.commandCharacteristic = nil // Puliamo anche questo
             
-            // Azzeriamo i dati a schermo
             self.batteryLevel = "--%"
             self.isCharging = false
             self.networkType = "---"
@@ -74,7 +73,6 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
             self.songArtist = "---"
             self.isPlaying = false
             
-            // 3. Ripartiamo puliti
             if self.centralManager.state == .poweredOn {
                 self.centralManager.scanForPeripherals(withServices: [self.serviceUUID], options: nil)
             }
@@ -95,6 +93,7 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
             
             pixelPeripheral?.delegate = nil
             pixelPeripheral = nil
+            commandCharacteristic = nil
             
             batteryLevel = "--%"
             isCharging = false
@@ -123,6 +122,7 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
                 
                 self.pixelPeripheral?.delegate = nil
                 self.pixelPeripheral = nil
+                self.commandCharacteristic = nil
                 self.connectionStatus = "Ricerca..."
                 
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
@@ -145,6 +145,7 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
             
             self.pixelPeripheral?.delegate = nil
             self.pixelPeripheral = nil
+            self.commandCharacteristic = nil
             
             self.batteryLevel = "--%"
             self.isCharging = false
@@ -171,9 +172,29 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
         DispatchQueue.main.async {
             self.pixelPeripheral?.delegate = nil
             self.pixelPeripheral = nil
+            self.commandCharacteristic = nil
             
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
                 self.centralManager.scanForPeripherals(withServices: [self.serviceUUID], options: nil)
+            }
+        }
+    }
+    
+    // --- NOVITÀ: FUNZIONE PER INVIARE IL COMANDO AL PIXEL ---
+    func setRemoteHotspot(enable: Bool) {
+        guard let peripheral = pixelPeripheral, let characteristic = commandCharacteristic else {
+            print("MacSync: Impossibile inviare il comando. Dispositivo o canale non pronto.")
+            return
+        }
+        
+        let commandString = enable ? "HOTSPOT_ON" : "HOTSPOT_OFF"
+        if let data = commandString.data(using: .utf8) {
+            peripheral.writeValue(data, for: characteristic, type: .withResponse)
+            print("MacSync: Inviato comando -> \(commandString)")
+            
+            // Aggiorniamo ottimisticamente l'interfaccia del Mac
+            DispatchQueue.main.async {
+                self.isHotspotActive = enable
             }
         }
     }
@@ -185,7 +206,6 @@ extension BLEManager: CBPeripheralDelegate {
     func peripheral(_ peripheral: CBPeripheral, didModifyServices invalidatedServices: [CBService]) {
         for service in invalidatedServices {
             if service.uuid == serviceUUID {
-                print("MacSync: Il servizio Android è sparito. Forzo la disconnessione.")
                 centralManager.cancelPeripheralConnection(peripheral)
                 break
             }
@@ -195,7 +215,8 @@ extension BLEManager: CBPeripheralDelegate {
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
         guard let services = peripheral.services else { return }
         for service in services where service.uuid == serviceUUID {
-            peripheral.discoverCharacteristics([telemetryUUID, notificationsUUID], for: service)
+            // Aggiungiamo anche commandUUID alla ricerca
+            peripheral.discoverCharacteristics([telemetryUUID, notificationsUUID, commandUUID], for: service)
         }
     }
     
@@ -210,6 +231,12 @@ extension BLEManager: CBPeripheralDelegate {
             if characteristic.uuid == notificationsUUID {
                 print("MacSync: Canale Notifiche pronto e in ascolto")
                 peripheral.setNotifyValue(true, for: characteristic)
+            }
+            
+            // NOVITÀ: Salviamo il riferimento al canale dei comandi!
+            if characteristic.uuid == commandUUID {
+                print("MacSync: Canale Comandi armato e pronto al fuoco!")
+                self.commandCharacteristic = characteristic
             }
         }
     }
@@ -234,9 +261,7 @@ extension BLEManager: CBPeripheralDelegate {
         
         if characteristic.uuid == notificationsUUID {
             if let data = characteristic.value, let payload = String(data: data, encoding: .utf8) {
-                
                 let parts = payload.components(separatedBy: "\u{001F}")
-                
                 if parts.count >= 3 {
                     let bundleId = parts[0]
                     let title = parts[1]
@@ -248,26 +273,21 @@ extension BLEManager: CBPeripheralDelegate {
                     content.sound = UNNotificationSound.default
                     
                     let fileManager = FileManager.default
-
                     if let picturesURL = fileManager.urls(for: .picturesDirectory, in: .userDomainMask).first {
                         let iconsFolderURL = picturesURL.appendingPathComponent("MacSyncIcons", isDirectory: true)
-                        
                         if !fileManager.fileExists(atPath: iconsFolderURL.path) {
                             try? fileManager.createDirectory(at: iconsFolderURL, withIntermediateDirectories: true, attributes: nil)
                         }
-                        
                         let iconFileURL = iconsFolderURL.appendingPathComponent("\(bundleId).png")
-                        
                         if fileManager.fileExists(atPath: iconFileURL.path) {
                             do {
                                 let attachment = try UNNotificationAttachment(identifier: bundleId, url: iconFileURL, options: nil)
                                 content.attachments = [attachment]
                             } catch {
-                                print("MacSync: Errore nella creazione dell'allegato: \(error)")
+                                print("MacSync: Errore allegato: \(error)")
                             }
                         }
                     }
-                    
                     let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
                     UNUserNotificationCenter.current().add(request)
                 }

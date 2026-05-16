@@ -25,6 +25,7 @@ import android.telephony.TelephonyCallback
 import android.telephony.TelephonyDisplayInfo
 import android.telephony.TelephonyManager
 import android.util.Log
+import it.luigi.macsync.ble.ShizukuHelper
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import java.util.UUID
@@ -53,6 +54,8 @@ class GattServerManager private constructor(private val context: Context) {
     private val TELEMETRY_UUID = UUID.fromString("33333333-73F5-4BC4-A12F-17D1AD07A961")
     private val CCC_DESCRIPTOR_UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
     private val NOTIFICATIONS_UUID = UUID.fromString("22222222-73F5-4BC4-A12F-17D1AD07A961")
+    // NOVITÀ: UUID per ricevere i comandi dal Mac
+    private val COMMAND_UUID = UUID.fromString("44444444-73F5-4BC4-A12F-17D1AD07A961")
     private var notificationsCharacteristic: BluetoothGattCharacteristic? = null
 
     private val _connectionState = MutableStateFlow("In attesa di connessione...")
@@ -230,6 +233,35 @@ class GattServerManager private constructor(private val context: Context) {
                 gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
             }
         }
+
+        // NOVITÀ: Metodo per ascoltare i comandi inviati dal Mac (Hotspot)
+        override fun onCharacteristicWriteRequest(
+            device: BluetoothDevice,
+            requestId: Int,
+            characteristic: BluetoothGattCharacteristic,
+            preparedWrite: Boolean,
+            responseNeeded: Boolean,
+            offset: Int,
+            value: ByteArray?
+        ) {
+            super.onCharacteristicWriteRequest(device, requestId, characteristic, preparedWrite, responseNeeded, offset, value)
+
+            // Se il Mac ci sta scrivendo sul canale dei comandi...
+            if (characteristic.uuid == COMMAND_UUID && value != null) {
+                val command = String(value, Charsets.UTF_8)
+                Log.d("MacSync", "Ricevuto comando dal Mac: $command")
+
+                // Azioniamo Shizuku in base al comando ricevuto!
+                when (command) {
+                    "HOTSPOT_ON" -> ShizukuHelper.toggleHotspot(true, context)
+                    "HOTSPOT_OFF" -> ShizukuHelper.toggleHotspot(false, context)
+                }
+
+                if (responseNeeded) {
+                    gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, value)
+                }
+            }
+        }
     }
 
     // --- NOVITÀ: FLAG DI SICUREZZA ---
@@ -277,6 +309,14 @@ class GattServerManager private constructor(private val context: Context) {
             CCC_DESCRIPTOR_UUID,
             BluetoothGattDescriptor.PERMISSION_READ or BluetoothGattDescriptor.PERMISSION_WRITE
         )
+
+        // NOVITÀ: Aggiungiamo la caratteristica per ricevere i comandi
+        val commandCharacteristic = BluetoothGattCharacteristic(
+            COMMAND_UUID,
+            BluetoothGattCharacteristic.PROPERTY_WRITE,
+            BluetoothGattCharacteristic.PERMISSION_WRITE
+        )
+        service.addCharacteristic(commandCharacteristic)
 
         localTelemetryCharacteristic.addDescriptor(clientConfigDescriptor)
         service.addCharacteristic(localTelemetryCharacteristic)
