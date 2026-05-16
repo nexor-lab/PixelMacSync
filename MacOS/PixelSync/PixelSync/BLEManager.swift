@@ -36,10 +36,26 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
         if central.state == .poweredOn {
             isSwitchedOn = true
             connectionStatus = "Scansione..."
-            centralManager.scanForPeripherals(withServices: [serviceUUID], options: nil)
+            
+            // Un micro-ritardo assicura che l'antenna sia 100% pronta prima di scansionare
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                self.centralManager.scanForPeripherals(withServices: [self.serviceUUID], options: nil)
+            }
         } else {
+            // Se spegniamo il Bluetooth, puliamo tutto! Altrimenti al riavvio si incanta.
             isSwitchedOn = false
             connectionStatus = "Bluetooth OFF"
+            pixelPeripheral = nil
+            
+            batteryLevel = "--%"
+            isCharging = false
+            networkType = "---"
+            signalStrength = 0
+            isWifi = false
+            isHotspotActive = false
+            songTitle = "Nessun media in riproduzione"
+            songArtist = "---"
+            isPlaying = false
         }
     }
 
@@ -56,26 +72,29 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
     }
     
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
-        print("MacSync: Dispositivo disconnesso. Motivo: \(error?.localizedDescription ?? "Nessuno")")
+        print("MacSync: Dispositivo disconnesso. Ripristino stato e riavvio scansione.")
         
         DispatchQueue.main.async {
             self.connectionStatus = "Ricerca..."
             self.pixelPeripheral = nil
-            self.batteryLevel = "--%"
-            self.networkType = "---"
-            self.isWifi = false
             
-            // Diamo a CoreBluetooth 1.5 secondi per resettare la sua coda interna prima di ripartire
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                if self.centralManager.state == .poweredOn {
-                    print("MacSync: Riavvio scansione in background...")
-                    self.centralManager.scanForPeripherals(withServices: [self.serviceUUID], options: nil)
-                }
-            }
+            // Azzeriamo esplicitamente TUTTI i dati visivi per evitare i "dati fantasma"
+            self.batteryLevel = "--%"
+            self.isCharging = false
+            self.networkType = "---"
+            self.signalStrength = 0
+            self.isWifi = false
+            self.isHotspotActive = false
+            self.songTitle = "Nessun media in riproduzione"
+            self.songArtist = "---"
+            self.isPlaying = false
+            
+            // Fermiamo eventuali scansioni incastrate e facciamo ripartire la ricerca pulita
+            self.centralManager.stopScan()
+            self.centralManager.scanForPeripherals(withServices: [self.serviceUUID], options: nil)
         }
     }
     
-    // Aggiungi anche questo per gestire i tentativi di connessione falliti a metà
     func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
         print("MacSync: Connessione fallita.")
         DispatchQueue.main.async {
@@ -87,6 +106,18 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
 
 // MARK: - Gestione Telemetria e Notifiche
 extension BLEManager: CBPeripheralDelegate {
+    
+    // NUOVO METODO: Intercetta quando l'app su Android viene killata (il servizio sparisce)
+    func peripheral(_ peripheral: CBPeripheral, didModifyServices invalidatedServices: [CBService]) {
+        for service in invalidatedServices {
+            if service.uuid == serviceUUID {
+                print("MacSync: Il servizio Android è sparito (App chiusa?). Forzo la disconnessione.")
+                centralManager.cancelPeripheralConnection(peripheral)
+                break
+            }
+        }
+    }
+    
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
         guard let services = peripheral.services else { return }
         for service in services where service.uuid == serviceUUID {
@@ -118,7 +149,7 @@ extension BLEManager: CBPeripheralDelegate {
             let parts = payload.components(separatedBy: "\u{001F}")
             
             DispatchQueue.main.async {
-                if parts.count >= 5 { // Ora ci aspettiamo 5 parametri!
+                if parts.count >= 5 {
                     self.batteryLevel = "\(parts[0])%"
                     self.isCharging = (parts[1] == "true")
                     self.networkType = parts[2]
@@ -144,20 +175,16 @@ extension BLEManager: CBPeripheralDelegate {
                     content.body = body
                     content.sound = UNNotificationSound.default
                     
-                    /// --- INIZIO GESTIONE ICONE DINAMICA NELLA CARTELLA IMMAGINI ---
                     let fileManager = FileManager.default
 
                     if let picturesURL = fileManager.urls(for: .picturesDirectory, in: .userDomainMask).first {
-                        // Creiamo una cartella chiamata "MacSyncIcons" dentro la tua cartella Immagini di sistema
                         let iconsFolderURL = picturesURL.appendingPathComponent("MacSyncIcons", isDirectory: true)
                         
-                        // Creazione automatica della cartella se mancante (scatterà alla prima notifica)
                         if !fileManager.fileExists(atPath: iconsFolderURL.path) {
                             try? fileManager.createDirectory(at: iconsFolderURL, withIntermediateDirectories: true, attributes: nil)
                             print("MacSync: Creata cartella icone in: \(iconsFolderURL.path)")
                         }
                         
-                        // Il file deve chiamarsi esattamente come il pacchetto Android (es: com.instagram.android.png)
                         let iconFileURL = iconsFolderURL.appendingPathComponent("\(bundleId).png")
                         
                         if fileManager.fileExists(atPath: iconFileURL.path) {
@@ -172,9 +199,7 @@ extension BLEManager: CBPeripheralDelegate {
                             print("MacSync: Icona non trovata in Immagini/MacSyncIcons per \(bundleId).")
                         }
                     }
-                    // --- FINE GESTIONE ICONE DINAMICA ---
                     
-                    // Mostriamo il banner
                     let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
                     UNUserNotificationCenter.current().add(request)
                     
