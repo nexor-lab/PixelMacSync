@@ -50,6 +50,14 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
     @objc func macDidWake() {
         print("MacSync: Coperchio aperto. Mac Sveglio. Riavvio motore Bluetooth pulito.")
         
+        // 1. Cerchiamo e distruggiamo le connessioni fantasma tenute in vita dall'hardware
+        let ghostPeripherals = centralManager.retrieveConnectedPeripherals(withServices: [serviceUUID])
+        for ghost in ghostPeripherals {
+            print("MacSync: Trovato dispositivo fantasma in memoria! Forzo la disconnessione.")
+            centralManager.cancelPeripheralConnection(ghost)
+        }
+        
+        // 2. Facciamo il solito ripristino con 2 secondi di respiro
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
             self.connectionStatus = "Ricerca..."
             self.pixelPeripheral?.delegate = nil
@@ -66,6 +74,7 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
             self.songArtist = "---"
             self.isPlaying = false
             
+            // 3. Ripartiamo puliti
             if self.centralManager.state == .poweredOn {
                 self.centralManager.scanForPeripherals(withServices: [self.serviceUUID], options: nil)
             }
