@@ -232,7 +232,13 @@ class GattServerManager private constructor(private val context: Context) {
         }
     }
 
+    // --- NOVITÀ: FLAG DI SICUREZZA ---
+    private var isServerRunning = false
+
     fun startServer() {
+        if (isServerRunning) return // Blocca doppi avvii che causerebbero crash
+        isServerRunning = true
+
         gattServer = bluetoothManager.openGattServer(context, gattServerCallback)
         setupService()
 
@@ -280,6 +286,9 @@ class GattServerManager private constructor(private val context: Context) {
     }
 
     fun stopServer() {
+        if (!isServerRunning) return // Impedisce l'errore fatale di disiscrivere un receiver non iscritto
+        isServerRunning = false
+
         context.unregisterReceiver(batteryReceiver)
         context.unregisterReceiver(notificationReceiver)
         telephonyManager.unregisterTelephonyCallback(telephonyCallback)

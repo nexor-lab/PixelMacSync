@@ -64,6 +64,18 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
         self.pixelPeripheral = peripheral
         self.pixelPeripheral?.delegate = self
         centralManager.connect(peripheral, options: nil)
+        
+        // NUOVO: Timeout di sicurezza anti-blocco
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) {
+            // Se dopo 4 secondi siamo ancora "appesi" e non connessi...
+            if self.pixelPeripheral?.identifier == peripheral.identifier && peripheral.state != .connected {
+                print("MacSync: Timeout connessione! Il Pixel non risponde. Riavvio scansione...")
+                self.centralManager.cancelPeripheralConnection(peripheral)
+                self.pixelPeripheral = nil
+                self.connectionStatus = "Ricerca..."
+                self.centralManager.scanForPeripherals(withServices: [self.serviceUUID], options: nil)
+            }
+        }
     }
     
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
