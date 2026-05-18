@@ -48,11 +48,8 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
         print("MacSync: Coperchio aperto. Mac Sveglio. Riavvio motore Bluetooth pulito.")
         
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+            // Reset grafico immediato dell'interfaccia
             self.connectionStatus = "Ricerca..."
-            self.pixelPeripheral?.delegate = nil
-            self.pixelPeripheral = nil
-            self.commandCharacteristic = nil
-            
             self.batteryLevel = "--%"
             self.isCharging = false
             self.networkType = "---"
@@ -60,6 +57,7 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
             self.isWifi = false
             self.isHotspotActive = false
             
+            // La pulizia dei riferimenti fisici ora è delegata a startScanningOrReconnect
             if self.centralManager.state == .poweredOn {
                 self.startScanningOrReconnect()
             }
@@ -104,9 +102,6 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
                 print("MacSync: Timeout connessione! Il Pixel non risponde. Riavvio scansione...")
                 self.centralManager.cancelPeripheralConnection(peripheral)
                 
-                self.pixelPeripheral?.delegate = nil
-                self.pixelPeripheral = nil
-                self.commandCharacteristic = nil
                 self.connectionStatus = "Ricerca..."
                 
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
@@ -129,10 +124,6 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
         DispatchQueue.main.async {
             self.connectionStatus = "Ricerca..."
             
-            self.pixelPeripheral?.delegate = nil
-            self.pixelPeripheral = nil
-            self.commandCharacteristic = nil
-            
             self.batteryLevel = "--%"
             self.isCharging = false
             self.networkType = "---"
@@ -153,10 +144,6 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
     func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
         print("MacSync: Connessione fallita.")
         DispatchQueue.main.async {
-            self.pixelPeripheral?.delegate = nil
-            self.pixelPeripheral = nil
-            self.commandCharacteristic = nil
-            
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
                 if self.centralManager.state == .poweredOn {
                     self.startScanningOrReconnect()
@@ -182,8 +169,14 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
         }
     }
     
-    // MARK: - NUOVA FUNZIONE: Cerca prima nella cache di sistema, se non c'è scansiona
+    // MARK: - Funzione di Scansione / Riconnessione ottimizzata
     func startScanningOrReconnect() {
+        // Pulizia centralizzata dello stato precedente per evitare puntatori zombie
+        self.pixelPeripheral?.delegate = nil
+        self.pixelPeripheral = nil
+        self.commandCharacteristic = nil
+        
+        // Interroghiamo il sistema operativo
         let systemConnected = centralManager.retrieveConnectedPeripherals(withServices: [serviceUUID])
         
         if let peripheral = systemConnected.first {
