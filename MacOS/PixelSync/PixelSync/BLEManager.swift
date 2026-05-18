@@ -47,11 +47,6 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
     @objc func macDidWake() {
         print("MacSync: Coperchio aperto. Mac Sveglio. Riavvio motore Bluetooth pulito.")
         
-        let ghostPeripherals = centralManager.retrieveConnectedPeripherals(withServices: [serviceUUID])
-        for ghost in ghostPeripherals {
-            centralManager.cancelPeripheralConnection(ghost)
-        }
-        
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
             self.connectionStatus = "Ricerca..."
             self.pixelPeripheral?.delegate = nil
@@ -66,7 +61,7 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
             self.isHotspotActive = false
             
             if self.centralManager.state == .poweredOn {
-                self.centralManager.scanForPeripherals(withServices: [self.serviceUUID], options: nil)
+                self.startScanningOrReconnect()
             }
         }
     }
@@ -77,7 +72,7 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
             connectionStatus = "Scansione..."
             
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                self.centralManager.scanForPeripherals(withServices: [self.serviceUUID], options: nil)
+                self.startScanningOrReconnect()
             }
         } else {
             isSwitchedOn = false
@@ -115,7 +110,9 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
                 self.connectionStatus = "Ricerca..."
                 
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                    self.centralManager.scanForPeripherals(withServices: [self.serviceUUID], options: nil)
+                    if self.centralManager.state == .poweredOn {
+                        self.startScanningOrReconnect()
+                    }
                 }
             }
         }
@@ -147,7 +144,7 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
             
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
                 if self.centralManager.state == .poweredOn {
-                    self.centralManager.scanForPeripherals(withServices: [self.serviceUUID], options: nil)
+                    self.startScanningOrReconnect()
                 }
             }
         }
@@ -161,7 +158,9 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
             self.commandCharacteristic = nil
             
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                self.centralManager.scanForPeripherals(withServices: [self.serviceUUID], options: nil)
+                if self.centralManager.state == .poweredOn {
+                    self.startScanningOrReconnect()
+                }
             }
         }
     }
@@ -180,6 +179,21 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
             DispatchQueue.main.async {
                 self.isHotspotActive = enable
             }
+        }
+    }
+    
+    // MARK: - NUOVA FUNZIONE: Cerca prima nella cache di sistema, se non c'è scansiona
+    func startScanningOrReconnect() {
+        let systemConnected = centralManager.retrieveConnectedPeripherals(withServices: [serviceUUID])
+        
+        if let peripheral = systemConnected.first {
+            print("MacSync: Dispositivo trovato nella cache di macOS. Mi riaggancio direttamente!")
+            self.pixelPeripheral = peripheral
+            self.pixelPeripheral?.delegate = self
+            self.centralManager.connect(peripheral, options: nil)
+        } else {
+            print("MacSync: Nessun dispositivo in cache. Avvio scansione aerea...")
+            self.centralManager.scanForPeripherals(withServices: [serviceUUID], options: nil)
         }
     }
 }
