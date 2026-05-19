@@ -5,7 +5,6 @@ import android.content.Intent
 import android.graphics.Color
 import android.os.Bundle
 import android.provider.Settings
-import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -23,7 +22,6 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import it.luigi.macsync.ble.GattServerManager
-import it.luigi.macsync.ble.ShizukuHelper
 import it.luigi.macsync.ui.theme.MacSyncTheme
 import androidx.compose.animation.*
 import androidx.compose.animation.core.tween
@@ -39,10 +37,6 @@ class MainActivity : ComponentActivity() {
         )
         super.onCreate(savedInstanceState)
 
-        // IMPORTANTE: init() va chiamato qui, nell'onCreate,
-        // così i listener del binder sono attivi fin dal lancio dell'app
-        ShizukuHelper.init()
-
         gattServerManager = GattServerManager.getInstance(this)
 
         setContent {
@@ -55,12 +49,6 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
-        // Pulizia listener per evitare memory leak
-        ShizukuHelper.dispose()
     }
 }
 
@@ -100,8 +88,6 @@ fun AppNavigation(gattServerManager: GattServerManager) {
 @Composable
 fun MainScreen(gattServerManager: GattServerManager, onNavigateToAppSelection: () -> Unit) {
     var permissionsGranted by remember { mutableStateOf(false) }
-    // Stato UI per il feedback del bottone Shizuku
-    var shizukuStatus by remember { mutableStateOf("") }
     val statusText by gattServerManager.connectionState.collectAsState()
     val context = LocalContext.current
 
@@ -148,34 +134,6 @@ fun MainScreen(gattServerManager: GattServerManager, onNavigateToAppSelection: (
                 context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
             }) {
                 Text("Permesso Sistema Notifiche")
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-            Button(onClick = {
-                // Feedback immediato: controlla se Shizuku è raggiungibile
-                if (!ShizukuHelper.isShizukuAvailable()) {
-                    shizukuStatus = "⚠️ Shizuku non è in esecuzione"
-                    Log.e("MacSync", "Shizuku non disponibile — avvialo prima dalla sua app")
-                    return@Button
-                }
-
-                shizukuStatus = "⏳ In attesa del popup..."
-                ShizukuHelper.requestPermission { concesso ->
-                    shizukuStatus = if (concesso) "✅ Shizuku autorizzato!" else "❌ Permesso negato"
-                    if (concesso) {
-                        Log.d("MacSync", "Shizuku connesso e pronto!")
-                    } else {
-                        Log.e("MacSync", "Permesso Shizuku negato o app non in esecuzione.")
-                    }
-                }
-            }) {
-                Text("Autorizza Shizuku")
-            }
-
-            // Feedback visivo dello stato Shizuku
-            if (shizukuStatus.isNotEmpty()) {
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(text = shizukuStatus, style = MaterialTheme.typography.bodyMedium)
             }
 
         } else {

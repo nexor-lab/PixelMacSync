@@ -25,7 +25,6 @@ import android.telephony.TelephonyCallback
 import android.telephony.TelephonyDisplayInfo
 import android.telephony.TelephonyManager
 import android.util.Log
-import it.luigi.macsync.ble.ShizukuHelper
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import java.util.UUID
@@ -234,7 +233,7 @@ class GattServerManager private constructor(private val context: Context) {
             }
         }
 
-        // NOVITÀ: Metodo per ascoltare i comandi inviati dal Mac (Hotspot)
+        // NOVITÀ: Metodo per ascoltare i comandi inviati dal Mac (Hotspot) e passarli a MacroDroid
         override fun onCharacteristicWriteRequest(
             device: BluetoothDevice,
             requestId: Int,
@@ -251,10 +250,20 @@ class GattServerManager private constructor(private val context: Context) {
                 val command = String(value, Charsets.UTF_8)
                 Log.d("MacSync", "Ricevuto comando dal Mac: $command")
 
-                // Azioniamo Shizuku in base al comando ricevuto!
+                // Azioniamo MacroDroid in base al comando ricevuto!
                 when (command) {
-                    "HOTSPOT_ON" -> ShizukuHelper.toggleHotspot(true, context)
-                    "HOTSPOT_OFF" -> ShizukuHelper.toggleHotspot(false, context)
+                    "HOTSPOT_ON" -> {
+                        val intent = Intent("it.luigi.macsync.HOTSPOT_ON")
+                        intent.setPackage("com.arlosoft.macrodroid")
+                        context.sendBroadcast(intent)
+                        Log.d("MacSync", "Inviato Broadcast a MacroDroid: HOTSPOT_ON")
+                    }
+                    "HOTSPOT_OFF" -> {
+                        val intent = Intent("it.luigi.macsync.HOTSPOT_OFF")
+                        intent.setPackage("com.arlosoft.macrodroid")
+                        context.sendBroadcast(intent)
+                        Log.d("MacSync", "Inviato Broadcast a MacroDroid: HOTSPOT_OFF")
+                    }
                 }
 
                 if (responseNeeded) {
