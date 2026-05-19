@@ -174,10 +174,22 @@ class GattServerManager private constructor(private val context: Context) {
     private val hotspotReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == "android.net.wifi.WIFI_AP_STATE_CHANGED") {
-                // 13 significa ACCESO, 11 significa SPENTO
                 val state = intent.getIntExtra("wifi_state", 11)
-                isHotspotActive = (state == 13)
-                notifyMacTelemetry()
+
+                // 12 = IN ACCENSIONE, 13 = ACCESO -> Diciamo al Mac di stare su ON
+                if (state == 12 || state == 13) {
+                    if (!isHotspotActive) { // Evita di spammare pacchetti doppi
+                        isHotspotActive = true
+                        notifyMacTelemetry()
+                    }
+                }
+                // 10 = IN SPEGNIMENTO, 11 = SPENTO -> Diciamo al Mac di stare su OFF
+                else if (state == 10 || state == 11) {
+                    if (isHotspotActive) {
+                        isHotspotActive = false
+                        notifyMacTelemetry()
+                    }
+                }
             }
         }
     }
