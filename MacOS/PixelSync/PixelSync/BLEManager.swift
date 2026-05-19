@@ -238,12 +238,14 @@ extension BLEManager: CBPeripheralDelegate {
             let parts = payload.components(separatedBy: "\u{001F}")
             
             DispatchQueue.main.async {
-                if parts.count >= 5 {
+                // AGGIORNATO: Ora valida la presenza di almeno 6 parametri nel pacchetto
+                if parts.count >= 6 {
                     self.batteryLevel = "\(parts[0])%"
                     self.isCharging = (parts[1] == "true")
                     self.networkType = parts[2]
                     self.signalStrength = Int(parts[3]) ?? 0
                     self.isWifi = (parts[4] == "true")
+                    self.isHotspotActive = (parts[5] == "true") // Sincronizzazione bidirezionale reale
                 }
             }
         }
