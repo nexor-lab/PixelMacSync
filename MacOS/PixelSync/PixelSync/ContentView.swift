@@ -26,8 +26,15 @@ struct ContentView: View {
                     Image(systemName: "iphone")
                         .foregroundColor(.primary)
                 } else {
+                    // ICONA ANTENNA CLICCABILE
                     Image(systemName: bleManager.isSwitchedOn ? "antenna.radiowaves.left.and.right" : "antenna.radiowaves.left.and.right.slash")
                         .foregroundColor(bleManager.isSwitchedOn ? .accentColor : .red)
+                        .onTapGesture {
+                            if bleManager.isSwitchedOn {
+                                bleManager.forceRestartBluetooth()
+                            }
+                        }
+                        .help(bleManager.isSwitchedOn ? "Clicca per forzare il riavvio della ricerca Bluetooth" : "Bluetooth spento")
                 }
                 
                 Text(bleManager.connectionStatus.contains("Connesso") ? "Pixel 7 Pro" : bleManager.connectionStatus)

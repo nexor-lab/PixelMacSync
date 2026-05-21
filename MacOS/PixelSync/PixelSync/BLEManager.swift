@@ -37,7 +37,7 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
     }
 
     @objc func macDidSleep() {
-        print("MacSync: Coperchio chiuso. Mac in Stop. Sgancio il Bluetooth preventivamente.")
+        print("MacSync: Coperchio chiuso o stop display. Sgancio il Bluetooth preventivamente.")
         if let peripheral = pixelPeripheral {
             centralManager.cancelPeripheralConnection(peripheral)
         }
@@ -45,10 +45,9 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
     }
 
     @objc func macDidWake() {
-        print("MacSync: Coperchio aperto. Mac Sveglio. Riavvio motore Bluetooth pulito.")
+        print("MacSync: Sistema sveglio. Riavvio motore Bluetooth pulito.")
         
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-            // Reset grafico immediato dell'interfaccia
+        DispatchQueue.main.async {
             self.connectionStatus = "Ricerca..."
             self.batteryLevel = "--%"
             self.isCharging = false
@@ -56,8 +55,9 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
             self.signalStrength = 0
             self.isWifi = false
             self.isHotspotActive = false
-            
-            // La pulizia dei riferimenti fisici ora è delegata a startScanningOrReconnect
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
             if self.centralManager.state == .poweredOn {
                 self.startScanningOrReconnect()
             }
@@ -95,6 +95,7 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
         centralManager.stopScan()
         self.pixelPeripheral = peripheral
         self.pixelPeripheral?.delegate = self
+        connectionStatus = "Connessione..."
         centralManager.connect(peripheral, options: nil)
         
         DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) {
@@ -123,7 +124,6 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
         
         DispatchQueue.main.async {
             self.connectionStatus = "Ricerca..."
-            
             self.batteryLevel = "--%"
             self.isCharging = false
             self.networkType = "---"
@@ -169,24 +169,78 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
         }
     }
     
-    // MARK: - Funzione di Scansione / Riconnessione ottimizzata
+    // MARK: - Funzione di Scansione / Riconnessione
     func startScanningOrReconnect() {
-        // Pulizia centralizzata dello stato precedente per evitare puntatori zombie
-        self.pixelPeripheral?.delegate = nil
+        if let peripheral = pixelPeripheral {
+            if peripheral.state == .connected {
+                print("MacSync: Già connesso stabilmente. Salto il riavvio della ricerca.")
+                return
+            }
+            if peripheral.state == .connecting {
+                print("MacSync: C'è già una connessione in corso nel CoreBluetooth. Attendo...")
+                return
+            }
+            centralManager.cancelPeripheralConnection(peripheral)
+            peripheral.delegate = nil
+        }
+        
         self.pixelPeripheral = nil
         self.commandCharacteristic = nil
         
-        // Interroghiamo il sistema operativo
         let systemConnected = centralManager.retrieveConnectedPeripherals(withServices: [serviceUUID])
         
         if let peripheral = systemConnected.first {
             print("MacSync: Dispositivo trovato nella cache di macOS. Mi riaggancio direttamente!")
             self.pixelPeripheral = peripheral
             self.pixelPeripheral?.delegate = self
-            self.centralManager.connect(peripheral, options: nil)
+            connectionStatus = "Connessione (Cache)..."
+            centralManager.connect(peripheral, options: nil)
         } else {
             print("MacSync: Nessun dispositivo in cache. Avvio scansione aerea...")
-            self.centralManager.scanForPeripherals(withServices: [serviceUUID], options: nil)
+            connectionStatus = "Ricerca..."
+            centralManager.stopScan()
+            centralManager.scanForPeripherals(withServices: [serviceUUID], options: nil)
+            
+            // WATCHDOG AUTOMATICO: 20 SECONDI
+            DispatchQueue.main.asyncAfter(deadline: .now() + 20.0) { [weak self] in
+                guard let self = self else { return }
+                if self.connectionStatus == "Ricerca..." && self.pixelPeripheral == nil {
+                    print("MacSync: Watchdog! Ricerca aerea ferma da 20s, eseguo un auto-retry automatico...")
+                    self.startScanningOrReconnect()
+                }
+            }
+        }
+    }
+
+    // MARK: - Riavvio Forzato Manuale (Dall'icona dell'antenna)
+    func forceRestartBluetooth() {
+        print("MacSync: Riavvio forzato manuale richiesto dall'utente.")
+        
+        if let peripheral = pixelPeripheral {
+            centralManager.cancelPeripheralConnection(peripheral)
+            peripheral.delegate = nil
+        }
+        centralManager.stopScan()
+        
+        self.pixelPeripheral = nil
+        self.commandCharacteristic = nil
+        
+        DispatchQueue.main.async {
+            self.connectionStatus = "Riavvio in corso..."
+            self.batteryLevel = "--%"
+            self.isCharging = false
+            self.networkType = "---"
+            self.signalStrength = 0
+            self.isWifi = false
+            self.isHotspotActive = false
+        }
+        
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            if self.centralManager.state == .poweredOn {
+                self.startScanningOrReconnect()
+            } else {
+                self.connectionStatus = "Bluetooth OFF"
+            }
         }
     }
 }
@@ -238,14 +292,13 @@ extension BLEManager: CBPeripheralDelegate {
             let parts = payload.components(separatedBy: "\u{001F}")
             
             DispatchQueue.main.async {
-                // AGGIORNATO: Ora valida la presenza di almeno 6 parametri nel pacchetto
                 if parts.count >= 6 {
                     self.batteryLevel = "\(parts[0])%"
                     self.isCharging = (parts[1] == "true")
                     self.networkType = parts[2]
                     self.signalStrength = Int(parts[3]) ?? 0
                     self.isWifi = (parts[4] == "true")
-                    self.isHotspotActive = (parts[5] == "true") // Sincronizzazione bidirezionale reale
+                    self.isHotspotActive = (parts[5] == "true")
                 }
             }
         }
