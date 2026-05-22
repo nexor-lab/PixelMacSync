@@ -15,6 +15,9 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
     
     var commandCharacteristic: CBCharacteristic?
     
+    // --- IL NOSTRO CONTATORE ANTI-LOOP ---
+    var connectionAttempts = 0
+    
     @Published var isSwitchedOn = false
     @Published var connectionStatus = "Disconnesso"
     @Published var batteryLevel: String = "--%"
@@ -79,6 +82,7 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
             pixelPeripheral?.delegate = nil
             pixelPeripheral = nil
             commandCharacteristic = nil
+            connectionAttempts = 0
             
             batteryLevel = "--%"
             isCharging = false
@@ -96,13 +100,22 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
         self.pixelPeripheral = peripheral
         self.pixelPeripheral?.delegate = self
         connectionStatus = "Connessione..."
+        
+        // CONTROLLO ANTI-LOOP
+        connectionAttempts += 1
+        if connectionAttempts > 3 {
+            print("MacSync: Loop di connessione rilevato! Eseguo Hard Reset interno...")
+            forceRestartBluetooth()
+            return
+        }
+        
         centralManager.connect(peripheral, options: nil)
         
-        DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) { [weak self] in
+            guard let self = self else { return }
             if self.pixelPeripheral?.identifier == peripheral.identifier && peripheral.state != .connected {
-                print("MacSync: Timeout connessione! Il Pixel non risponde. Riavvio scansione...")
+                print("MacSync: Timeout connessione in scansione! Il Pixel non risponde.")
                 self.centralManager.cancelPeripheralConnection(peripheral)
-                
                 self.connectionStatus = "Ricerca..."
                 
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
@@ -115,6 +128,8 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
     }
     
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
+        // SUCCESSO! Azzeriamo il contatore dei loop.
+        connectionAttempts = 0
         connectionStatus = "Connesso al Pixel"
         peripheral.discoverServices([serviceUUID])
     }
@@ -142,7 +157,7 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
     }
     
     func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
-        print("MacSync: Connessione fallita.")
+        print("MacSync: Connessione fallita dal sistema.")
         DispatchQueue.main.async {
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
                 if self.centralManager.state == .poweredOn {
@@ -173,11 +188,11 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
     func startScanningOrReconnect() {
         if let peripheral = pixelPeripheral {
             if peripheral.state == .connected {
-                print("MacSync: Già connesso stabilmente. Salto il riavvio della ricerca.")
+                print("MacSync: Già connesso stabilmente.")
                 return
             }
             if peripheral.state == .connecting {
-                print("MacSync: C'è già una connessione in corso nel CoreBluetooth. Attendo...")
+                print("MacSync: Attendo...")
                 return
             }
             centralManager.cancelPeripheralConnection(peripheral)
@@ -190,31 +205,56 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
         let systemConnected = centralManager.retrieveConnectedPeripherals(withServices: [serviceUUID])
         
         if let peripheral = systemConnected.first {
-            print("MacSync: Dispositivo trovato nella cache di macOS. Mi riaggancio direttamente!")
+            print("MacSync: Trovato in cache. Provo a riagganciarmi...")
             self.pixelPeripheral = peripheral
             self.pixelPeripheral?.delegate = self
             connectionStatus = "Connessione (Cache)..."
+            
+            // CONTROLLO ANTI-LOOP ANCHE SULLA CACHE
+            connectionAttempts += 1
+            if connectionAttempts > 3 {
+                print("MacSync: Cache macOS corrotta rilevata (Loop)! Eseguo Hard Reset...")
+                forceRestartBluetooth()
+                return
+            }
+            
             centralManager.connect(peripheral, options: nil)
+            
+            // Timeout di emergenza anche per la cache (il bug di solito colpisce qui)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) { [weak self] in
+                guard let self = self else { return }
+                if self.pixelPeripheral?.identifier == peripheral.identifier && peripheral.state != .connected {
+                    print("MacSync: Timeout su connessione Cache!")
+                    self.centralManager.cancelPeripheralConnection(peripheral)
+                    self.connectionStatus = "Ricerca..."
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                        if self.centralManager.state == .poweredOn {
+                            self.startScanningOrReconnect()
+                        }
+                    }
+                }
+            }
+            
         } else {
-            print("MacSync: Nessun dispositivo in cache. Avvio scansione aerea...")
+            print("MacSync: Nessuna cache. Avvio scansione aerea...")
             connectionStatus = "Ricerca..."
             centralManager.stopScan()
             centralManager.scanForPeripherals(withServices: [serviceUUID], options: nil)
             
-            // WATCHDOG AUTOMATICO: 20 SECONDI
+            // WATCHDOG AUTOMATICO
             DispatchQueue.main.asyncAfter(deadline: .now() + 20.0) { [weak self] in
                 guard let self = self else { return }
                 if self.connectionStatus == "Ricerca..." && self.pixelPeripheral == nil {
-                    print("MacSync: Watchdog! Ricerca aerea ferma da 20s, eseguo un auto-retry automatico...")
+                    print("MacSync: Watchdog 20s scattato, eseguo un auto-retry...")
                     self.startScanningOrReconnect()
                 }
             }
         }
     }
 
-    // MARK: - Riavvio Forzato Manuale (Dall'icona dell'antenna)
+    // MARK: - HARD RESET (Nuova Versione Distruttiva)
     func forceRestartBluetooth() {
-        print("MacSync: Riavvio forzato manuale richiesto dall'utente.")
+        print("MacSync: Eseguo HARD RESET dell'intero motore Bluetooth...")
         
         if let peripheral = pixelPeripheral {
             centralManager.cancelPeripheralConnection(peripheral)
@@ -224,6 +264,7 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
         
         self.pixelPeripheral = nil
         self.commandCharacteristic = nil
+        self.connectionAttempts = 0
         
         DispatchQueue.main.async {
             self.connectionStatus = "Riavvio in corso..."
@@ -235,13 +276,14 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
             self.isHotspotActive = false
         }
         
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-            if self.centralManager.state == .poweredOn {
-                self.startScanningOrReconnect()
-            } else {
-                self.connectionStatus = "Bluetooth OFF"
-            }
-        }
+        // 🧨 LA MAGIA CHE RISOLVE IL BUG:
+        // Distruggiamo letteralmente l'oggetto di sistema e lo ricreiamo da zero.
+        // È l'esatto equivalente programmatico di "chiudere e riaprire l'app".
+        centralManager.delegate = nil
+        centralManager = CBCentralManager(delegate: self, queue: nil)
+        
+        // (L'init del CBCentralManager chiamerà automaticamente centralManagerDidUpdateState
+        //  che farà ripartire la scansione in modo pulito).
     }
 }
 
