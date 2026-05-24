@@ -15,7 +15,7 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
     
     var commandCharacteristic: CBCharacteristic?
     
-    // --- IL NOSTRO CONTATORE ANTI-LOOP ---
+    // Contatore per l'anti-loop di connessione
     var connectionAttempts = 0
     
     @Published var isSwitchedOn = false
@@ -101,7 +101,6 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
         self.pixelPeripheral?.delegate = self
         connectionStatus = "Connessione..."
         
-        // CONTROLLO ANTI-LOOP
         connectionAttempts += 1
         if connectionAttempts > 3 {
             print("MacSync: Loop di connessione rilevato! Eseguo Hard Reset interno...")
@@ -128,7 +127,6 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
     }
     
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
-        // SUCCESSO! Azzeriamo il contatore dei loop.
         connectionAttempts = 0
         connectionStatus = "Connesso al Pixel"
         peripheral.discoverServices([serviceUUID])
@@ -210,7 +208,6 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
             self.pixelPeripheral?.delegate = self
             connectionStatus = "Connessione (Cache)..."
             
-            // CONTROLLO ANTI-LOOP ANCHE SULLA CACHE
             connectionAttempts += 1
             if connectionAttempts > 3 {
                 print("MacSync: Cache macOS corrotta rilevata (Loop)! Eseguo Hard Reset...")
@@ -227,10 +224,10 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
                     print("MacSync: Timeout su connessione Cache!")
                     self.centralManager.cancelPeripheralConnection(peripheral)
                     self.connectionStatus = "Ricerca..."
+                    
+                    // CORRETTO: Esegue l'Hard Reset invece di startScanningOrReconnect()
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                        if self.centralManager.state == .poweredOn {
-                            self.startScanningOrReconnect()
-                        }
+                        self.forceRestartBluetooth()
                     }
                 }
             }
@@ -241,12 +238,13 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
             centralManager.stopScan()
             centralManager.scanForPeripherals(withServices: [serviceUUID], options: nil)
             
-            // WATCHDOG AUTOMATICO
+            // WATCHDOG AUTOMATICO (20 Secondi)
             DispatchQueue.main.asyncAfter(deadline: .now() + 20.0) { [weak self] in
                 guard let self = self else { return }
                 if self.connectionStatus == "Ricerca..." && self.pixelPeripheral == nil {
-                    print("MacSync: Watchdog 20s scattato, eseguo un auto-retry...")
-                    self.startScanningOrReconnect()
+                    print("MacSync: Watchdog 20s scattato, eseguo un auto-retry con Hard Reset...")
+                    // CORRETTO: Chiama la forza bruta automatica
+                    self.forceRestartBluetooth()
                 }
             }
         }
@@ -276,14 +274,9 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
             self.isHotspotActive = false
         }
         
-        // 🧨 LA MAGIA CHE RISOLVE IL BUG:
-        // Distruggiamo letteralmente l'oggetto di sistema e lo ricreiamo da zero.
-        // È l'esatto equivalente programmatico di "chiudere e riaprire l'app".
+        // 🧨 Distruzione e ricreazione istantanea del CBCentralManager
         centralManager.delegate = nil
         centralManager = CBCentralManager(delegate: self, queue: nil)
-        
-        // (L'init del CBCentralManager chiamerà automaticamente centralManagerDidUpdateState
-        //  che farà ripartire la scansione in modo pulito).
     }
 }
 
