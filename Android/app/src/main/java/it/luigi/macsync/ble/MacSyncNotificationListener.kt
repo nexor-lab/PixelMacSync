@@ -1,8 +1,10 @@
 package it.luigi.macsync.ble
 
 import android.app.Notification
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
@@ -11,6 +13,52 @@ class MacSyncNotificationListener : NotificationListenerService() {
 
     companion object {
         private val macNotificationIds = mutableMapOf<String, MutableList<String>>()
+    }
+
+    // --- 0. RICEVITORE DEL COMANDO "KILL" DAL MAC ---
+    private val killReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == "it.luigi.macsync.KILL_NOTIFICATION") {
+                val targetMacId = intent.getStringExtra("macNotifId") ?: return
+                Log.d("MacSync", "Eseguo KILL richiesto dal Mac per ID: $targetMacId")
+
+                // Cerca l'ID del Mac nella nostra mappa e ricava la "Key" di Android corrispondente
+                var targetKey: String? = null
+                for ((key, ids) in macNotificationIds) {
+                    if (ids.contains(targetMacId)) {
+                        targetKey = key
+                        break
+                    }
+                }
+
+                // Se l'abbiamo trovata, distruggiamo la notifica nativa di Android!
+                if (targetKey != null) {
+                    Log.d("MacSync", "Chiave Android trovata! Elimino la notifica.")
+                    cancelNotification(targetKey)
+
+                    // Pulizia della memoria: rimuoviamo l'ID visto che l'abbiamo appena ucciso
+                    macNotificationIds[targetKey]?.remove(targetMacId)
+                } else {
+                    Log.d("MacSync", "Nessuna chiave Android trovata per l'ID Mac: $targetMacId")
+                }
+            }
+        }
+    }
+
+    // REGISTRAZIONE DEL RICEVITORE ALL'AVVIO DEL SERVIZIO
+    override fun onCreate() {
+        super.onCreate()
+        val filter = IntentFilter("it.luigi.macsync.KILL_NOTIFICATION")
+        // RECEIVER_NOT_EXPORTED garantisce che solo la nostra app possa inviare questo comando
+        registerReceiver(killReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        Log.d("MacSync", "MacSyncNotificationListener avviato: KillReceiver armato.")
+    }
+
+    // DEREGISTRAZIONE ALLA CHIUSURA PER EVITARE MEMORY LEAKS
+    override fun onDestroy() {
+        unregisterReceiver(killReceiver)
+        Log.d("MacSync", "MacSyncNotificationListener terminato: KillReceiver rimosso.")
+        super.onDestroy()
     }
 
     // --- 1. QUANDO ARRIVA UNA NOTIFICA ---
@@ -52,7 +100,7 @@ class MacSyncNotificationListener : NotificationListenerService() {
         sendToGattServer(payload)
     }
 
-    // --- 2. QUANDO LA NOTIFICA VIENE RIMOSSA ---
+    // --- 2. QUANDO LA NOTIFICA VIENE RIMOSSA DAL TELEFONO ---
     override fun onNotificationRemoved(sbn: StatusBarNotification, rankingMap: RankingMap, reason: Int) {
         val packageName = sbn.packageName
 

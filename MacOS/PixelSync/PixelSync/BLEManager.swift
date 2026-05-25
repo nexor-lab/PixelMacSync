@@ -4,7 +4,7 @@ import Combine
 import UserNotifications
 import AppKit
 
-class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
+class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNotificationCenterDelegate {
     var centralManager: CBCentralManager!
     var pixelPeripheral: CBPeripheral?
     
@@ -15,8 +15,10 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
     
     var commandCharacteristic: CBCharacteristic?
     
-    // Contatore per l'anti-loop di connessione
     var connectionAttempts = 0
+    
+    // --- DIZIONARIO DINAMICO DELLE APP ---
+    var appMap: [String: String] = [:]
     
     @Published var isSwitchedOn = false
     @Published var connectionStatus = "Disconnesso"
@@ -27,6 +29,19 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
     @Published var isWifi: Bool = false
     @Published var isHotspotActive: Bool = false
 
+    // Calcolo del percorso del file JSON nella cartella Documenti
+    var configURL: URL? {
+        let fileManager = FileManager.default
+        guard let documentsURL = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first else { return nil }
+        let folderURL = documentsURL.appendingPathComponent("MacSync", isDirectory: true)
+        
+        // Se la cartella MacSync in Documenti non esiste, la creiamo
+        if !fileManager.fileExists(atPath: folderURL.path) {
+            try? fileManager.createDirectory(at: folderURL, withIntermediateDirectories: true, attributes: nil)
+        }
+        return folderURL.appendingPathComponent("app_mappings.json")
+    }
+
     override init() {
         super.init()
         centralManager = CBCentralManager(delegate: self, queue: nil)
@@ -35,8 +50,43 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
             print("MacSync: Permessi notifiche macOS concessi: \(granted)")
         }
         
+        UNUserNotificationCenter.current().delegate = self
+        
+        // Carichiamo la mappa delle app dal file esterno JSON
+        loadAppMap()
+        
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(macDidSleep), name: NSWorkspace.willSleepNotification, object: nil)
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(macDidWake), name: NSWorkspace.didWakeNotification, object: nil)
+    }
+
+    // --- CARICAMENTO E SALVATAGGIO CONFIGURAZIONE ---
+    func loadAppMap() {
+        guard let url = configURL else { return }
+        
+        if FileManager.default.fileExists(atPath: url.path) {
+            if let data = try? Data(contentsOf: url),
+               let decoded = try? JSONDecoder().decode([String: String].self, from: data) {
+                self.appMap = decoded
+                print("MacSync: Mappa app caricata correttamente da JSON: \(self.appMap)")
+                return
+            }
+        }
+        
+        // Se il file non esiste ancora, creiamo un default iniziale con le tue tre app
+        self.appMap = [
+            "com.instagram.android": "Instagram",
+            "com.discord": "Discord",
+            "org.telegram.messenger": "Telegram"
+        ]
+        saveAppMap()
+    }
+
+    func saveAppMap() {
+        guard let url = configURL else { return }
+        if let data = try? JSONEncoder().encode(appMap) {
+            try? data.write(to: url)
+            print("MacSync: Configurazione JSON aggiornata in Documenti/MacSync/")
+        }
     }
 
     @objc func macDidSleep() {
@@ -182,17 +232,10 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
         }
     }
     
-    // MARK: - Funzione di Scansione / Riconnessione
     func startScanningOrReconnect() {
         if let peripheral = pixelPeripheral {
-            if peripheral.state == .connected {
-                print("MacSync: Già connesso stabilmente.")
-                return
-            }
-            if peripheral.state == .connecting {
-                print("MacSync: Attendo...")
-                return
-            }
+            if peripheral.state == .connected { return }
+            if peripheral.state == .connecting { return }
             centralManager.cancelPeripheralConnection(peripheral)
             peripheral.delegate = nil
         }
@@ -203,25 +246,21 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
         let systemConnected = centralManager.retrieveConnectedPeripherals(withServices: [serviceUUID])
         
         if let peripheral = systemConnected.first {
-            print("MacSync: Trovato in cache. Provo a riagganciarmi...")
             self.pixelPeripheral = peripheral
             self.pixelPeripheral?.delegate = self
             connectionStatus = "Connessione (Cache)..."
             
             connectionAttempts += 1
             if connectionAttempts > 3 {
-                print("MacSync: Cache macOS corrotta rilevata (Loop)! Eseguo Hard Reset...")
                 forceRestartBluetooth()
                 return
             }
             
             centralManager.connect(peripheral, options: nil)
             
-            // Timeout di emergenza anche per la cache
             DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) { [weak self] in
                 guard let self = self else { return }
                 if self.pixelPeripheral?.identifier == peripheral.identifier && peripheral.state != .connected {
-                    print("MacSync: Timeout su connessione Cache!")
                     self.centralManager.cancelPeripheralConnection(peripheral)
                     self.connectionStatus = "Ricerca..."
                     
@@ -232,26 +271,20 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
             }
             
         } else {
-            print("MacSync: Nessuna cache. Avvio scansione aerea...")
             connectionStatus = "Ricerca..."
             centralManager.stopScan()
             centralManager.scanForPeripherals(withServices: [serviceUUID], options: nil)
             
-            // WATCHDOG AUTOMATICO (20 Secondi)
             DispatchQueue.main.asyncAfter(deadline: .now() + 20.0) { [weak self] in
                 guard let self = self else { return }
                 if self.connectionStatus == "Ricerca..." && self.pixelPeripheral == nil {
-                    print("MacSync: Watchdog 20s scattato, eseguo un auto-retry con Hard Reset...")
                     self.forceRestartBluetooth()
                 }
             }
         }
     }
 
-    // MARK: - HARD RESET (Nuova Versione Distruttiva)
     func forceRestartBluetooth() {
-        print("MacSync: Eseguo HARD RESET dell'intero motore Bluetooth...")
-        
         if let peripheral = pixelPeripheral {
             centralManager.cancelPeripheralConnection(peripheral)
             peripheral.delegate = nil
@@ -277,7 +310,7 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
     }
 }
 
-// MARK: - Gestione Telemetria e Notifiche
+// MARK: - Gestione Telemetria e Notifiche (Dati in Ingresso)
 extension BLEManager: CBPeripheralDelegate {
     
     func peripheral(_ peripheral: CBPeripheral, didModifyServices invalidatedServices: [CBService]) {
@@ -303,14 +336,10 @@ extension BLEManager: CBPeripheralDelegate {
                 peripheral.readValue(for: characteristic)
                 peripheral.setNotifyValue(true, for: characteristic)
             }
-            
             if characteristic.uuid == notificationsUUID {
-                print("MacSync: Canale Notifiche pronto e in ascolto")
                 peripheral.setNotifyValue(true, for: characteristic)
             }
-            
             if characteristic.uuid == commandUUID {
-                print("MacSync: Canale Comandi armato e pronto al fuoco!")
                 self.commandCharacteristic = characteristic
             }
         }
@@ -342,7 +371,6 @@ extension BLEManager: CBPeripheralDelegate {
                 
                 let action = parts[0]
                 
-                // GESTIONE POST (Nuova Notifica)
                 if action == "POST" && parts.count >= 5 {
                     let notifId = parts[1]
                     let bundleId = parts[2]
@@ -354,42 +382,116 @@ extension BLEManager: CBPeripheralDelegate {
                     content.body = body
                     content.sound = UNNotificationSound.default
                     
+                    content.userInfo = [
+                        "androidPackage": bundleId,
+                        "notifId": notifId
+                    ]
+                    
                     let fileManager = FileManager.default
                     if let picturesURL = fileManager.urls(for: .picturesDirectory, in: .userDomainMask).first {
                         let iconsFolderURL = picturesURL.appendingPathComponent("MacSyncIcons", isDirectory: true)
-                        if !fileManager.fileExists(atPath: iconsFolderURL.path) {
-                            try? fileManager.createDirectory(at: iconsFolderURL, withIntermediateDirectories: true, attributes: nil)
-                        }
                         let iconFileURL = iconsFolderURL.appendingPathComponent("\(bundleId).png")
                         if fileManager.fileExists(atPath: iconFileURL.path) {
                             do {
                                 let attachment = try UNNotificationAttachment(identifier: bundleId, url: iconFileURL, options: nil)
                                 content.attachments = [attachment]
-                            } catch {
-                                print("MacSync: Errore allegato: \(error)")
-                            }
+                            } catch { }
                         }
                     }
                     
-                    // Assegniamo l'ID ricevuto da Android
                     let request = UNNotificationRequest(identifier: notifId, content: content, trigger: nil)
-                    UNUserNotificationCenter.current().add(request) { error in
-                        if let error = error {
-                            print("MacSync: Errore aggiunta notifica: \(error)")
-                        } else {
-                            print("MacSync: Notifica aggiunta con ID \(notifId)")
-                        }
-                    }
+                    UNUserNotificationCenter.current().add(request)
                     
-                }
-                // GESTIONE REMOVE (Cancellazione Notifica Sincronizzata)
-                else if action == "REMOVE" && parts.count >= 2 {
+                } else if action == "REMOVE" && parts.count >= 2 {
                     let notifId = parts[1]
-                    // Rimuove immediatamente la notifica dal Centro Notifiche del Mac
                     UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [notifId])
-                    print("MacSync: Rimossa notifica con ID \(notifId) dal Centro Notifiche.")
                 }
             }
         }
+    }
+}
+
+// MARK: - Gestione Interazione Click ed Elusione Hardcoding
+extension BLEManager {
+    
+    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse, withCompletionHandler completionHandler: @escaping () -> Void) {
+        
+        let userInfo = response.notification.request.content.userInfo
+        
+        if let androidPackage = userInfo["androidPackage"] as? String,
+           let notifId = userInfo["notifId"] as? String {
+            
+            print("MacSync: Click rilevato per pacchetto: \(androidPackage)")
+            
+            // --- 1. APERTURA APP MAC ---
+            if let macAppName = appMap[androidPackage] {
+                // Esecuzione immediata
+                launchMacApp(named: macAppName)
+            } else {
+                // NUOVA APP RILEVATA: Chiediamo all'utente cosa aprire tramite selettore nativo
+                print("MacSync: Pacchetto sconosciuto. Mostro il selettore di applicazioni...")
+                promptUserToSelectApp(for: androidPackage)
+            }
+            
+            // --- 2. 🔫 INVIA IL COMANDO DI REVERSE DISMISS AD ANDROID ---
+            let killCommand = "KILL\u{001F}\(notifId)"
+            if let data = killCommand.data(using: .utf8),
+               let peripheral = self.pixelPeripheral,
+               let characteristic = self.commandCharacteristic {
+                
+                peripheral.writeValue(data, for: characteristic, type: .withResponse)
+                print("MacSync: Inviato comando di Reverse Dismiss -> \(killCommand)")
+            }
+        }
+        
+        completionHandler()
+    }
+    
+    // Funzione ausiliaria per l'apertura delle applicazioni nativa e PWA
+    private func launchMacApp(named name: String) {
+        print("MacSync: Avvio applicazione -> \(name)")
+        let task = Process()
+        task.launchPath = "/usr/bin/open"
+        task.arguments = ["-a", name]
+        try? task.run()
+    }
+    
+    // INTERFACCIA DI SELEZIONE DINAMICA (Apre /Applications e filtra i file .app)
+    private func promptUserToSelectApp(for androidPackage: String) {
+        DispatchQueue.main.async {
+            // Forza l'applicazione in primo piano per mostrare la finestra di dialogo sopra tutto
+            NSApp.activate(ignoringOtherApps: true)
+            
+            let openPanel = NSOpenPanel()
+            openPanel.title = "Seleziona l'app Mac da associare a \(androidPackage)"
+            openPanel.prompt = "Associa applicazione"
+            openPanel.showsResizeIndicator = true
+            openPanel.showsHiddenFiles = false
+            openPanel.canChooseDirectories = false
+            openPanel.canCreateDirectories = false
+            openPanel.allowsMultipleSelection = false
+            openPanel.allowedFileTypes = ["app"] // Riconosce sia app native che PWA (.app wrapper)
+            openPanel.directoryURL = URL(fileURLWithPath: "/Applications")
+            
+            if openPanel.runModal() == .OK {
+                if let url = openPanel.url {
+                    // Estrae il nome dell'applicazione escludendo l'estensione .app
+                    let appName = url.deletingPathExtension().lastPathComponent
+                    
+                    // Memorizza l'associazione nel dizionario e aggiorna il file JSON
+                    self.appMap[androidPackage] = appName
+                    self.saveAppMap()
+                    
+                    print("MacSync: Nuova associazione memorizzata: \(androidPackage) -> \(appName)")
+                    
+                    // Avvia subito l'app appena scelta per completare l'azione del click
+                    self.launchMacApp(named: appName)
+                }
+            }
+        }
+    }
+    
+    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        completionHandler([.banner, .sound])
     }
 }
