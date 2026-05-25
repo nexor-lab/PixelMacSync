@@ -6,24 +6,28 @@ import android.content.Intent
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
+import java.util.UUID
 
 class MacSyncNotificationListener : NotificationListenerService() {
+
+    companion object {
+        // CORREZIONE: Mappa rinominata per evitare conflitti con i metodi di sistema Android!
+        private val macNotificationIds = mutableMapOf<String, MutableList<String>>()
+    }
 
     // --- 1. QUANDO ARRIVA UNA NOTIFICA ---
     override fun onNotificationPosted(sbn: StatusBarNotification) {
         val packageName = sbn.packageName
 
-        // SCUDO ANTI-CONTENITORE: Blocca la "scatola vuota" di Instagram/WhatsApp
+        // SCUDO ANTI-CONTENITORE
         val isGroupSummary = (sbn.notification.flags and Notification.FLAG_GROUP_SUMMARY) != 0
         if (isGroupSummary) {
             Log.d("MacSync", "Ignorata notifica di riepilogo gruppo: $packageName")
             return
         }
 
-        // Filtriamo notifiche di sistema
         if (packageName == "android" || packageName == "com.android.systemui") return
 
-        // Controllo White-list
         val prefs = applicationContext.getSharedPreferences("MacSync_Prefs", Context.MODE_PRIVATE)
         val enabledApps = prefs.getStringSet("enabled_apps", setOf())
         if (enabledApps?.contains(packageName) == false) return
@@ -32,44 +36,55 @@ class MacSyncNotificationListener : NotificationListenerService() {
         val title = extras.getString(Notification.EXTRA_TITLE)?.trim() ?: ""
         val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()?.trim() ?: ""
 
-        // Eliminiamo notifiche totalmente vuote
         if (title.isBlank() && text.isBlank()) return
 
-        // Generiamo un ID numerico corto e univoco per questa notifica
-        val notifId = sbn.key.hashCode().toString()
-        val separator = "\u001F"
+        // 1. Generiamo un ID totalmente univoco per QUESTO singolo messaggio
+        val uniqueMacId = UUID.randomUUID().toString()
 
-        // Costruiamo il payload con l'azione "POST" (Aggiungi)
-        val payload = "POST$separator$notifId$separator$packageName$separator$title$separator$text"
+        // 2. Salviamo l'ID nella mappa collegandolo alla chiave di sistema
+        val key = sbn.key
+        val idList = macNotificationIds[key] ?: mutableListOf()
+        idList.add(uniqueMacId)
+        macNotificationIds[key] = idList
+
+        val separator = "\u001F"
+        val payload = "POST$separator$uniqueMacId$separator$packageName$separator$title$separator$text"
 
         Log.d("MacSync", "Inoltro nuova notifica al Mac: $payload")
         sendToGattServer(payload)
     }
 
-    // --- 2. QUANDO CANCELLI UNA NOTIFICA (Swipe) ---
-    override fun onNotificationRemoved(sbn: StatusBarNotification) {
+    // --- 2. QUANDO LA NOTIFICA VIENE RIMOSSA ---
+    override fun onNotificationRemoved(sbn: StatusBarNotification, rankingMap: RankingMap, reason: Int) {
         val packageName = sbn.packageName
 
-        // Filtriamo le notifiche di sistema anche per la rimozione
         if (packageName == "android" || packageName == "com.android.systemui") return
 
-        // Controllo White-list
-        val prefs = applicationContext.getSharedPreferences("MacSync_Prefs", Context.MODE_PRIVATE)
-        val enabledApps = prefs.getStringSet("enabled_apps", setOf())
-        if (enabledApps?.contains(packageName) == false) return
+        // Identifichiamo i motivi derivati da un'azione diretta dell'utente:
+        // REASON_CLICK (1) = L'utente ha tappato la notifica
+        // REASON_CANCEL (2) = L'utente ha fatto swipe per scartarla
+        // REASON_CANCEL_ALL (3) = L'utente ha premuto "Cancella tutto"
+        val isUserAction = reason == REASON_CLICK || reason == REASON_CANCEL || reason == REASON_CANCEL_ALL
 
-        // Generiamo lo stesso ID univoco usato per la creazione
-        val notifId = sbn.key.hashCode().toString()
-        val separator = "\u001F"
+        // Se l'ha cancellata l'app in background (es. Telegram/Instagram), la ignoriamo!
+        if (!isUserAction) {
+            Log.d("MacSync", "Rimozione ignorata (Riorganizzazione dell'App). Reason: $reason")
+            return
+        }
 
-        // Costruiamo il payload con l'azione "REMOVE" (Rimuovi)
-        val payload = "REMOVE$separator$notifId"
+        val key = sbn.key
 
-        Log.d("MacSync", "Inoltro rimozione notifica al Mac (ID: $notifId)")
-        sendToGattServer(payload)
+        // 3. Recuperiamo tutti gli ID univoci associati a questa chat e li rimuoviamo dal Mac
+        val idsToRemove = macNotificationIds.remove(key)
+
+        idsToRemove?.forEach { uniqueMacId ->
+            val separator = "\u001F"
+            val payload = "REMOVE$separator$uniqueMacId"
+            Log.d("MacSync", "Inoltro rimozione notifica al Mac (ID: $uniqueMacId)")
+            sendToGattServer(payload)
+        }
     }
 
-    // Funzione di utilità per inviare il dato al nostro server BLE
     private fun sendToGattServer(payload: String) {
         val intent = Intent("it.luigi.macsync.NEW_NOTIFICATION")
         intent.putExtra("payload", payload)
