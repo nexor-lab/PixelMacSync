@@ -6,12 +6,10 @@ import android.content.Intent
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
-import java.util.UUID
 
 class MacSyncNotificationListener : NotificationListenerService() {
 
     companion object {
-        // CORREZIONE: Mappa rinominata per evitare conflitti con i metodi di sistema Android!
         private val macNotificationIds = mutableMapOf<String, MutableList<String>>()
     }
 
@@ -38,10 +36,10 @@ class MacSyncNotificationListener : NotificationListenerService() {
 
         if (title.isBlank() && text.isBlank()) return
 
-        // 1. Generiamo un ID totalmente univoco per QUESTO singolo messaggio
-        val uniqueMacId = UUID.randomUUID().toString()
+        // 💡 LA CURA PER IL LIMITE BLUETOOTH: Un ID cortissimo invece del gigante UUID
+        // Prende gli ultimi 5 caratteri del tempo e aggiunge un numero casuale (totale: ~7 caratteri)
+        val uniqueMacId = System.currentTimeMillis().toString(36).takeLast(5) + (10..99).random().toString()
 
-        // 2. Salviamo l'ID nella mappa collegandolo alla chiave di sistema
         val key = sbn.key
         val idList = macNotificationIds[key] ?: mutableListOf()
         idList.add(uniqueMacId)
@@ -60,10 +58,6 @@ class MacSyncNotificationListener : NotificationListenerService() {
 
         if (packageName == "android" || packageName == "com.android.systemui") return
 
-        // Identifichiamo i motivi derivati da un'azione diretta dell'utente:
-        // REASON_CLICK (1) = L'utente ha tappato la notifica
-        // REASON_CANCEL (2) = L'utente ha fatto swipe per scartarla
-        // REASON_CANCEL_ALL (3) = L'utente ha premuto "Cancella tutto"
         val isUserAction = reason == REASON_CLICK || reason == REASON_CANCEL || reason == REASON_CANCEL_ALL
 
         // Se l'ha cancellata l'app in background (es. Telegram/Instagram), la ignoriamo!
@@ -74,7 +68,6 @@ class MacSyncNotificationListener : NotificationListenerService() {
 
         val key = sbn.key
 
-        // 3. Recuperiamo tutti gli ID univoci associati a questa chat e li rimuoviamo dal Mac
         val idsToRemove = macNotificationIds.remove(key)
 
         idsToRemove?.forEach { uniqueMacId ->
