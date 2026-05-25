@@ -217,7 +217,7 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
             
             centralManager.connect(peripheral, options: nil)
             
-            // Timeout di emergenza anche per la cache (il bug di solito colpisce qui)
+            // Timeout di emergenza anche per la cache
             DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) { [weak self] in
                 guard let self = self else { return }
                 if self.pixelPeripheral?.identifier == peripheral.identifier && peripheral.state != .connected {
@@ -225,7 +225,6 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
                     self.centralManager.cancelPeripheralConnection(peripheral)
                     self.connectionStatus = "Ricerca..."
                     
-                    // CORRETTO: Esegue l'Hard Reset invece di startScanningOrReconnect()
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
                         self.forceRestartBluetooth()
                     }
@@ -243,7 +242,6 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
                 guard let self = self else { return }
                 if self.connectionStatus == "Ricerca..." && self.pixelPeripheral == nil {
                     print("MacSync: Watchdog 20s scattato, eseguo un auto-retry con Hard Reset...")
-                    // CORRETTO: Chiama la forza bruta automatica
                     self.forceRestartBluetooth()
                 }
             }
@@ -274,7 +272,6 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
             self.isHotspotActive = false
         }
         
-        // 🧨 Distruzione e ricreazione istantanea del CBCentralManager
         centralManager.delegate = nil
         centralManager = CBCentralManager(delegate: self, queue: nil)
     }
@@ -341,10 +338,16 @@ extension BLEManager: CBPeripheralDelegate {
         if characteristic.uuid == notificationsUUID {
             if let data = characteristic.value, let payload = String(data: data, encoding: .utf8) {
                 let parts = payload.components(separatedBy: "\u{001F}")
-                if parts.count >= 3 {
-                    let bundleId = parts[0]
-                    let title = parts[1]
-                    let body = parts[2]
+                guard !parts.isEmpty else { return }
+                
+                let action = parts[0]
+                
+                // GESTIONE POST (Nuova Notifica)
+                if action == "POST" && parts.count >= 5 {
+                    let notifId = parts[1]
+                    let bundleId = parts[2]
+                    let title = parts[3]
+                    let body = parts[4]
                     
                     let content = UNMutableNotificationContent()
                     content.title = title
@@ -367,8 +370,24 @@ extension BLEManager: CBPeripheralDelegate {
                             }
                         }
                     }
-                    let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
-                    UNUserNotificationCenter.current().add(request)
+                    
+                    // Assegniamo l'ID ricevuto da Android
+                    let request = UNNotificationRequest(identifier: notifId, content: content, trigger: nil)
+                    UNUserNotificationCenter.current().add(request) { error in
+                        if let error = error {
+                            print("MacSync: Errore aggiunta notifica: \(error)")
+                        } else {
+                            print("MacSync: Notifica aggiunta con ID \(notifId)")
+                        }
+                    }
+                    
+                }
+                // GESTIONE REMOVE (Cancellazione Notifica Sincronizzata)
+                else if action == "REMOVE" && parts.count >= 2 {
+                    let notifId = parts[1]
+                    // Rimuove immediatamente la notifica dal Centro Notifiche del Mac
+                    UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [notifId])
+                    print("MacSync: Rimossa notifica con ID \(notifId) dal Centro Notifiche.")
                 }
             }
         }
