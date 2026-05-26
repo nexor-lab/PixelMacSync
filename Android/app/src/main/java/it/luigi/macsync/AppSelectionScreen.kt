@@ -125,20 +125,29 @@ fun AppSelectionScreen(onBackClick: () -> Unit) {
             val pm = context.packageManager
             val savedApps = prefs.getStringSet("enabled_apps", emptySet()) ?: emptySet()
 
-            val apps = pm.getInstalledApplications(PackageManager.GET_META_DATA)
-                .filter { appInfo ->
-                    (appInfo.flags and ApplicationInfo.FLAG_SYSTEM) == 0 || appInfo.packageName == "com.google.android.apps.messaging"
-                }
-                .map { appInfo ->
-                    val iconBitmap = pm.getApplicationIcon(appInfo).toBitmap(128, 128).asImageBitmap()
+            // 1. Chiediamo al sistema TUTTE le app che hanno un "intent di lancio" (ovvero compaiono nel drawer)
+            val intent = android.content.Intent(android.content.Intent.ACTION_MAIN, null)
+            intent.addCategory(android.content.Intent.CATEGORY_LAUNCHER)
 
-                    AppItem(
-                        name = pm.getApplicationLabel(appInfo).toString(),
-                        packageName = appInfo.packageName,
-                        isEnabled = savedApps.contains(appInfo.packageName),
-                        icon = iconBitmap
-                    )
-                }
+            val resolveInfos = pm.queryIntentActivities(intent, 0)
+
+            val apps = resolveInfos.mapNotNull { resolveInfo ->
+                val appInfo = resolveInfo.activityInfo.applicationInfo
+
+                // Evitiamo che la nostra stessa app (MacSync) compaia nella lista
+                if (appInfo.packageName == context.packageName) return@mapNotNull null
+
+                val iconBitmap = pm.getApplicationIcon(appInfo).toBitmap(128, 128).asImageBitmap()
+
+                AppItem(
+                    name = pm.getApplicationLabel(appInfo).toString(),
+                    packageName = appInfo.packageName,
+                    isEnabled = savedApps.contains(appInfo.packageName),
+                    icon = iconBitmap
+                )
+            }
+                // Evitiamo eventuali duplicati e mettiamo in ordine alfabetico
+                .distinctBy { it.packageName }
                 .sortedBy { it.name }
 
             withContext(Dispatchers.Main) {
