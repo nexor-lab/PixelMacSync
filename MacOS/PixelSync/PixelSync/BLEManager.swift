@@ -97,11 +97,12 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
         centralManager.stopScan()
     }
 
+    // 🚀 NUOVO RISVEGLIO AGGRESSIVO
     @objc func macDidWake() {
         print("MacSync: Sistema sveglio. Riavvio motore Bluetooth pulito.")
         
         DispatchQueue.main.async {
-            self.connectionStatus = "Ricerca..."
+            self.connectionStatus = "Risveglio..."
             self.batteryLevel = "--%"
             self.isCharging = false
             self.networkType = "---"
@@ -110,10 +111,10 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
             self.isHotspotActive = false
         }
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-            if self.centralManager.state == .poweredOn {
-                self.startScanningOrReconnect()
-            }
+        // Diamo 4 secondi al Mac per riattivare i driver hardware
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) {
+            // Usiamo il reset pesante invece di quello gentile
+            self.forceRestartBluetooth()
         }
     }
 
