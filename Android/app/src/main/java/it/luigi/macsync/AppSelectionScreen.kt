@@ -12,10 +12,11 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Close // <-- Aggiunto import per la X
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Search
+// FIX: Import delle icone Rounded per ricalcare perfettamente lo stile Pixel
+import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -65,7 +66,6 @@ class MorphShape(
 fun MorphingLoadingIndicator() {
     val infiniteTransition = rememberInfiniteTransition(label = "morphing")
 
-    // Rotazione fluida
     val rotation by infiniteTransition.animateFloat(
         initialValue = 0f,
         targetValue = 360f,
@@ -255,14 +255,18 @@ fun AppRow(appItem: AppItem, onCheckedChange: (Boolean) -> Unit) {
             Text(text = appItem.packageName, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
 
-        // FIX: Switch con spunta per l'ON e X per l'OFF
         Switch(
             checked = appItem.isEnabled,
             onCheckedChange = null,
+            // FIX: Forziamo i colori per creare l'effetto "Cutout" nativo di Android
+            colors = SwitchDefaults.colors(
+                checkedIconColor = MaterialTheme.colorScheme.primary,
+                uncheckedIconColor = MaterialTheme.colorScheme.surfaceVariant
+            ),
             thumbContent = if (appItem.isEnabled) {
                 {
                     Icon(
-                        imageVector = Icons.Default.Check,
+                        imageVector = Icons.Rounded.Check, // Variante rounded per il tick spesso
                         contentDescription = null,
                         modifier = Modifier.size(SwitchDefaults.IconSize)
                     )
@@ -270,7 +274,7 @@ fun AppRow(appItem: AppItem, onCheckedChange: (Boolean) -> Unit) {
             } else {
                 {
                     Icon(
-                        imageVector = Icons.Default.Close, // <-- Icona X visibile quando disattivato
+                        imageVector = Icons.Rounded.Close,
                         contentDescription = null,
                         modifier = Modifier.size(SwitchDefaults.IconSize)
                     )
