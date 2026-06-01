@@ -12,7 +12,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Check // <-- Aggiunto import per la spunta dello switch
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close // <-- Aggiunto import per la X
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
@@ -74,24 +75,22 @@ fun MorphingLoadingIndicator() {
         ), label = "rotation"
     )
 
-    // NOVITÀ: Usiamo i Keyframes per creare le "pause" di visualizzazione!
     val morphProgress by infiniteTransition.animateFloat(
         initialValue = 0f,
         targetValue = 1f,
         animationSpec = infiniteRepeatable(
             animation = keyframes {
-                durationMillis = 1200 // Durata per una singola "andata"
+                durationMillis = 1200
 
-                0f at 0 // Inizia dal biscotto
-                0f at 200 with FastOutSlowInEasing // Resta un biscotto perfetto per i primi 200ms
-                1f at 1000 // Usa i successivi 800ms per fondersi nel sole
-                1f at 1200 // Resta un sole perfetto per gli ultimi 200ms
+                0f at 0
+                0f at 200 with FastOutSlowInEasing
+                1f at 1000
+                1f at 1200
             },
-            repeatMode = RepeatMode.Reverse // Torna indietro dolcemente
+            repeatMode = RepeatMode.Reverse
         ), label = "morph"
     )
 
-    // Le nostre due forme preferite
     val cookie = remember { RoundedPolygon.star(numVerticesPerRadius = 4, innerRadius = 0.5f, rounding = CornerRounding(radius = 0.2f)) }
     val sunny = remember { RoundedPolygon.star(numVerticesPerRadius = 8, innerRadius = 0.7f, rounding = CornerRounding(radius = 0.15f)) }
     val morph = remember { Morph(cookie, sunny) }
@@ -117,16 +116,13 @@ fun AppSelectionScreen(onBackClick: () -> Unit) {
 
     var appList by remember { mutableStateOf<List<AppItem>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
-
     var searchQuery by remember { mutableStateOf("") }
-    // Rimosso 'activeSearch' perché la barra di ricerca ora è staticamente inattiva (pillola)
 
     LaunchedEffect(Unit) {
         withContext(Dispatchers.IO) {
             val pm = context.packageManager
             val savedApps = prefs.getStringSet("enabled_apps", emptySet()) ?: emptySet()
 
-            // 1. Chiediamo al sistema TUTTE le app che hanno un "intent di lancio" (ovvero compaiono nel drawer)
             val intent = android.content.Intent(android.content.Intent.ACTION_MAIN, null)
             intent.addCategory(android.content.Intent.CATEGORY_LAUNCHER)
 
@@ -135,7 +131,6 @@ fun AppSelectionScreen(onBackClick: () -> Unit) {
             val apps = resolveInfos.mapNotNull { resolveInfo ->
                 val appInfo = resolveInfo.activityInfo.applicationInfo
 
-                // Evitiamo che la nostra stessa app (MacSync) compaia nella lista
                 if (appInfo.packageName == context.packageName) return@mapNotNull null
 
                 val iconBitmap = pm.getApplicationIcon(appInfo).toBitmap(128, 128).asImageBitmap()
@@ -147,7 +142,6 @@ fun AppSelectionScreen(onBackClick: () -> Unit) {
                     icon = iconBitmap
                 )
             }
-                // Evitiamo duplicati e ordiniamo prima per stato (abilitate in alto) e poi per nome
                 .distinctBy { it.packageName }
                 .sortedWith(compareByDescending<AppItem> { it.isEnabled }.thenBy { it.name })
 
@@ -169,9 +163,9 @@ fun AppSelectionScreen(onBackClick: () -> Unit) {
             SearchBar(
                 query = searchQuery,
                 onQueryChange = { searchQuery = it },
-                onSearch = { /* Nessuna azione specifica su 'Invio' perché filtriamo in real-time */ },
-                active = false, // <-- FIX: Mantiene gli angoli curvi e blocca l'espansione
-                onActiveChange = { }, // Ignoriamo il tentativo di attivazione
+                onSearch = { },
+                active = false,
+                onActiveChange = { },
                 placeholder = { Text("Cerca app...") },
                 leadingIcon = {
                     IconButton(onClick = onBackClick) {
@@ -261,7 +255,7 @@ fun AppRow(appItem: AppItem, onCheckedChange: (Boolean) -> Unit) {
             Text(text = appItem.packageName, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
 
-        // FIX: Switch con spunta MD3 Expressive
+        // FIX: Switch con spunta per l'ON e X per l'OFF
         Switch(
             checked = appItem.isEnabled,
             onCheckedChange = null,
@@ -274,7 +268,13 @@ fun AppRow(appItem: AppItem, onCheckedChange: (Boolean) -> Unit) {
                     )
                 }
             } else {
-                null
+                {
+                    Icon(
+                        imageVector = Icons.Default.Close, // <-- Icona X visibile quando disattivato
+                        contentDescription = null,
+                        modifier = Modifier.size(SwitchDefaults.IconSize)
+                    )
+                }
             }
         )
     }
