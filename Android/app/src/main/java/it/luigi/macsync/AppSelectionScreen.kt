@@ -12,6 +12,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Check // <-- Aggiunto import per la spunta dello switch
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
@@ -118,7 +119,7 @@ fun AppSelectionScreen(onBackClick: () -> Unit) {
     var isLoading by remember { mutableStateOf(true) }
 
     var searchQuery by remember { mutableStateOf("") }
-    var activeSearch by remember { mutableStateOf(false) }
+    // Rimosso 'activeSearch' perché la barra di ricerca ora è staticamente inattiva (pillola)
 
     LaunchedEffect(Unit) {
         withContext(Dispatchers.IO) {
@@ -146,9 +147,9 @@ fun AppSelectionScreen(onBackClick: () -> Unit) {
                     icon = iconBitmap
                 )
             }
-                // Evitiamo eventuali duplicati e mettiamo in ordine alfabetico
+                // Evitiamo duplicati e ordiniamo prima per stato (abilitate in alto) e poi per nome
                 .distinctBy { it.packageName }
-                .sortedBy { it.name }
+                .sortedWith(compareByDescending<AppItem> { it.isEnabled }.thenBy { it.name })
 
             withContext(Dispatchers.Main) {
                 appList = apps
@@ -168,9 +169,9 @@ fun AppSelectionScreen(onBackClick: () -> Unit) {
             SearchBar(
                 query = searchQuery,
                 onQueryChange = { searchQuery = it },
-                onSearch = { activeSearch = false },
-                active = activeSearch,
-                onActiveChange = { activeSearch = it },
+                onSearch = { /* Nessuna azione specifica su 'Invio' perché filtriamo in real-time */ },
+                active = false, // <-- FIX: Mantiene gli angoli curvi e blocca l'espansione
+                onActiveChange = { }, // Ignoriamo il tentativo di attivazione
                 placeholder = { Text("Cerca app...") },
                 leadingIcon = {
                     IconButton(onClick = onBackClick) {
@@ -260,9 +261,21 @@ fun AppRow(appItem: AppItem, onCheckedChange: (Boolean) -> Unit) {
             Text(text = appItem.packageName, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
 
+        // FIX: Switch con spunta MD3 Expressive
         Switch(
             checked = appItem.isEnabled,
-            onCheckedChange = null
+            onCheckedChange = null,
+            thumbContent = if (appItem.isEnabled) {
+                {
+                    Icon(
+                        imageVector = Icons.Default.Check,
+                        contentDescription = null,
+                        modifier = Modifier.size(SwitchDefaults.IconSize)
+                    )
+                }
+            } else {
+                null
+            }
         )
     }
 }
