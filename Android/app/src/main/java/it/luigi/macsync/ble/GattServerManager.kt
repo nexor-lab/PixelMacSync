@@ -261,7 +261,6 @@ class GattServerManager private constructor(private val context: Context) {
                 val fullCommand = String(value, Charsets.UTF_8)
                 Log.d("MacSync", "Ricevuto pacchetto comandi dal Mac: $fullCommand")
 
-                // Dividiamo la stringa se c'è il separatore (utile per i comandi complessi come KILL)
                 val parts = fullCommand.split("\u001F")
                 val commandType = parts[0]
 
@@ -280,13 +279,18 @@ class GattServerManager private constructor(private val context: Context) {
                         if (parts.size >= 2) {
                             val notifIdToKill = parts[1]
                             Log.d("MacSync", "Comando KILL ricevuto. Chiedo l'eliminazione per ID: $notifIdToKill")
-
-                            // Invia un broadcast interno che il nostro Listener ascolterà
                             val intent = Intent("it.luigi.macsync.KILL_NOTIFICATION")
                             intent.putExtra("macNotifId", notifIdToKill)
                             intent.setPackage(context.applicationContext.packageName)
                             context.sendBroadcast(intent)
                         }
+                    }
+                    // --- NUOVO COMANDO: RICHIESTA DI SINCRONIZZAZIONE A FREDDO ---
+                    "SYNC_REQ" -> {
+                        Log.d("MacSync", "Il Mac ha richiesto la sincronizzazione a freddo!")
+                        val intent = Intent("it.luigi.macsync.SYNC_REQUEST")
+                        intent.setPackage(context.applicationContext.packageName)
+                        context.sendBroadcast(intent)
                     }
                 }
 

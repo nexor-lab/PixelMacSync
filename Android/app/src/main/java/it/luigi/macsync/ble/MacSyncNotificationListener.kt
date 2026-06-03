@@ -20,9 +20,6 @@ class MacSyncNotificationListener : NotificationListenerService() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == "it.luigi.macsync.KILL_NOTIFICATION") {
                 val targetMacId = intent.getStringExtra("macNotifId") ?: return
-                Log.d("MacSync", "Eseguo KILL richiesto dal Mac per ID: $targetMacId")
-
-                // Cerca l'ID del Mac nella nostra mappa e ricava la "Key" di Android corrispondente
                 var targetKey: String? = null
                 for ((key, ids) in macNotificationIds) {
                     if (ids.contains(targetMacId)) {
@@ -30,47 +27,85 @@ class MacSyncNotificationListener : NotificationListenerService() {
                         break
                     }
                 }
-
-                // Se l'abbiamo trovata, distruggiamo la notifica nativa di Android!
                 if (targetKey != null) {
-                    Log.d("MacSync", "Chiave Android trovata! Elimino la notifica.")
                     cancelNotification(targetKey)
-
-                    // Pulizia della memoria: rimuoviamo l'ID visto che l'abbiamo appena ucciso
                     macNotificationIds[targetKey]?.remove(targetMacId)
-                } else {
-                    Log.d("MacSync", "Nessuna chiave Android trovata per l'ID Mac: $targetMacId")
                 }
             }
         }
     }
 
-    // REGISTRAZIONE DEL RICEVITORE ALL'AVVIO DEL SERVIZIO
-    override fun onCreate() {
-        super.onCreate()
-        val filter = IntentFilter("it.luigi.macsync.KILL_NOTIFICATION")
-        // RECEIVER_NOT_EXPORTED garantisce che solo la nostra app possa inviare questo comando
-        registerReceiver(killReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
-        Log.d("MacSync", "MacSyncNotificationListener avviato: KillReceiver armato.")
+    // --- 1. RICEVITORE DELLA RICHIESTA DI SINCRONIZZAZIONE A FREDDO ---
+    private val syncReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == "it.luigi.macsync.SYNC_REQUEST") {
+                Log.d("MacSync", "Inizio generazione Snapshot delle notifiche...")
+                sendSnapshotToMac()
+            }
+        }
     }
 
-    // DEREGISTRAZIONE ALLA CHIUSURA PER EVITARE MEMORY LEAKS
+    override fun onCreate() {
+        super.onCreate()
+        val killFilter = IntentFilter("it.luigi.macsync.KILL_NOTIFICATION")
+        registerReceiver(killReceiver, killFilter, Context.RECEIVER_NOT_EXPORTED)
+
+        val syncFilter = IntentFilter("it.luigi.macsync.SYNC_REQUEST")
+        registerReceiver(syncReceiver, syncFilter, Context.RECEIVER_NOT_EXPORTED)
+
+        Log.d("MacSync", "MacSyncNotificationListener avviato: Ricevitori armati.")
+    }
+
     override fun onDestroy() {
         unregisterReceiver(killReceiver)
-        Log.d("MacSync", "MacSyncNotificationListener terminato: KillReceiver rimosso.")
+        unregisterReceiver(syncReceiver)
+        Log.d("MacSync", "MacSyncNotificationListener terminato: Ricevitori rimossi.")
         super.onDestroy()
     }
 
-    // --- 1. QUANDO ARRIVA UNA NOTIFICA ---
+    // --- 2. LA FOTOGRAFIA E L'INVIO AL MAC ---
+    private fun sendSnapshotToMac() {
+        val prefs = applicationContext.getSharedPreferences("MacSync_Prefs", Context.MODE_PRIVATE)
+        val enabledApps = prefs.getStringSet("enabled_apps", setOf()) ?: setOf()
+        val currentNotifications = this.activeNotifications ?: return
+
+        for (sbn in currentNotifications) {
+            val packageName = sbn.packageName
+
+            if (packageName == "android" || packageName == "com.android.systemui") continue
+            if (!enabledApps.contains(packageName)) continue
+
+            // Filtro anti-doppioni
+            val isGroupSummary = (sbn.notification.flags and Notification.FLAG_GROUP_SUMMARY) != 0
+            if (isGroupSummary) continue
+
+            val extras = sbn.notification.extras
+            val title = extras.getString(Notification.EXTRA_TITLE)?.trim() ?: ""
+            val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()?.trim() ?: ""
+
+            if (title.isBlank() && text.isBlank()) continue
+
+            // Rigeneriamo un ID per il Mac e lo salviamo nella mappa
+            val uniqueMacId = System.currentTimeMillis().toString(36).takeLast(5) + (10..99).random().toString()
+            val key = sbn.key
+            val idList = macNotificationIds[key] ?: mutableListOf()
+            idList.add(uniqueMacId)
+            macNotificationIds[key] = idList
+
+            // Inviamo il pacchetto esattamente come se fosse una notifica normale
+            val separator = "\u001F"
+            val payload = "POST$separator$uniqueMacId$separator$packageName$separator$title$separator$text"
+            sendToGattServer(payload)
+        }
+        Log.d("MacSync", "Snapshot inviato con successo al Mac.")
+    }
+
+    // --- 3. QUANDO ARRIVA UNA NOTIFICA NORMALE ---
     override fun onNotificationPosted(sbn: StatusBarNotification) {
         val packageName = sbn.packageName
 
-        // SCUDO ANTI-CONTENITORE
         val isGroupSummary = (sbn.notification.flags and Notification.FLAG_GROUP_SUMMARY) != 0
-        if (isGroupSummary) {
-            Log.d("MacSync", "Ignorata notifica di riepilogo gruppo: $packageName")
-            return
-        }
+        if (isGroupSummary) return
 
         if (packageName == "android" || packageName == "com.android.systemui") return
 
@@ -84,10 +119,7 @@ class MacSyncNotificationListener : NotificationListenerService() {
 
         if (title.isBlank() && text.isBlank()) return
 
-        // 💡 LA CURA PER IL LIMITE BLUETOOTH: Un ID cortissimo invece del gigante UUID
-        // Prende gli ultimi 5 caratteri del tempo e aggiunge un numero casuale (totale: ~7 caratteri)
         val uniqueMacId = System.currentTimeMillis().toString(36).takeLast(5) + (10..99).random().toString()
-
         val key = sbn.key
         val idList = macNotificationIds[key] ?: mutableListOf()
         idList.add(uniqueMacId)
@@ -95,33 +127,24 @@ class MacSyncNotificationListener : NotificationListenerService() {
 
         val separator = "\u001F"
         val payload = "POST$separator$uniqueMacId$separator$packageName$separator$title$separator$text"
-
-        Log.d("MacSync", "Inoltro nuova notifica al Mac: $payload")
         sendToGattServer(payload)
     }
 
-    // --- 2. QUANDO LA NOTIFICA VIENE RIMOSSA DAL TELEFONO ---
+    // --- 4. QUANDO LA NOTIFICA VIENE RIMOSSA DAL TELEFONO ---
     override fun onNotificationRemoved(sbn: StatusBarNotification, rankingMap: RankingMap, reason: Int) {
         val packageName = sbn.packageName
 
         if (packageName == "android" || packageName == "com.android.systemui") return
 
         val isUserAction = reason == REASON_CLICK || reason == REASON_CANCEL || reason == REASON_CANCEL_ALL
-
-        // Se l'ha cancellata l'app in background (es. Telegram/Instagram), la ignoriamo!
-        if (!isUserAction) {
-            Log.d("MacSync", "Rimozione ignorata (Riorganizzazione dell'App). Reason: $reason")
-            return
-        }
+        if (!isUserAction) return
 
         val key = sbn.key
-
         val idsToRemove = macNotificationIds.remove(key)
 
         idsToRemove?.forEach { uniqueMacId ->
             val separator = "\u001F"
             val payload = "REMOVE$separator$uniqueMacId"
-            Log.d("MacSync", "Inoltro rimozione notifica al Mac (ID: $uniqueMacId)")
             sendToGattServer(payload)
         }
     }

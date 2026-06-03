@@ -342,6 +342,18 @@ extension BLEManager: CBPeripheralDelegate {
             }
             if characteristic.uuid == commandUUID {
                 self.commandCharacteristic = characteristic
+                
+                // --- FIX: SYNC A FREDDO (Reconnection Sync) ---
+                // Svuotiamo il centro notifiche locale dalle vecchie notifiche
+                UNUserNotificationCenter.current().removeAllDeliveredNotifications()
+                print("MacSync: Centro notifiche Mac svuotato per la sincronizzazione.")
+                
+                // Chiediamo ad Android la "fotografia" aggiornata
+                let syncCommand = "SYNC_REQ"
+                if let data = syncCommand.data(using: .utf8) {
+                    peripheral.writeValue(data, for: characteristic, type: .withResponse)
+                    print("MacSync: Comando SYNC_REQ inviato al Pixel.")
+                }
             }
         }
     }
@@ -406,6 +418,7 @@ extension BLEManager: CBPeripheralDelegate {
                 } else if action == "REMOVE" && parts.count >= 2 {
                     let notifId = parts[1]
                     UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [notifId])
+                    print("MacSync: Rimossa notifica dal Mac (ID: \(notifId))")
                 }
             }
         }
@@ -426,15 +439,13 @@ extension BLEManager {
             
             // --- 1. APERTURA APP MAC ---
             if let macAppName = appMap[androidPackage] {
-                // Esecuzione immediata
                 launchMacApp(named: macAppName)
             } else {
-                // NUOVA APP RILEVATA: Chiediamo all'utente cosa aprire tramite selettore nativo
                 print("MacSync: Pacchetto sconosciuto. Mostro il selettore di applicazioni...")
                 promptUserToSelectApp(for: androidPackage)
             }
             
-            // --- 2. 🔫 INVIA IL COMANDO DI REVERSE DISMISS AD ANDROID ---
+            // --- 2. INVIA IL COMANDO DI REVERSE DISMISS AD ANDROID ---
             let killCommand = "KILL\u{001F}\(notifId)"
             if let data = killCommand.data(using: .utf8),
                let peripheral = self.pixelPeripheral,
@@ -448,7 +459,6 @@ extension BLEManager {
         completionHandler()
     }
     
-    // Funzione ausiliaria per l'apertura delle applicazioni nativa e PWA
     private func launchMacApp(named name: String) {
         print("MacSync: Avvio applicazione -> \(name)")
         let task = Process()
@@ -457,10 +467,8 @@ extension BLEManager {
         try? task.run()
     }
     
-    // INTERFACCIA DI SELEZIONE DINAMICA (Apre /Applications e filtra i file .app)
     private func promptUserToSelectApp(for androidPackage: String) {
         DispatchQueue.main.async {
-            // Forza l'applicazione in primo piano per mostrare la finestra di dialogo sopra tutto
             NSApp.activate(ignoringOtherApps: true)
             
             let openPanel = NSOpenPanel()
@@ -471,21 +479,18 @@ extension BLEManager {
             openPanel.canChooseDirectories = false
             openPanel.canCreateDirectories = false
             openPanel.allowsMultipleSelection = false
-            openPanel.allowedFileTypes = ["app"] // Riconosce sia app native che PWA (.app wrapper)
+            openPanel.allowedFileTypes = ["app"]
             openPanel.directoryURL = URL(fileURLWithPath: "/Applications")
             
             if openPanel.runModal() == .OK {
                 if let url = openPanel.url {
-                    // Estrae il nome dell'applicazione escludendo l'estensione .app
                     let appName = url.deletingPathExtension().lastPathComponent
                     
-                    // Memorizza l'associazione nel dizionario e aggiorna il file JSON
                     self.appMap[androidPackage] = appName
                     self.saveAppMap()
                     
                     print("MacSync: Nuova associazione memorizzata: \(androidPackage) -> \(appName)")
                     
-                    // Avvia subito l'app appena scelta per completare l'azione del click
                     self.launchMacApp(named: appName)
                 }
             }
