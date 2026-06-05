@@ -139,5 +139,5 @@ Il canale comandi supporta `HOTSPOT_ON`, `HOTSPOT_OFF`, `SYNC_REQ` e `KILL\u001F
 
 Il client macOS mappa i `PackageName` ricevuti su file locali in formato **.icns** situati in `~/Pictures/icone/` tramite un dizionario a tempo di ricerca O(1).
 <p align="center">
-<img width="713" height="342" alt="Screenshot 2026-06-05 alle 11 44 22" src="https://github.com/user-attachments/assets/45bf9fc7-de65-41d3-895e-92ab56726ac2" />
+<img width="928" height="515" alt="Screenshot 2026-06-05 alle 11 47 53" src="https://github.com/user-attachments/assets/c8b705e1-d121-4662-9f16-ce8afe234c3d" />
 </p>
