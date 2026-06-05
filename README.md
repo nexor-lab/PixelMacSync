@@ -138,5 +138,6 @@ Il canale comandi supporta `HOTSPOT_ON`, `HOTSPOT_OFF`, `SYNC_REQ` e `KILL\u001F
 ## 📂 Assets Mapping
 
 Il client macOS mappa i `PackageName` ricevuti su file locali in formato **.icns** situati in `~/Pictures/icone/` tramite un dizionario a tempo di ricerca O(1).
-
-📷placeholder-esempio di cartella icone con nomi file corrispondenti ai package name📷
+<p align="center">
+<img width="713" height="342" alt="Screenshot 2026-06-05 alle 11 44 22" src="https://github.com/user-attachments/assets/45bf9fc7-de65-41d3-895e-92ab56726ac2" />
+</p>
