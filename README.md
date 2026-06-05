@@ -15,12 +15,14 @@ L’obiettivo è offrire sincronizzazione di notifiche, telemetria e controllo r
 * No Wi‑Fi dependency
 * Event-driven communication
 
-PixelMacSync is intentionally focused on low-bandwidth,
-event-driven synchronization over Bluetooth Low Energy.
-
-Features that would require large payload transfers,
-persistent networking, cloud services or significant
-battery impact are considered outside the scope of the project.
+> 💡 **Design Philosophy**
+>
+> PixelMacSync is intentionally focused on low-bandwidth,
+> event-driven synchronization over Bluetooth Low Energy.
+>
+> Features that would require large payload transfers,
+> persistent networking, cloud services or significant
+> battery impact are considered outside the scope of the project.
 
 ---
 
