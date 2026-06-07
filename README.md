@@ -1,35 +1,89 @@
-# 🍏🤖 MacSync: L'Ecosistema Ibrido macOS - Android
+# 🍏⇄🤖 PixelMacSync
 
-MacSync è un progetto open-source nato per colmare il divario tra macOS e Android, ricreando un'integrazione profonda in perfetto stile "Ecosistema Apple". Sfruttando una connessione **Bluetooth Low Energy (BLE)** ultra-efficiente, MacSync permette al tuo Mac e al tuo smartphone Android (ottimizzato per la serie Google Pixel) di comunicare in background senza pesare sulla batteria.
+### PixelSync (macOS) ⇄ MacSync (Android)
+
+PixelMacSync è un progetto open-source che fornisce un’integrazione nativa tra macOS e Android tramite **Bluetooth Low Energy (BLE)**.
+L’obiettivo è offrire sincronizzazione di notifiche, telemetria e controllo remoto senza dipendere da Wi‑Fi, cloud o connessioni TCP persistenti.
+
+## 🎯 Design Goals
+
+* Bluetooth Low Energy only
+* Stateless synchronization
+* Battery-first architecture
+* Native Android and macOS clients
+* No cloud services
+* No Wi‑Fi dependency
+* Event-driven communication
+
+> 💡 **Design Philosophy**
+>
+> PixelMacSync is intentionally focused on low-bandwidth,
+> event-driven synchronization over Bluetooth Low Energy.
+>
+> Features that would require large payload transfers,
+> persistent networking, cloud services or significant
+> battery impact are considered outside the scope of the project.
 
 ---
 
-## ✨ Funzionalità Principali
+## 📋 Requisiti
 
-* 📊 **Telemetria in Tempo Reale:** Controlla lo stato del tuo telefono direttamente dalla Menu Bar del Mac. Visualizza percentuale della batteria, stato di ricarica, tipo di connessione (Wi-Fi, 4G, 4G+, 5G, E) e potenza del segnale.
-* 🔔 **Inoltro Notifiche (MTU Ottimizzato):** Le notifiche del telefono vengono intercettate (tramite White-list) e inoltrate al Mac. Appaiono come notifiche native di macOS con le icone originali. Per eludere i limiti di banda (MTU) del Bluetooth, il sistema comprime gli UUID in micro-ID alfanumerici, garantendo un trasferimento fulmineo.
-* 🖱️ **Apertura App Dinamica (Smart Mapping):** Cliccando su una notifica ricevuta sul Mac, si aprirà istantaneamente l'app macOS o la PWA corrispondente. L'associazione tra *package name* di Android e l'app di macOS avviene tramite un processo di auto-apprendimento interattivo e viene salvata in un file di configurazione (`app_mappings.json`).
-* 🧹 **Reverse Dismiss (Sync Bidirezionale):** Quando interagisci con una notifica cliccandola su macOS, il Mac invia un comando invisibile al telefono, eliminando istantaneamente la notifica nativa dal centro notifiche di Android.
-* 🚀 **Controllo Hotspot Remoto:** Accendi e spegni l'Hotspot Wi-Fi del telefono con un clic dal Mac. Supporta il sync bidirezionale e preserva l'**Accelerazione Hardware Tethering** nativa per massime prestazioni sul 5G.
+| Componente     | Requisito minimo                               |
+| -------------- | ---------------------------------------------- |
+| **Android**    | Android 16+ (ottimizzato per Google Pixel)     |
+| **macOS**      | macOS 13 Ventura+                              |
+| **MacroDroid** | Richiesto per il controllo remoto dell'Hotspot |
+| **Bluetooth**  | BLE 4.2+ su entrambi i dispositivi             |
 
 ---
 
-## 🏗 Struttura del Progetto
+## ✨ Features Principali
 
-Il progetto è diviso in due macro-componenti che dialogano tramite un server GATT (Generic Attribute Profile) personalizzato.
+* 📊 **Telemetria in tempo reale**: visualizza dalla Menu Bar del Mac batteria, stato di ricarica, tipo di connessione, segnale e altri indicatori del telefono.
+* 🔔 **Inoltro notifiche**: le notifiche Android selezionate vengono inoltrate a macOS come notifiche native, mantenendo le icone originali quando disponibili.
+* 🔄 **Reconnection sync**: alla riconnessione Bluetooth, macOS richiede uno snapshot completo dello stato attuale per riallineare notifiche e telemetria.
+* 🛡️ **Filtro anti-doppioni**: le notifiche “summary” o raggruppate di alcune app vengono filtrate per ridurre rumore e duplicati.
+* 🧹 **Dismiss bidirezionale**: una notifica aperta o rimossa su un lato viene sincronizzata anche sull’altro lato, nei limiti delle API disponibili.
+* 🖱️ **Apertura app dinamica**: il mapping tra package name Android e app/PWA su macOS è configurabile e salvato in un file JSON locale.
+* 🚀 **Controllo hotspot remoto**: accendi e spegni l’hotspot del telefono dal Mac tramite integrazione con MacroDroid.
 
-### 📱 1. Android Client (Kotlin)
-L'applicazione Android agisce come **Peripheral / GATT Server**.
-* **Motore BLE in Background:** Sfrutta un *Foreground Service* per mantenere l'antenna attiva e in ascolto, sopravvivendo ai cicli di Doze.
-* **Notification Interceptor:** Estrae il payload delle notifiche e le smista via BLE, associando a ciascuna un mini-ID univoco.
-* **GattServerManager & Broadcasts:** Ascolta i comandi in ingresso dal Mac (tramite canale WRITE). Quando riceve il comando `KILL`, propaga un Intent interno per distruggere la notifica.
-* **MacroDroid Bridge:** Aggira i blocchi di sicurezza di Android 14 sulle API di sistema delegando l'accensione dell'Hotspot a MacroDroid tramite `Intent Broadcast`.
+---
 
-### 💻 2. macOS Client (Swift)
-L'applicazione macOS agisce come **Central** e risiede comodamente nella Menu Bar.
-* **CoreBluetooth & Combine:** Gestisce la connessione reattiva, agganciandosi alla cache di sistema per riconnessioni istantanee al risveglio dallo stop.
-* **UNUserNotificationCenterDelegate:** Intercetta i click dell'utente sulle notifiche, lancia processi di sistema (`Process`) per aprire le app tramite `NSWorkspace` e innesca la risposta verso Android.
-* **Configurazione Disaccoppiata:** Utilizza un file JSON puro in `/Documenti/MacSync/` per le regole di mapping delle app, evitando l'hardcoding e rendendo il sistema flessibile per modifiche manuali esterne.
+## 🔍 How It Works
+
+PixelMacSync è diviso in due client che dialogano tramite un server GATT personalizzato.
+
+### 📱 Android Client — MacSync
+
+L’app Android agisce come **Peripheral / GATT Server** ed è ottimizzata per la serie Google Pixel.
+
+* **Motore BLE in background**: usa un *Foreground Service* per restare attivo anche durante i cicli di Doze.
+* **Notification interceptor & snapshot**: intercetta le notifiche e genera uno snapshot dello stato attivo quando richiesto dal Mac.
+* **GattServerManager & broadcasts**: riceve comandi dal Mac e li inoltra ai componenti interni dell’app.
+* **MacroDroid bridge**: delega l’attivazione/disattivazione dell’hotspot a MacroDroid tramite `Intent Broadcast`.
+
+
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/f269ba38-e4fa-4da9-8fee-4704925e5ffa" width="300" />
+  <img src="https://github.com/user-attachments/assets/3eb51e38-2b7c-4977-a411-fce849127947" width="300" />
+</p>
+
+
+### 💻 macOS Client — PixelSync
+
+L’app macOS agisce come **Central / GATT Client** e vive nella Menu Bar.
+
+* **CoreBluetooth & Combine**: gestisce connessione, riconnessione e aggiornamenti di stato.
+* **UNUserNotificationCenterDelegate**: intercetta le interazioni dell’utente con le notifiche e le sincronizza con Android.
+* **Configurazione disaccoppiata**: usa un file JSON locale per le regole di mapping delle app.
+
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/4a4723fe-4591-4464-9a53-d1822d0aa46b" />
+</p>
+
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/8387a26b-e0d5-48ef-9cc7-ea965ef9079e" />
+</p>
 
 ---
 
@@ -42,25 +96,48 @@ Per garantire una comunicazione sicura e univoca, il progetto utilizza i seguent
 * **Canale Notifiche (Notify):** `22222222-73F5-4BC4-A12F-17D1AD07A961`
 * **Canale Comandi (Write):** `44444444-73F5-4BC4-A12F-17D1AD07A961`
 
-*(Il pacchetto telemetrico è formattato in questo ordine: `Batteria | In Carica | Rete/SSID | Segnale | isWifi | isHotspotActive`, separati dal delimitatore `\u001F`. Il canale comandi supporta `HOTSPOT_ON`, `HOTSPOT_OFF` e `KILL\u001F[ID_Notifica]`)*
+Il pacchetto telemetrico è formattato in questo ordine:
+`Batteria | In carica | Rete/SSID | Segnale | isWifi | isHotspotActive`
+
+Le notifiche vengono inoltrate con prefisso `POST\u001F` o `REMOVE\u001F`.
+Il canale comandi supporta `HOTSPOT_ON`, `HOTSPOT_OFF`, `SYNC_REQ` e `KILL\u001F[ID_Notifica]`.
 
 ---
 
 ## 🛠 Setup e Configurazione
 
 ### Lato Android
-1. Compila l'APK in modalità **Release** tramite Android Studio.
-2. Vai in *Impostazioni -> App -> MacSync -> Batteria* e imposta **"Senza restrizioni"** (fondamentale per evitare la chiusura del listener in background).
-3. Concedi i permessi richiesti al primo avvio (Bluetooth, Posizione, Dispositivi Vicini).
-4. Abilita **MacSync Notifiche** nell'Accesso alle Notifiche di sistema.
-5. **Configurazione MacroDroid (Solo Hotspot):**
-   * Macro 1: Attivatore `it.luigi.macsync.HOTSPOT_ON` -> Azione: *Abilita Hotspot*.
-   * Macro 2: Attivatore `it.luigi.macsync.HOTSPOT_OFF` -> Azione: *Disabilita Hotspot*.
+
+1. Compila l’APK in modalità **Release** tramite Android Studio.
+2. Vai in *Impostazioni → App → MacSync → Batteria* e imposta **"Senza restrizioni"**.
+3. Concedi i permessi richiesti al primo avvio: Bluetooth, Posizione, Dispositivi Vicini.
+4. Abilita **MacSync Notifiche** nell’Accesso alle Notifiche di sistema e seleziona le app desiderate dalla UI.
+5. **Configurazione MacroDroid (solo hotspot):**
+
+   * Installa MacroDroid dal Play Store.
+   * Macro 1: attivatore `it.luigi.macsync.HOTSPOT_ON` → azione: *Abilita Hotspot*.
+   * Macro 2: attivatore `it.luigi.macsync.HOTSPOT_OFF` → azione: *Disabilita Hotspot*.
 
 ### Lato macOS
+
 1. Apri il progetto in Xcode e compila in modalità **Release**.
-2. **Accesso alla cartella Documenti:** Per consentire all'app di salvare il file `app_mappings.json` nella tua vera cartella utente e non nel filesystem nascosto, disabilita l'**App Sandbox** dalla scheda *Signing & Capabilities* su Xcode prima della build. (In alternativa, il file verrà confinato in `~/Library/Containers/[Bundle_ID]/Data/Documents/`).
-3. Al primo avvio, concedi il permesso per le Notifiche di macOS. Il sistema scansionerà automaticamente l'etere per agganciare il server GATT del Pixel.
+2. Per consentire il salvataggio del file `app_mappings.json` nella cartella utente, disabilita l’**App Sandbox** in *Signing & Capabilities* prima della build.
+3. Al primo avvio, concedi il permesso per le Notifiche di macOS.
+4. Il sistema scansionerà automaticamente il BLE e richiederà il primo *Reconnection Sync*.
 
 ---
-*Sviluppato a scopo didattico e personale per superare i limiti di comunicazione tra ecosistemi informatici differenti.*
+
+## ⚠️ Limitazioni Note
+
+* **Hotspot — MacroDroid richiesto:** il controllo remoto dell’hotspot richiede MacroDroid installato e configurato.
+* **Dismiss notifiche — solo al click:** la sincronizzazione del dismiss da Mac ad Android avviene solo quando si clicca sulla notifica macOS, non quando la si swipe via.
+* **Notifiche di gruppo:** alcune app inviano notifiche summary raggruppate; il filtro riduce il rumore ma il comportamento finale dipende dall’app stessa.
+
+---
+
+## 📂 Assets Mapping
+
+Il client macOS mappa i `PackageName` ricevuti su file locali in formato **.icns** situati in `~/Pictures/icone/` tramite un dizionario a tempo di ricerca O(1).
+<p align="center">
+<img width="928" height="515" alt="Screenshot 2026-06-05 alle 11 47 53" src="https://github.com/user-attachments/assets/c8b705e1-d121-4662-9f16-ce8afe234c3d" />
+</p>
