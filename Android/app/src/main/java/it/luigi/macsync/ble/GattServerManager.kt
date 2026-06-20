@@ -18,7 +18,6 @@ import android.content.pm.PackageManager
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
-import android.net.wifi.WifiManager
 import android.os.BatteryManager
 import android.telephony.SignalStrength
 import android.telephony.TelephonyCallback
@@ -71,38 +70,43 @@ class GattServerManager private constructor(private val context: Context) {
     private val telephonyManager = context.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
     private val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
 
-    // 1. Ascoltatore del Wi-Fi
+
+// 1. Ascoltatore del Wi-Fi (Versione Caching Ottimizzata + Fix SSID)
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) {
+            super.onCapabilitiesChanged(network, networkCapabilities)
             isWifiConnected = networkCapabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
+
             if (isWifiConnected) {
-                wifiSSID = getWifiName()
+                try {
+                    // Usiamo il WifiManager interno all'evento per bypassare i blocchi del callback
+                    if (context.checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+                        val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as android.net.wifi.WifiManager
+                        val info = wifiManager.connectionInfo
+                        val rawSsid = info?.ssid
+
+                        wifiSSID = if (rawSsid != null && rawSsid != "<unknown ssid>") {
+                            rawSsid.removeSurrounding("\"")
+                        } else {
+                            "Wi-Fi"
+                        }
+                    } else {
+                        wifiSSID = "Wi-Fi"
+                    }
+                } catch (e: Exception) {
+                    Log.e("MacSync", "Errore estrazione Wi-Fi: ${e.message}")
+                    wifiSSID = "Wi-Fi"
+                }
             }
             notifyMacTelemetry()
         }
 
         override fun onLost(network: Network) {
             isWifiConnected = false
-            wifiSSID = "Wi-Fi"
+            wifiSSID = "Wi-Fi" // Resettiamo la cache
             notifyMacTelemetry()
         }
     }
-
-    private fun getWifiName(): String {
-        try {
-            if (context.checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
-                val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
-                val info = wifiManager.connectionInfo
-                if (info != null && info.ssid != null && info.ssid != "<unknown ssid>") {
-                    return info.ssid.replace("\"", "")
-                }
-            }
-        } catch (e: Exception) {
-            Log.e("MacSync", "Errore estrazione Wi-Fi: ${e.message}")
-        }
-        return "Wi-Fi"
-    }
-
     private fun getNetworkString(networkType: Int): String {
         return when (networkType) {
             TelephonyManager.NETWORK_TYPE_NR -> "5G"
