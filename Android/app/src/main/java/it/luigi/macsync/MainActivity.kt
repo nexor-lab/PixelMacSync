@@ -11,6 +11,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -22,6 +23,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -149,11 +151,10 @@ fun MainScreen(gattServerManager: GattServerManager, onNavigateToAppSelection: (
             }
 
             // --- 1. L'EROE: CARD DEL MAC ---
-            Icon(
-                imageVector = Icons.Rounded.LaptopMac,
+            Image(
+                painter = painterResource(id = R.drawable.macbookpro),
                 contentDescription = "MacBook",
-                modifier = Modifier.size(160.dp),
-                tint = MaterialTheme.colorScheme.onSurface
+                modifier = Modifier.size(160.dp)
             )
 
             Spacer(modifier = Modifier.height(8.dp))
