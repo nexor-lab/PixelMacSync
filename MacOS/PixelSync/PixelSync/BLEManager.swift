@@ -3,6 +3,8 @@ import CoreBluetooth
 import Combine
 import UserNotifications
 import AppKit
+import UniformTypeIdentifiers
+import IOKit.ps // Fondamentale per leggere e osservare la batteria
 
 class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNotificationCenterDelegate {
     var centralManager: CBCentralManager!
@@ -12,14 +14,17 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
     let telemetryUUID = CBUUID(string: "33333333-73F5-4BC4-A12F-17D1AD07A961")
     let notificationsUUID = CBUUID(string: "22222222-73F5-4BC4-A12F-17D1AD07A961")
     let commandUUID = CBUUID(string: "44444444-73F5-4BC4-A12F-17D1AD07A961")
+    let macStateUUID = CBUUID(string: "55555555-73F5-4BC4-A12F-17D1AD07A961")
     
     var commandCharacteristic: CBCharacteristic?
+    var macStateCharacteristic: CBCharacteristic?
     
     var connectionAttempts = 0
     
     // --- DIZIONARIO DINAMICO DELLE APP ---
     var appMap: [String: String] = [:]
     
+    @Published var deviceName: String = "Telefono"
     @Published var isSwitchedOn = false
     @Published var connectionStatus = "Disconnesso"
     @Published var batteryLevel: String = "--%"
@@ -55,6 +60,9 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
         // Carichiamo la mappa delle app dal file esterno JSON
         loadAppMap()
         
+        // Inizializziamo l'osservatore nativo della batteria
+        setupBatteryObserver()
+        
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(macDidSleep), name: NSWorkspace.willSleepNotification, object: nil)
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(macDidWake), name: NSWorkspace.didWakeNotification, object: nil)
     }
@@ -89,6 +97,56 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
         }
     }
 
+    // --- ESTRAZIONE BATTERIA E INVIO (Architettura Push) ---
+    private func getBatteryInfo() -> (level: Int, isCharging: Bool) {
+        var level = 100
+        var charging = false
+        
+        let snapshot = IOPSCopyPowerSourcesInfo().takeRetainedValue()
+        let sources = IOPSCopyPowerSourcesList(snapshot).takeRetainedValue() as Array
+        
+        for ps in sources {
+            if let info = IOPSGetPowerSourceDescription(snapshot, ps)?.takeUnretainedValue() as? [String: Any] {
+                if let capacity = info[kIOPSCurrentCapacityKey] as? Int { level = capacity }
+                if let isCharg = info[kIOPSIsChargingKey] as? Bool { charging = isCharg }
+                break
+            }
+        }
+        return (level, charging)
+    }
+    
+    private func setupBatteryObserver() {
+        // Creiamo un puntatore alla classe corrente per poterla chiamare dal C-callback di IOKit
+        let context = UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
+        
+        let loopSource = IOPSNotificationCreateRunLoopSource({ (context) in
+            guard let context = context else { return }
+            let mySelf = Unmanaged<BLEManager>.fromOpaque(context).takeUnretainedValue()
+            // Quando IOKit ci sveglia, inviamo subito i dati ad Android
+            mySelf.sendTelemetryToAndroid()
+        }, context).takeRetainedValue()
+        
+        CFRunLoopAddSource(CFRunLoopGetCurrent(), loopSource, .defaultMode)
+        print("MacSync: Osservatore eventi batteria (IOKit) attivato.")
+    }
+    
+    @objc func sendTelemetryToAndroid() {
+        guard let peripheral = pixelPeripheral,
+              let characteristic = macStateCharacteristic else { return }
+        
+        let batteryInfo = getBatteryInfo()
+        
+        // Controlliamo se c'è un override del nome nel JSON, altrimenti usiamo il sistema
+        let macName = appMap["custom_mac_name"] ?? Host.current().localizedName ?? "MacBook"
+        
+        let payload = "\(macName)|\(batteryInfo.level)|\(batteryInfo.isCharging)"
+        
+        if let data = payload.data(using: .utf8) {
+            peripheral.writeValue(data, for: characteristic, type: .withResponse)
+            print("MacSync: Stato inviato ad Android -> \(payload)")
+        }
+    }
+
     @objc func macDidSleep() {
         print("MacSync: Coperchio chiuso o stop display. Sgancio il Bluetooth preventivamente.")
         if let peripheral = pixelPeripheral {
@@ -97,7 +155,6 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
         centralManager.stopScan()
     }
 
-    // 🚀 NUOVO RISVEGLIO AGGRESSIVO
     @objc func macDidWake() {
         print("MacSync: Sistema sveglio. Riavvio motore Bluetooth pulito.")
         
@@ -111,9 +168,7 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
             self.isHotspotActive = false
         }
 
-        // Diamo 4 secondi al Mac per riattivare i driver hardware
         DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) {
-            // Usiamo il reset pesante invece di quello gentile
             self.forceRestartBluetooth()
         }
     }
@@ -133,6 +188,7 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
             pixelPeripheral?.delegate = nil
             pixelPeripheral = nil
             commandCharacteristic = nil
+            macStateCharacteristic = nil
             connectionAttempts = 0
             
             batteryLevel = "--%"
@@ -194,6 +250,7 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
             self.signalStrength = 0
             self.isWifi = false
             self.isHotspotActive = false
+            self.macStateCharacteristic = nil
             
             self.centralManager.stopScan()
             
@@ -243,6 +300,7 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
         
         self.pixelPeripheral = nil
         self.commandCharacteristic = nil
+        self.macStateCharacteristic = nil
         
         let systemConnected = centralManager.retrieveConnectedPeripherals(withServices: [serviceUUID])
         
@@ -294,6 +352,7 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
         
         self.pixelPeripheral = nil
         self.commandCharacteristic = nil
+        self.macStateCharacteristic = nil
         self.connectionAttempts = 0
         
         DispatchQueue.main.async {
@@ -326,7 +385,7 @@ extension BLEManager: CBPeripheralDelegate {
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
         guard let services = peripheral.services else { return }
         for service in services where service.uuid == serviceUUID {
-            peripheral.discoverCharacteristics([telemetryUUID, notificationsUUID, commandUUID], for: service)
+            peripheral.discoverCharacteristics([telemetryUUID, notificationsUUID, commandUUID, macStateUUID], for: service)
         }
     }
     
@@ -343,7 +402,6 @@ extension BLEManager: CBPeripheralDelegate {
             if characteristic.uuid == commandUUID {
                 self.commandCharacteristic = characteristic
                 
-                // --- FIX: SYNC A FREDDO (Reconnection Sync) ---
                 // Svuotiamo il centro notifiche locale dalle vecchie notifiche
                 UNUserNotificationCenter.current().removeAllDeliveredNotifications()
                 print("MacSync: Centro notifiche Mac svuotato per la sincronizzazione.")
@@ -353,6 +411,13 @@ extension BLEManager: CBPeripheralDelegate {
                 if let data = syncCommand.data(using: .utf8) {
                     peripheral.writeValue(data, for: characteristic, type: .withResponse)
                     print("MacSync: Comando SYNC_REQ inviato al Pixel.")
+                }
+            }
+            // Salviamo la caratteristica di stato e mandiamo il primissimo aggiornamento
+            if characteristic.uuid == macStateUUID {
+                self.macStateCharacteristic = characteristic
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                    self.sendTelemetryToAndroid()
                 }
             }
         }
@@ -366,13 +431,14 @@ extension BLEManager: CBPeripheralDelegate {
             let parts = payload.components(separatedBy: "\u{001F}")
             
             DispatchQueue.main.async {
-                if parts.count >= 6 {
+                if parts.count >= 7 {
                     self.batteryLevel = "\(parts[0])%"
                     self.isCharging = (parts[1] == "true")
                     self.networkType = parts[2]
                     self.signalStrength = Int(parts[3]) ?? 0
                     self.isWifi = (parts[4] == "true")
                     self.isHotspotActive = (parts[5] == "true")
+                    self.deviceName = parts[6]
                 }
             }
         }
@@ -474,12 +540,11 @@ extension BLEManager {
             let openPanel = NSOpenPanel()
             openPanel.title = "Seleziona l'app Mac da associare a \(androidPackage)"
             openPanel.prompt = "Associa applicazione"
-            openPanel.showsResizeIndicator = true
             openPanel.showsHiddenFiles = false
             openPanel.canChooseDirectories = false
             openPanel.canCreateDirectories = false
             openPanel.allowsMultipleSelection = false
-            openPanel.allowedFileTypes = ["app"]
+            openPanel.allowedContentTypes = [.applicationBundle]
             openPanel.directoryURL = URL(fileURLWithPath: "/Applications")
             
             if openPanel.runModal() == .OK {

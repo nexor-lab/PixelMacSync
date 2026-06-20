@@ -37,8 +37,9 @@ struct ContentView: View {
                         .help(bleManager.isSwitchedOn ? "Clicca per forzare il riavvio della ricerca Bluetooth" : "Bluetooth spento")
                 }
                 
-                Text(bleManager.connectionStatus.contains("Connesso") ? "Pixel 7 Pro" : bleManager.connectionStatus)
+                Text(bleManager.connectionStatus.contains("Connesso") ? bleManager.deviceName : bleManager.connectionStatus)
                     .font(.headline)
+                    .fixedSize(horizontal: true, vertical: false)
                 
                 Spacer()
                 
@@ -46,12 +47,7 @@ struct ContentView: View {
 
                     // Segnale di Rete
                     HStack(spacing: 4) {
-                        Text(bleManager.networkType)
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundColor(.secondary)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.6)
-                        .fixedSize(horizontal: true, vertical: false)
+                        MarqueeText(text: bleManager.networkType)
                         
                         if bleManager.isWifi {
                             Image(systemName: "wifi")
@@ -101,5 +97,52 @@ struct ContentView: View {
         let level = Int(levelStr.replacingOccurrences(of: "%", with: "")) ?? 50
         if level <= 20 { return .red }
         return .primary
+    }
+}
+struct MarqueeText: View {
+    let text: String
+    let maxWidth: CGFloat = 90 // Limite di sicurezza prima di intaccare Batteria e Nome
+    
+    @State private var offset: CGFloat = 0
+    @State private var textWidth: CGFloat = 0
+    
+    var body: some View {
+        let isTooLong = textWidth > maxWidth
+        
+        Text(text)
+            .font(.system(size: 10, weight: .bold))
+            .foregroundColor(.secondary)
+            .lineLimit(1)
+            // Forziamo il testo a prendere tutto lo spazio che gli serve per essere misurato
+            .fixedSize(horizontal: true, vertical: false)
+            .background(GeometryReader { geo -> Color in
+                // Leggiamo la larghezza reale del font
+                if textWidth != geo.size.width {
+                    DispatchQueue.main.async {
+                        textWidth = geo.size.width
+                        resetAnimation()
+                    }
+                }
+                return Color.clear
+            })
+            // Se è troppo lungo applichiamo l'offset, altrimenti sta fermo a 0
+            .offset(x: isTooLong ? offset : 0)
+            // Maschera di ritaglio: se è corto è largo esattamente quanto il testo, se è lungo si ferma a 90
+            .frame(width: isTooLong ? maxWidth : textWidth, alignment: .leading)
+            .clipped()
+            .onChange(of: text) { _, _ in
+                resetAnimation()
+            }
+    }
+    
+    private func resetAnimation() {
+        offset = 0
+        // L'animazione parte solo ed esclusivamente se la larghezza supera la soglia
+        if textWidth > maxWidth {
+            // Effetto "Ping-Pong": scorre a sinistra, fa una pausa e torna a destra
+            withAnimation(.linear(duration: Double(textWidth) * 0.03).delay(1.5).repeatForever(autoreverses: true)) {
+                offset = maxWidth - textWidth
+            }
+        }
     }
 }
