@@ -11,20 +11,23 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.navigation.compose.NavHost
-import androidx.navigation.compose.composable
-import androidx.navigation.compose.rememberNavController
+import androidx.compose.ui.unit.sp
 import it.luigi.macsync.ble.GattServerManager
 import it.luigi.macsync.ui.theme.MacSyncTheme
-import androidx.compose.animation.*
-import androidx.compose.animation.core.tween
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
 
@@ -52,35 +55,33 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AppNavigation(gattServerManager: GattServerManager) {
-    val navController = rememberNavController()
+    var showBottomSheet by remember { mutableStateOf(false) }
 
-    NavHost(
-        navController = navController,
-        startDestination = "home",
-        enterTransition = {
-            slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Up, tween(300)) + fadeIn(tween(300))
-        },
-        exitTransition = {
-            scaleOut(targetScale = 0.95f, animationSpec = tween(300)) + fadeOut(tween(300))
-        },
-        popEnterTransition = {
-            scaleIn(initialScale = 0.95f, animationSpec = tween(300)) + fadeIn(tween(300))
-        },
-        popExitTransition = {
-            slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.Down, tween(300)) + fadeOut(tween(300))
-        }
-    ) {
-        composable("home") {
-            MainScreen(gattServerManager) {
-                navController.navigate("app_selection")
+    // Configuriamo il pannello in modo che, quando si apre, occupi lo spazio necessario
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val coroutineScope = rememberCoroutineScope()
+
+    // Mostriamo la dashboard principale
+    MainScreen(gattServerManager = gattServerManager) {
+        showBottomSheet = true
+    }
+
+    // Se l'utente clicca sul FAB, facciamo salire il BottomSheet
+    if (showBottomSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showBottomSheet = false },
+            sheetState = sheetState,
+            containerColor = MaterialTheme.colorScheme.background,
+            dragHandle = { BottomSheetDefaults.DragHandle() }
+        ) {
+            // Contenitore per dare un'altezza massima (90% dello schermo)
+            Box(modifier = Modifier.fillMaxHeight(0.9f)) {
+                // Rimuoviamo il callback onBackClick, si chiude con lo swipe!
+                AppSelectionScreen()
             }
-        }
-        composable("app_selection") {
-            AppSelectionScreen(
-                onBackClick = { navController.popBackStack() }
-            )
         }
     }
 }
@@ -88,7 +89,11 @@ fun AppNavigation(gattServerManager: GattServerManager) {
 @Composable
 fun MainScreen(gattServerManager: GattServerManager, onNavigateToAppSelection: () -> Unit) {
     var permissionsGranted by remember { mutableStateOf(false) }
+
+    // Leggiamo lo stato della connessione e i nuovi dati del Mac
     val statusText by gattServerManager.connectionState.collectAsState()
+    val macInfo by gattServerManager.macState.collectAsState()
+
     val context = LocalContext.current
 
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -96,7 +101,6 @@ fun MainScreen(gattServerManager: GattServerManager, onNavigateToAppSelection: (
     ) { permissions: Map<String, Boolean> ->
         val allGranted = permissions.entries.all { it.value }
         permissionsGranted = allGranted
-
         if (allGranted) {
             val intent = Intent(context, MacSyncBleService::class.java)
             context.startForegroundService(intent)
@@ -115,29 +119,163 @@ fun MainScreen(gattServerManager: GattServerManager, onNavigateToAppSelection: (
         )
     }
 
-    Column(
-        modifier = Modifier.fillMaxSize(),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
+    // Scaffold per gestire facilmente il bottone flottante
+    Scaffold(
+        floatingActionButtonPosition = FabPosition.Center,
+        floatingActionButton = {
+            if (permissionsGranted) {
+                ExtendedFloatingActionButton(
+                    onClick = onNavigateToAppSelection,
+                    icon = { Icon(Icons.Rounded.Settings, contentDescription = "Impostazioni") },
+                    text = { Text("App Notifiche") },
+                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+            }
+        }
+    ) { paddingValues ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(paddingValues)
+                .padding(horizontal = 24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Spacer(modifier = Modifier.height(64.dp)) // Margine superiore
+
+            if (!permissionsGranted) {
+                Text(text = "Richiesta permessi in corso...", modifier = Modifier.padding(top = 32.dp))
+                return@Scaffold
+            }
+
+            // --- 1. L'EROE: CARD DEL MAC ---
+            Icon(
+                imageVector = Icons.Rounded.LaptopMac,
+                contentDescription = "MacBook",
+                modifier = Modifier.size(160.dp),
+                tint = MaterialTheme.colorScheme.onSurface
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Nome del Mac e Batteria
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center
+            ) {
+                Text(
+                    text = macInfo?.name ?: "In attesa del Mac...",
+                    fontSize = 28.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+
+                if (macInfo != null) {
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant)
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                    ) {
+                        Text(
+                            text = "${macInfo!!.batteryLevel}%",
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Icon(
+                            imageVector = if (macInfo!!.isCharging) Icons.Rounded.BatteryChargingFull else Icons.Rounded.BatteryFull,
+                            contentDescription = "Batteria",
+                            modifier = Modifier.size(18.dp),
+                            tint = if (macInfo!!.isCharging) androidx.compose.ui.graphics.Color(0xFF4CAF50) else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Text(
+                text = statusText,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.secondary
+            )
+
+            Spacer(modifier = Modifier.height(48.dp))
+
+            // --- 2. PREVIEW NOTIFICHE SINCRONIZZATE ---
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    text = "Notifiche Sincronizzate",
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.padding(bottom = 12.dp, start = 4.dp)
+                )
+
+                ElevatedCard(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(20.dp)
+                ) {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        MockupAppRow(icon = Icons.Rounded.Message, appName = "Telegram", time = "Sincronizzato ora")
+                        HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+
+                        MockupAppRow(icon = Icons.Rounded.Mail, appName = "Gmail", time = "5 minuti fa")
+                        HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+
+                        // Tasto provvisorio, la configurazione si fa ora dal FAB
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.NotificationsActive,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                            Spacer(modifier = Modifier.width(16.dp))
+                            Text(
+                                text = "Permesso di Lettura Sistema",
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.Medium,
+                                modifier = Modifier.weight(1f)
+                            )
+                            IconButton(onClick = { context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) }) {
+                                Icon(Icons.Rounded.ChevronRight, contentDescription = "Vai", tint = MaterialTheme.colorScheme.primary)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun MockupAppRow(icon: androidx.compose.ui.graphics.vector.ImageVector, appName: String, time: String) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(16.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        if (permissionsGranted) {
-            Text(text = "Server BLE Attivo! 🚀", style = MaterialTheme.typography.titleLarge)
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(text = statusText)
-            Spacer(modifier = Modifier.height(32.dp))
-
-            Button(onClick = onNavigateToAppSelection) {
-                Text("Configura App Notifiche")
-            }
-            Spacer(modifier = Modifier.height(8.dp))
-            Button(onClick = {
-                context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
-            }) {
-                Text("Permesso Sistema Notifiche")
-            }
-
-        } else {
-            Text(text = "Richiesta permessi Bluetooth in corso...")
+        Box(
+            modifier = Modifier
+                .size(40.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(MaterialTheme.colorScheme.primaryContainer),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(imageVector = icon, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimaryContainer)
+        }
+        Spacer(modifier = Modifier.width(16.dp))
+        Column {
+            Text(text = appName, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
+            Text(text = time, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }

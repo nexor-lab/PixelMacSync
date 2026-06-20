@@ -1,20 +1,17 @@
 package it.luigi.macsync
 
 import android.content.Context
-import android.content.pm.ApplicationInfo
-import android.content.pm.PackageManager
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape // <-- AGGIUNTO IMPORT MANCANTE
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Search
-// FIX: Import delle icone Rounded per ricalcare perfettamente lo stile Pixel
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material3.*
@@ -36,14 +33,12 @@ import androidx.compose.ui.unit.dp
 import androidx.core.graphics.drawable.toBitmap
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-// Import per le forme avanzate di Material Design 3
 import androidx.graphics.shapes.Morph
 import androidx.graphics.shapes.RoundedPolygon
 import androidx.graphics.shapes.star
 import androidx.graphics.shapes.toPath
 import androidx.graphics.shapes.CornerRounding
 
-// Classe necessaria per far digerire le forme avanzate a Jetpack Compose
 class MorphShape(
     private val morph: Morph,
     private val progress: Float
@@ -81,9 +76,9 @@ fun MorphingLoadingIndicator() {
         animationSpec = infiniteRepeatable(
             animation = keyframes {
                 durationMillis = 1200
-
                 0f at 0
-                0f at 200 with FastOutSlowInEasing
+                // Corretto "with" in "using" per la nuova sintassi di Compose
+                0f at 200 using FastOutSlowInEasing
                 1f at 1000
                 1f at 1200
             },
@@ -110,7 +105,7 @@ data class AppItem(val name: String, val packageName: String, val isEnabled: Boo
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AppSelectionScreen(onBackClick: () -> Unit) {
+fun AppSelectionScreen() {
     val context = LocalContext.current
     val prefs = context.getSharedPreferences("MacSync_Prefs", Context.MODE_PRIVATE)
 
@@ -160,32 +155,45 @@ fun AppSelectionScreen(onBackClick: () -> Unit) {
 
     Scaffold(contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
-            SearchBar(
-                query = searchQuery,
-                onQueryChange = { searchQuery = it },
-                onSearch = { },
-                active = false,
-                onActiveChange = { },
-                placeholder = { Text("Cerca app...") },
-                leadingIcon = {
-                    IconButton(onClick = onBackClick) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Indietro")
-                    }
-                },
-                trailingIcon = {
-                    if (searchQuery.isNotEmpty()) {
-                        IconButton(onClick = { searchQuery = "" }) {
-                            Icon(Icons.Default.Clear, contentDescription = "Cancella")
-                        }
-                    } else {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                // Titolo centrale in puro stile widget di Android Stock
+                Text(
+                    text = "App Notifiche",
+                    style = MaterialTheme.typography.titleLarge,
+                    modifier = Modifier.padding(bottom = 12.dp)
+                )
+
+                // SearchBar "Pillola" pulita e senza parentesi graffe finali
+                TextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    placeholder = { Text("Cerca") },
+                    leadingIcon = {
                         Icon(Icons.Default.Search, contentDescription = "Cerca")
-                    }
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp)
-                    .statusBarsPadding()
-            ) {}
+                    },
+                    trailingIcon = {
+                        if (searchQuery.isNotEmpty()) {
+                            IconButton(onClick = { searchQuery = "" }) {
+                                Icon(Icons.Default.Clear, contentDescription = "Cancella")
+                            }
+                        }
+                    },
+                    shape = RoundedCornerShape(50),
+                    colors = TextFieldDefaults.colors(
+                        focusedIndicatorColor = androidx.compose.ui.graphics.Color.Transparent,
+                        unfocusedIndicatorColor = androidx.compose.ui.graphics.Color.Transparent,
+                        disabledIndicatorColor = androidx.compose.ui.graphics.Color.Transparent
+                    ),
+                    singleLine = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp) // <-- Primo step: i lati
+                        .padding(bottom = 8.dp)      // <-- Secondo step: la base
+                )
+            }
         }
     ) { innerPadding ->
         if (isLoading) {
@@ -258,7 +266,6 @@ fun AppRow(appItem: AppItem, onCheckedChange: (Boolean) -> Unit) {
         Switch(
             checked = appItem.isEnabled,
             onCheckedChange = null,
-            // FIX: Forziamo i colori per creare l'effetto "Cutout" nativo di Android
             colors = SwitchDefaults.colors(
                 checkedIconColor = MaterialTheme.colorScheme.primary,
                 uncheckedIconColor = MaterialTheme.colorScheme.surfaceVariant
@@ -266,7 +273,7 @@ fun AppRow(appItem: AppItem, onCheckedChange: (Boolean) -> Unit) {
             thumbContent = if (appItem.isEnabled) {
                 {
                     Icon(
-                        imageVector = Icons.Rounded.Check, // Variante rounded per il tick spesso
+                        imageVector = Icons.Rounded.Check,
                         contentDescription = null,
                         modifier = Modifier.size(SwitchDefaults.IconSize)
                     )
