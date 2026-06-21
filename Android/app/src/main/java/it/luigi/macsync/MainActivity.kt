@@ -154,7 +154,6 @@ fun MainScreen(gattServerManager: GattServerManager, onOpenNotificationsClick: (
         }
 
         // --- 2. IL TUO PNG DEL MAC ---
-        // Sostituisci 'macbook_pro' con il vero nome del tuo file PNG caricato in res/drawable/
         Image(
             painter = painterResource(id = R.drawable.macbookpro),
             contentDescription = "MacBook Pro",
@@ -176,7 +175,6 @@ fun MainScreen(gattServerManager: GattServerManager, onOpenNotificationsClick: (
         // --- 3. RIGA STATO + BATTERIA ---
         val isConnected = macInfo != null && !statusText.contains("Disconnesso", ignoreCase = true)
 
-        // Pulizia stringa: mostra solo "Connesso", "Disconnesso" o l'eventuale "Ricerca..."
         val cleanStatus = when {
             statusText.contains("Connesso", ignoreCase = true) -> "Connesso"
             statusText.contains("Disconnesso", ignoreCase = true) -> "Disconnesso"
@@ -196,7 +194,6 @@ fun MainScreen(gattServerManager: GattServerManager, onOpenNotificationsClick: (
 
             if (isConnected && macInfo != null) {
                 Spacer(modifier = Modifier.width(12.dp))
-                // Pillola Batteria
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
@@ -224,23 +221,22 @@ fun MainScreen(gattServerManager: GattServerManager, onOpenNotificationsClick: (
             }
         }
 
-        Spacer(modifier = Modifier.weight(1f)) // Spinge la sezione impostazioni in basso
+        // 🚀 IL FIX CHIAVE:
+        // Rimosso .weight(1f), ora c'è un elegante margine fisso di 48.dp
+        Spacer(modifier = Modifier.height(48.dp))
 
-        // --- 4. SEZIONE IMPOSTAZIONI (Stile Pixel Watch) ---
+        // --- 4. SEZIONE IMPOSTAZIONI (Agganciata al centro-alto) ---
         Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(bottom = 36.dp)
+            modifier = Modifier.fillMaxWidth()
         ) {
             Text(
                 text = "Impostazioni",
                 style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.primary, // Colore d'accento Monet
+                color = MaterialTheme.colorScheme.primary,
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.padding(start = 4.dp, bottom = 8.dp)
             )
 
-            // Card Principale: Notifiche
             SettingsCardItem(
                 icon = Icons.Rounded.Notifications,
                 title = "Notifiche",
@@ -248,7 +244,6 @@ fun MainScreen(gattServerManager: GattServerManager, onOpenNotificationsClick: (
                 onClick = onOpenNotificationsClick
             )
 
-            // Card Avviso (Appare solo se manca il permesso di sistema)
             if (!isListenerGranted) {
                 Spacer(modifier = Modifier.height(8.dp))
                 SettingsCardItem(
@@ -264,7 +259,6 @@ fun MainScreen(gattServerManager: GattServerManager, onOpenNotificationsClick: (
         }
     }
 }
-
 // Replica esatta del design della batteria di macOS (Guscio + Polo positivo + Livello interno)
 @Composable
 fun MacStyleBatteryIcon(level: Int, isCharging: Boolean) {
