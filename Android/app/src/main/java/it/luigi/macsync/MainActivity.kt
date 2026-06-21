@@ -76,8 +76,8 @@ private fun isNotificationServiceEnabled(context: Context): Boolean {
 fun AppNavigation(gattServerManager: GattServerManager) {
     var showBottomSheet by remember { mutableStateOf(false) }
 
-    // FIX GLITCH: skipPartiallyExpanded = false ripristina la fisica nativa dello swipe verso l'alto
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
+    // Ripristiniamo il salto per evitare l'ancoraggio intermedio che confonde il motore fisico
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     MainScreen(gattServerManager = gattServerManager) {
         showBottomSheet = true
@@ -88,7 +88,9 @@ fun AppNavigation(gattServerManager: GattServerManager) {
             onDismissRequest = { showBottomSheet = false },
             sheetState = sheetState,
             containerColor = MaterialTheme.colorScheme.background,
-            dragHandle = { BottomSheetDefaults.DragHandle() }
+            dragHandle = { BottomSheetDefaults.DragHandle() },
+            contentWindowInsets = { WindowInsets.statusBars }
+
         ) {
             // Rimosso il Box con altezza fissa 0.9f: ora si adatta da solo senza buggare la status bar
             AppSelectionScreen()
