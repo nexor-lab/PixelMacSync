@@ -1,8 +1,9 @@
 package it.luigi.macsync
 
 import android.Manifest
+import android.content.Context
 import android.content.Intent
-import android.graphics.Color
+import android.graphics.Color as AndroidColor
 import android.os.Bundle
 import android.provider.Settings
 import androidx.activity.ComponentActivity
@@ -11,6 +12,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -22,6 +24,12 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -29,7 +37,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import it.luigi.macsync.ble.GattServerManager
 import it.luigi.macsync.ui.theme.MacSyncTheme
-import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
 
@@ -37,8 +44,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge(
-            statusBarStyle = SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT),
-            navigationBarStyle = SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT)
+            statusBarStyle = SystemBarStyle.auto(AndroidColor.TRANSPARENT, AndroidColor.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.auto(AndroidColor.TRANSPARENT, AndroidColor.TRANSPARENT)
         )
         super.onCreate(savedInstanceState)
 
@@ -57,21 +64,25 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+// Controllo nativo per verificare se il servizio di lettura notifiche è attivo nel sistema
+private fun isNotificationServiceEnabled(context: Context): Boolean {
+    val pkgName = context.packageName
+    val flat = Settings.Secure.getString(context.contentResolver, "enabled_notification_listeners")
+    return flat != null && flat.contains(pkgName)
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AppNavigation(gattServerManager: GattServerManager) {
     var showBottomSheet by remember { mutableStateOf(false) }
 
-    // Configuriamo il pannello in modo che, quando si apre, occupi lo spazio necessario
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val coroutineScope = rememberCoroutineScope()
+    // FIX GLITCH: skipPartiallyExpanded = false ripristina la fisica nativa dello swipe verso l'alto
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
 
-    // Mostriamo la dashboard principale
     MainScreen(gattServerManager = gattServerManager) {
         showBottomSheet = true
     }
 
-    // Se l'utente clicca sul FAB, facciamo salire il BottomSheet
     if (showBottomSheet) {
         ModalBottomSheet(
             onDismissRequest = { showBottomSheet = false },
@@ -79,33 +90,29 @@ fun AppNavigation(gattServerManager: GattServerManager) {
             containerColor = MaterialTheme.colorScheme.background,
             dragHandle = { BottomSheetDefaults.DragHandle() }
         ) {
-            // Contenitore per dare un'altezza massima (90% dello schermo)
-            Box(modifier = Modifier.fillMaxHeight(0.9f)) {
-                // Rimuoviamo il callback onBackClick, si chiude con lo swipe!
-                AppSelectionScreen()
-            }
+            // Rimosso il Box con altezza fissa 0.9f: ora si adatta da solo senza buggare la status bar
+            AppSelectionScreen()
         }
     }
 }
 
 @Composable
-fun MainScreen(gattServerManager: GattServerManager, onNavigateToAppSelection: () -> Unit) {
+fun MainScreen(gattServerManager: GattServerManager, onOpenNotificationsClick: () -> Unit) {
     var permissionsGranted by remember { mutableStateOf(false) }
 
-    // Leggiamo lo stato della connessione e i nuovi dati del Mac
     val statusText by gattServerManager.connectionState.collectAsState()
     val macInfo by gattServerManager.macState.collectAsState()
 
     val context = LocalContext.current
+    val isListenerGranted = isNotificationServiceEnabled(context)
 
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
-    ) { permissions: Map<String, Boolean> ->
+    ) { permissions ->
         val allGranted = permissions.entries.all { it.value }
         permissionsGranted = allGranted
         if (allGranted) {
-            val intent = Intent(context, MacSyncBleService::class.java)
-            context.startForegroundService(intent)
+            context.startForegroundService(Intent(context, MacSyncBleService::class.java))
         }
     }
 
@@ -121,162 +128,226 @@ fun MainScreen(gattServerManager: GattServerManager, onNavigateToAppSelection: (
         )
     }
 
-    // Scaffold per gestire facilmente il bottone flottante
-    Scaffold(
-        floatingActionButtonPosition = FabPosition.Center,
-        floatingActionButton = {
-            if (permissionsGranted) {
-                ExtendedFloatingActionButton(
-                    onClick = onNavigateToAppSelection,
-                    icon = { Icon(Icons.Rounded.Settings, contentDescription = "Impostazioni") },
-                    text = { Text("App Notifiche") },
-                    containerColor = MaterialTheme.colorScheme.primaryContainer,
-                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Spacer(modifier = Modifier.height(54.dp)) // Margine dalla status bar
+
+        // --- 1. TITOLO EROE ---
+        Text(
+            text = "MacSync",
+            style = MaterialTheme.typography.headlineMedium.copy(
+                fontWeight = FontWeight.Bold,
+                letterSpacing = (-0.5).sp
+            ),
+            color = MaterialTheme.colorScheme.primary
+        )
+
+        Spacer(modifier = Modifier.height(36.dp))
+
+        if (!permissionsGranted) {
+            Text("Richiesta permessi Bluetooth...", modifier = Modifier.padding(top = 32.dp))
+            return@Column
+        }
+
+        // --- 2. IL TUO PNG DEL MAC ---
+        // Sostituisci 'macbook_pro' con il vero nome del tuo file PNG caricato in res/drawable/
+        Image(
+            painter = painterResource(id = R.drawable.macbookpro),
+            contentDescription = "MacBook Pro",
+            modifier = Modifier.size(165.dp)
+        )
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Nome del Mac
+        Text(
+            text = macInfo?.name ?: "MacBook Pro",
+            fontSize = 24.sp,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        // --- 3. RIGA STATO + BATTERIA ---
+        val isConnected = macInfo != null && !statusText.contains("Disconnesso", ignoreCase = true)
+
+        // Pulizia stringa: mostra solo "Connesso", "Disconnesso" o l'eventuale "Ricerca..."
+        val cleanStatus = when {
+            statusText.contains("Connesso", ignoreCase = true) -> "Connesso"
+            statusText.contains("Disconnesso", ignoreCase = true) -> "Disconnesso"
+            else -> statusText
+        }
+
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
+        ) {
+            Text(
+                text = cleanStatus,
+                style = MaterialTheme.typography.bodyLarge,
+                color = if (isConnected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                fontWeight = FontWeight.Medium
+            )
+
+            if (isConnected && macInfo != null) {
+                Spacer(modifier = Modifier.width(12.dp))
+                // Pillola Batteria
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(50))
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f))
+                        .padding(horizontal = 10.dp, vertical = 4.dp)
+                ) {
+                    Text(
+                        text = "${macInfo!!.batteryLevel}%",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    MacStyleBatteryIcon(level = macInfo!!.batteryLevel, isCharging = macInfo!!.isCharging)
+                }
+            } else if (cleanStatus == "Disconnesso") {
+                Spacer(modifier = Modifier.width(8.dp))
+                Icon(
+                    imageVector = Icons.Rounded.LinkOff,
+                    contentDescription = "Disconnesso",
+                    modifier = Modifier.size(18.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }
-    ) { paddingValues ->
+
+        Spacer(modifier = Modifier.weight(1f)) // Spinge la sezione impostazioni in basso
+
+        // --- 4. SEZIONE IMPOSTAZIONI (Stile Pixel Watch) ---
         Column(
             modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues)
-                .padding(horizontal = 24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
+                .fillMaxWidth()
+                .padding(bottom = 36.dp)
         ) {
-            Spacer(modifier = Modifier.height(64.dp)) // Margine superiore
-
-            if (!permissionsGranted) {
-                Text(text = "Richiesta permessi in corso...", modifier = Modifier.padding(top = 32.dp))
-                return@Scaffold
-            }
-
-            // --- 1. L'EROE: CARD DEL MAC ---
-            Image(
-                painter = painterResource(id = R.drawable.macbookpro),
-                contentDescription = "MacBook",
-                modifier = Modifier.size(160.dp)
-            )
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            // Nome del Mac e Batteria
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.Center
-            ) {
-                Text(
-                    text = macInfo?.name ?: "In attesa del Mac...",
-                    fontSize = 28.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-
-                if (macInfo != null) {
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(MaterialTheme.colorScheme.surfaceVariant)
-                            .padding(horizontal = 8.dp, vertical = 4.dp)
-                    ) {
-                        Text(
-                            text = "${macInfo!!.batteryLevel}%",
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Icon(
-                            imageVector = if (macInfo!!.isCharging) Icons.Rounded.BatteryChargingFull else Icons.Rounded.BatteryFull,
-                            contentDescription = "Batteria",
-                            modifier = Modifier.size(18.dp),
-                            tint = if (macInfo!!.isCharging) androidx.compose.ui.graphics.Color(0xFF4CAF50) else MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
             Text(
-                text = statusText,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.secondary
+                text = "Impostazioni",
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.primary, // Colore d'accento Monet
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(start = 4.dp, bottom = 8.dp)
             )
 
-            Spacer(modifier = Modifier.height(48.dp))
+            // Card Principale: Notifiche
+            SettingsCardItem(
+                icon = Icons.Rounded.Notifications,
+                title = "Notifiche",
+                subtitle = "Sincronizza notifiche con il Mac",
+                onClick = onOpenNotificationsClick
+            )
 
-            // --- 2. PREVIEW NOTIFICHE SINCRONIZZATE ---
-            Column(modifier = Modifier.fillMaxWidth()) {
-                Text(
-                    text = "Notifiche Sincronizzate",
-                    style = MaterialTheme.typography.titleMedium,
-                    modifier = Modifier.padding(bottom = 12.dp, start = 4.dp)
-                )
-
-                ElevatedCard(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(20.dp)
-                ) {
-                    Column(modifier = Modifier.fillMaxWidth()) {
-                        MockupAppRow(icon = Icons.Rounded.Message, appName = "Telegram", time = "Sincronizzato ora")
-                        HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-
-                        MockupAppRow(icon = Icons.Rounded.Mail, appName = "Gmail", time = "5 minuti fa")
-                        HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-
-                        // Tasto provvisorio, la configurazione si fa ora dal FAB
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(16.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                imageVector = Icons.Rounded.NotificationsActive,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary
-                            )
-                            Spacer(modifier = Modifier.width(16.dp))
-                            Text(
-                                text = "Permesso di Lettura Sistema",
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = MaterialTheme.colorScheme.primary,
-                                fontWeight = FontWeight.Medium,
-                                modifier = Modifier.weight(1f)
-                            )
-                            IconButton(onClick = { context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) }) {
-                                Icon(Icons.Rounded.ChevronRight, contentDescription = "Vai", tint = MaterialTheme.colorScheme.primary)
-                            }
-                        }
+            // Card Avviso (Appare solo se manca il permesso di sistema)
+            if (!isListenerGranted) {
+                Spacer(modifier = Modifier.height(8.dp))
+                SettingsCardItem(
+                    icon = Icons.Rounded.Warning,
+                    title = "Accesso alle Notifiche",
+                    subtitle = "Tocca per concedere il permesso di sistema",
+                    isWarning = true,
+                    onClick = {
+                        context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
                     }
-                }
+                )
             }
         }
     }
 }
 
+// Replica esatta del design della batteria di macOS (Guscio + Polo positivo + Livello interno)
 @Composable
-fun MockupAppRow(icon: androidx.compose.ui.graphics.vector.ImageVector, appName: String, time: String) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(16.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Box(
-            modifier = Modifier
-                .size(40.dp)
-                .clip(RoundedCornerShape(10.dp))
-                .background(MaterialTheme.colorScheme.primaryContainer),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(imageVector = icon, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimaryContainer)
+fun MacStyleBatteryIcon(level: Int, isCharging: Boolean) {
+    val fillColor = if (isCharging) Color(0xFF4CAF50) else MaterialTheme.colorScheme.onSurfaceVariant
+
+    Box(modifier = Modifier.size(width = 22.dp, height = 11.dp), contentAlignment = Alignment.Center) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val stroke = 1.5.dp.toPx()
+            val bodyWidth = size.width * 0.88f
+            val capWidth = size.width * 0.12f
+            val capHeight = size.height * 0.45f
+            val corner = CornerRadius(2.dp.toPx(), 2.dp.toPx())
+
+            // 1. Guscio esterno
+            drawRoundRect(
+                color = fillColor,
+                topLeft = Offset(stroke / 2, stroke / 2),
+                size = Size(bodyWidth - stroke, size.height - stroke),
+                cornerRadius = corner,
+                style = Stroke(width = stroke)
+            )
+
+            // 2. Polo positivo (tappino a destra)
+            drawRoundRect(
+                color = fillColor,
+                topLeft = Offset(bodyWidth - (stroke / 2), (size.height - capHeight) / 2),
+                size = Size(capWidth, capHeight),
+                cornerRadius = CornerRadius(1.dp.toPx(), 1.dp.toPx())
+            )
+
+            // 3. Barra di riempimento interna proporzionale
+            val pad = 2.dp.toPx()
+            val maxFill = bodyWidth - (pad * 2)
+            val actualFill = maxFill * (level / 100f)
+            if (level > 0) {
+                drawRoundRect(
+                    color = fillColor,
+                    topLeft = Offset(pad, pad),
+                    size = Size(actualFill, size.height - (pad * 2)),
+                    cornerRadius = CornerRadius(1.dp.toPx(), 1.dp.toPx())
+                )
+            }
         }
-        Spacer(modifier = Modifier.width(16.dp))
-        Column {
-            Text(text = appName, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
-            Text(text = time, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+// Componente riga per la lista Impostazioni in basso
+@Composable
+fun SettingsCardItem(
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    isWarning: Boolean = false,
+    onClick: () -> Unit
+) {
+    val bg = if (isWarning) MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.8f)
+    else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+    val txtColor = if (isWarning) MaterialTheme.colorScheme.onErrorContainer
+    else MaterialTheme.colorScheme.onSurface
+
+    Surface(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        color = bg
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 18.dp, vertical = 16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = if (isWarning) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(26.dp)
+            )
+            Spacer(modifier = Modifier.width(18.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(text = title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = txtColor)
+                Text(text = subtitle, style = MaterialTheme.typography.bodyMedium, color = if (isWarning) txtColor.copy(alpha = 0.8f) else MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         }
     }
 }
