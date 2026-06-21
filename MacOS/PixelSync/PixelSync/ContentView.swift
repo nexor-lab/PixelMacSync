@@ -99,4 +99,3 @@ struct ContentView: View {
         return .primary
     }
 }
-
