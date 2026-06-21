@@ -162,10 +162,11 @@ fun MainScreen(gattServerManager: GattServerManager, onOpenNotificationsClick: (
         val isConnected = !statusText.contains("Disconnesso", ignoreCase = true)
 
         val cleanStatus = when {
-            statusText.contains("Connesso", ignoreCase = true) -> "Connesso"
             statusText.contains("Disconnesso", ignoreCase = true) -> "Disconnesso"
+            statusText.contains("Connesso", ignoreCase = true) -> "Connesso"
             else -> statusText
         }
+
 
         Row(
             verticalAlignment = Alignment.CenterVertically,

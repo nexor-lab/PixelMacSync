@@ -203,7 +203,7 @@ class GattServerManager private constructor(private val context: Context) {
 
         if (mac != null && characteristic != null && gattServer != null) {
             val networkStringToUse = if (isWifiConnected) wifiSSID else currentCellularNetwork
-            val payload = "$currentBatteryLevel\u001F$isCharging\u001F$networkStringToUse\u001F$currentSignal\u001F$isWifiConnected\u001F$isHotspotActive"
+            val payload = "$currentBatteryLevel\u001F$isCharging\u001F$networkStringToUse\u001F$currentSignal\u001F$isWifiConnected\u001F$isHotspotActive\u001F${android.os.Build.MODEL}"
             val data = payload.toByteArray(Charsets.UTF_8)
             gattServer?.notifyCharacteristicChanged(mac, characteristic, false, data)
         }
@@ -236,7 +236,7 @@ class GattServerManager private constructor(private val context: Context) {
             super.onCharacteristicReadRequest(device, requestId, offset, characteristic)
             if (characteristic.uuid == TELEMETRY_UUID) {
                 val networkStringToUse = if (isWifiConnected) wifiSSID else currentCellularNetwork
-                val payload = "$currentBatteryLevel\u001F$isCharging\u001F$networkStringToUse\u001F$currentSignal\u001F$isWifiConnected\u001F$isHotspotActive"
+                val payload = "$currentBatteryLevel\u001F$isCharging\u001F$networkStringToUse\u001F$currentSignal\u001F$isWifiConnected\u001F$isHotspotActive\u001F${android.os.Build.MODEL}"
                 val data = payload.toByteArray(Charsets.UTF_8)
                 gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, data)
             }
