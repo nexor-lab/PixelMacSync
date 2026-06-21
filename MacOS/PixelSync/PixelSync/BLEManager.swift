@@ -21,6 +21,9 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
     
     var connectionAttempts = 0
     
+    // Flag di stato per prevenire il battery drain in standby
+    private var isSleeping = false
+    
     // --- DIZIONARIO DINAMICO DELLE APP ---
     var appMap: [String: String] = [:]
     
@@ -149,6 +152,7 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
 
     @objc func macDidSleep() {
         print("MacSync: Coperchio chiuso o stop display. Sgancio il Bluetooth preventivamente.")
+        self.isSleeping = true // <-- Blocca le riconnessioni future
         if let peripheral = pixelPeripheral {
             centralManager.cancelPeripheralConnection(peripheral)
         }
@@ -157,6 +161,7 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
 
     @objc func macDidWake() {
         print("MacSync: Sistema sveglio. Riavvio motore Bluetooth pulito.")
+        self.isSleeping = false // <-- Consente nuovamente la scansione
         
         DispatchQueue.main.async {
             self.connectionStatus = "Risveglio..."
@@ -169,7 +174,9 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
         }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) {
-            self.forceRestartBluetooth()
+            if !self.isSleeping {
+                self.forceRestartBluetooth()
+            }
         }
     }
 
@@ -225,7 +232,7 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
                 self.connectionStatus = "Ricerca..."
                 
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                    if self.centralManager.state == .poweredOn {
+                    if self.centralManager.state == .poweredOn && !self.isSleeping {
                         self.startScanningOrReconnect()
                     }
                 }
@@ -254,8 +261,14 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
             
             self.centralManager.stopScan()
             
+            // Se il Mac è in sleep, NON riavviare la scansione asincrona
+            guard !self.isSleeping else {
+                print("MacSync: Mac in standby. Scansione post-disconnessione soppressa.")
+                return
+            }
+            
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                if self.centralManager.state == .poweredOn {
+                if self.centralManager.state == .poweredOn && !self.isSleeping {
                     self.startScanningOrReconnect()
                 }
             }
@@ -265,8 +278,10 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
     func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
         print("MacSync: Connessione fallita dal sistema.")
         DispatchQueue.main.async {
+            guard !self.isSleeping else { return }
+            
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                if self.centralManager.state == .poweredOn {
+                if self.centralManager.state == .poweredOn && !self.isSleeping {
                     self.startScanningOrReconnect()
                 }
             }
@@ -324,7 +339,9 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
                     self.connectionStatus = "Ricerca..."
                     
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                        self.forceRestartBluetooth()
+                        if !self.isSleeping {
+                            self.forceRestartBluetooth()
+                        }
                     }
                 }
             }
@@ -332,10 +349,14 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
         } else {
             connectionStatus = "Ricerca..."
             centralManager.stopScan()
+            
+            guard !self.isSleeping else { return }
             centralManager.scanForPeripherals(withServices: [serviceUUID], options: nil)
             
             DispatchQueue.main.asyncAfter(deadline: .now() + 20.0) { [weak self] in
                 guard let self = self else { return }
+                guard !self.isSleeping else { return }
+                
                 if self.connectionStatus == "Ricerca..." && self.pixelPeripheral == nil {
                     self.forceRestartBluetooth()
                 }
