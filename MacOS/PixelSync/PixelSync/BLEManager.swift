@@ -24,6 +24,10 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
     // Flag di stato per prevenire il battery drain in standby
     private var isSleeping = false
     
+    // Cache per evitare spam Bluetooth inutile e ridurre l'impatto energetico
+    private var lastSentBatteryLevel: Int = -1
+    private var lastSentChargingState: Bool? = nil
+    
     // --- DIZIONARIO DINAMICO DELLE APP ---
     var appMap: [String: String] = [:]
     
@@ -139,6 +143,17 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
         
         let batteryInfo = getBatteryInfo()
         
+        // --- FILTRO ANTI-SPAM ENERGETICO ---
+        // Se la percentuale e lo stato di carica sono identici all'ultimo invio,
+        // blocchiamo l'esecuzione. Non accendiamo la radio Bluetooth per dire la stessa cosa.
+        if batteryInfo.level == lastSentBatteryLevel && batteryInfo.isCharging == lastSentChargingState {
+            return
+        }
+        
+        // Aggiorniamo la memoria per il prossimo controllo
+        lastSentBatteryLevel = batteryInfo.level
+        lastSentChargingState = batteryInfo.isCharging
+        
         // Controlliamo se c'è un override del nome nel JSON, altrimenti usiamo il sistema
         let macName = appMap["custom_mac_name"] ?? Host.current().localizedName ?? "MacBook"
         
@@ -181,31 +196,37 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
     }
 
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
-        if central.state == .poweredOn {
-            isSwitchedOn = true
-            connectionStatus = "Scansione..."
-            
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                self.startScanningOrReconnect()
+            if central.state == .poweredOn {
+                isSwitchedOn = true
+                connectionStatus = "Scansione..."
+                
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                    guard let self = self else { return }
+                    // 🚀 L'ultimo lucchetto: se il BT si accende ma stiamo dormendo, blocca tutto!
+                    guard !self.isSleeping else {
+                        print("MacSync: Bluetooth ON, ma Mac in sleep. Scansione soppressa.")
+                        return
+                    }
+                    self.startScanningOrReconnect()
+                }
+            } else {
+                isSwitchedOn = false
+                connectionStatus = "Bluetooth OFF"
+                
+                pixelPeripheral?.delegate = nil
+                pixelPeripheral = nil
+                commandCharacteristic = nil
+                macStateCharacteristic = nil
+                connectionAttempts = 0
+                
+                batteryLevel = "--%"
+                isCharging = false
+                networkType = "---"
+                signalStrength = 0
+                isWifi = false
+                isHotspotActive = false
             }
-        } else {
-            isSwitchedOn = false
-            connectionStatus = "Bluetooth OFF"
-            
-            pixelPeripheral?.delegate = nil
-            pixelPeripheral = nil
-            commandCharacteristic = nil
-            macStateCharacteristic = nil
-            connectionAttempts = 0
-            
-            batteryLevel = "--%"
-            isCharging = false
-            networkType = "---"
-            signalStrength = 0
-            isWifi = false
-            isHotspotActive = false
         }
-    }
 
     func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral, advertisementData: [String : Any], rssi RSSI: NSNumber) {
         guard self.pixelPeripheral == nil else { return }
