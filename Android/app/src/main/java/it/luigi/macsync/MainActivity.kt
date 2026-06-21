@@ -174,7 +174,7 @@ fun MainScreen(gattServerManager: GattServerManager, onOpenNotificationsClick: (
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // --- 3. RIGA STATO + BATTERIA ---
+        // --- 3. RIGA STATO + BATTERIA (Con Cache Visiva) ---
         val isConnected = macInfo != null && !statusText.contains("Disconnesso", ignoreCase = true)
 
         val cleanStatus = when {
@@ -194,25 +194,31 @@ fun MainScreen(gattServerManager: GattServerManager, onOpenNotificationsClick: (
                 fontWeight = FontWeight.Medium
             )
 
-            if (isConnected && macInfo != null) {
+            if (macInfo != null) {
                 Spacer(modifier = Modifier.width(12.dp))
+                // Pillola Batteria Cacheata
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
                         .clip(RoundedCornerShape(50))
-                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f))
+                        // Sfondo desaturato se disconnesso
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = if (isConnected) 0.7f else 0.3f))
                         .padding(horizontal = 10.dp, vertical = 4.dp)
                 ) {
                     Text(
                         text = "${macInfo!!.batteryLevel}%",
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        // Testo desaturato se disconnesso
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = if (isConnected) 1f else 0.5f)
                     )
                     Spacer(modifier = Modifier.width(6.dp))
-                    MacStyleBatteryIcon(level = macInfo!!.batteryLevel, isCharging = macInfo!!.isCharging)
+                    MacStyleBatteryIcon(level = macInfo!!.batteryLevel, isCharging = macInfo!!.isCharging, isConnected = isConnected)
                 }
-            } else if (cleanStatus == "Disconnesso") {
+            }
+
+            // Aggiungiamo l'icona spezzata affianco alla batteria "vecchia" se è disconnesso
+            if (!isConnected) {
                 Spacer(modifier = Modifier.width(8.dp))
                 Icon(
                     imageVector = Icons.Rounded.LinkOff,
@@ -261,10 +267,15 @@ fun MainScreen(gattServerManager: GattServerManager, onOpenNotificationsClick: (
         }
     }
 }
-// Replica esatta del design della batteria di macOS (Guscio + Polo positivo + Livello interno)
+
+// Replica esatta del design della batteria di macOS con supporto allo stato disconnesso (Fade)
 @Composable
-fun MacStyleBatteryIcon(level: Int, isCharging: Boolean) {
-    val fillColor = if (isCharging) Color(0xFF4CAF50) else MaterialTheme.colorScheme.onSurfaceVariant
+fun MacStyleBatteryIcon(level: Int, isCharging: Boolean, isConnected: Boolean = true) {
+    val fillColor = when {
+        !isConnected -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+        isCharging -> Color(0xFF4CAF50)
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
 
     Box(modifier = Modifier.size(width = 22.dp, height = 11.dp), contentAlignment = Alignment.Center) {
         Canvas(modifier = Modifier.fillMaxSize()) {

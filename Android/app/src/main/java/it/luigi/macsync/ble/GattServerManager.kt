@@ -67,6 +67,19 @@ class GattServerManager private constructor(private val context: Context) {
     private val _macState = MutableStateFlow<MacInfo?>(null)
     val macState: StateFlow<MacInfo?> = _macState
 
+    // 🚀 SISTEMA DI CACHE: Memoria persistente
+    private val prefs = context.getSharedPreferences("MacSync_Prefs", Context.MODE_PRIVATE)
+
+    init {
+        // Ripristino della memoria cache all'avvio del servizio
+        val cachedName = prefs.getString("mac_name", null)
+        val cachedBattery = prefs.getInt("mac_battery", -1)
+        val cachedCharging = prefs.getBoolean("mac_charging", false)
+        if (cachedName != null && cachedBattery != -1) {
+            _macState.value = MacInfo(cachedName, cachedBattery, cachedCharging)
+        }
+    }
+
     // --- VARIABILI DI STATO ANDROID ---
     private var currentBatteryLevel = 0
     private var isCharging = false
@@ -235,10 +248,14 @@ class GattServerManager private constructor(private val context: Context) {
                 connectedMac = device
                 _connectionState.value = "Connesso al Mac! \uD83C\uDF4F"
                 notifyMacTelemetry()
-            } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-                connectedMac = null
-                _connectionState.value = "Disconnesso. In attesa..."
-                _macState.value = null // Resettiamo la dashboard se il Mac si disconnette
+            } else {
+                // Qualsiasi stato diverso da connesso viene trattato come disconnessione
+                if (connectedMac?.address == device.address || connectedMac == null) {
+                    connectedMac = null
+                    _connectionState.value = "Disconnesso"
+                    // 🚀 RIMOSSO _macState.value = null
+                    // Ora i dati restano visibili in UI come "Ultimo stato noto"
+                }
             }
         }
 
@@ -278,11 +295,19 @@ class GattServerManager private constructor(private val context: Context) {
 
                 val parts = payload.split("|")
                 if (parts.size >= 3) {
-                    _macState.value = MacInfo(
+                    val newInfo = MacInfo(
                         name = parts[0],
                         batteryLevel = parts[1].toIntOrNull() ?: 0,
                         isCharging = parts[2].toBooleanStrictOrNull() ?: false
                     )
+                    _macState.value = newInfo
+
+                    // 🚀 Aggiorniamo la cache sul disco del telefono
+                    prefs.edit()
+                        .putString("mac_name", newInfo.name)
+                        .putInt("mac_battery", newInfo.batteryLevel)
+                        .putBoolean("mac_charging", newInfo.isCharging)
+                        .apply()
                 }
 
                 if (responseNeeded) {
