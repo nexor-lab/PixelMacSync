@@ -12,7 +12,6 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -23,12 +22,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
@@ -64,7 +57,6 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-// Controllo nativo per verificare se il servizio di lettura notifiche è attivo nel sistema
 private fun isNotificationServiceEnabled(context: Context): Boolean {
     val pkgName = context.packageName
     val flat = Settings.Secure.getString(context.contentResolver, "enabled_notification_listeners")
@@ -75,8 +67,6 @@ private fun isNotificationServiceEnabled(context: Context): Boolean {
 @Composable
 fun AppNavigation(gattServerManager: GattServerManager) {
     var showBottomSheet by remember { mutableStateOf(false) }
-
-    // Ripristiniamo il salto per evitare l'ancoraggio intermedio che confonde il motore fisico
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     MainScreen(gattServerManager = gattServerManager) {
@@ -90,9 +80,7 @@ fun AppNavigation(gattServerManager: GattServerManager) {
             containerColor = MaterialTheme.colorScheme.background,
             dragHandle = { BottomSheetDefaults.DragHandle() },
             contentWindowInsets = { WindowInsets.statusBars }
-
         ) {
-            // Rimosso il Box con altezza fissa 0.9f: ora si adatta da solo senza buggare la status bar
             AppSelectionScreen()
         }
     }
@@ -103,7 +91,6 @@ fun MainScreen(gattServerManager: GattServerManager, onOpenNotificationsClick: (
     var permissionsGranted by remember { mutableStateOf(false) }
 
     val statusText by gattServerManager.connectionState.collectAsState()
-    val macInfo by gattServerManager.macState.collectAsState()
 
     val context = LocalContext.current
     val isListenerGranted = isNotificationServiceEnabled(context)
@@ -136,9 +123,8 @@ fun MainScreen(gattServerManager: GattServerManager, onOpenNotificationsClick: (
             .padding(horizontal = 24.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Spacer(modifier = Modifier.height(54.dp)) // Margine dalla status bar
+        Spacer(modifier = Modifier.height(54.dp))
 
-        // --- 1. TITOLO EROE ---
         Text(
             text = "MacSync",
             style = MaterialTheme.typography.headlineMedium.copy(
@@ -155,7 +141,6 @@ fun MainScreen(gattServerManager: GattServerManager, onOpenNotificationsClick: (
             return@Column
         }
 
-        // --- 2. IL TUO PNG DEL MAC ---
         Image(
             painter = painterResource(id = R.drawable.macbookpro),
             contentDescription = "MacBook Pro",
@@ -164,9 +149,8 @@ fun MainScreen(gattServerManager: GattServerManager, onOpenNotificationsClick: (
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // Nome del Mac
         Text(
-            text = macInfo?.name ?: "MacBook Pro",
+            text = "MacBook Pro di Luigi",
             fontSize = 24.sp,
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.onSurface
@@ -174,8 +158,8 @@ fun MainScreen(gattServerManager: GattServerManager, onOpenNotificationsClick: (
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // --- 3. RIGA STATO + BATTERIA (Con Cache Visiva) ---
-        val isConnected = macInfo != null && !statusText.contains("Disconnesso", ignoreCase = true)
+        // --- RIGA STATO PULITA E COERENTE ---
+        val isConnected = !statusText.contains("Disconnesso", ignoreCase = true)
 
         val cleanStatus = when {
             statusText.contains("Connesso", ignoreCase = true) -> "Connesso"
@@ -194,46 +178,28 @@ fun MainScreen(gattServerManager: GattServerManager, onOpenNotificationsClick: (
                 fontWeight = FontWeight.Medium
             )
 
-            if (macInfo != null) {
-                Spacer(modifier = Modifier.width(12.dp))
-                // Pillola Batteria Cacheata
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(50))
-                        // Sfondo desaturato se disconnesso
-                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = if (isConnected) 0.7f else 0.3f))
-                        .padding(horizontal = 10.dp, vertical = 4.dp)
-                ) {
-                    Text(
-                        text = "${macInfo!!.batteryLevel}%",
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Bold,
-                        // Testo desaturato se disconnesso
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = if (isConnected) 1f else 0.5f)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    MacStyleBatteryIcon(level = macInfo!!.batteryLevel, isCharging = macInfo!!.isCharging, isConnected = isConnected)
-                }
-            }
+            Spacer(modifier = Modifier.width(8.dp))
 
-            // Aggiungiamo l'icona spezzata affianco alla batteria "vecchia" se è disconnesso
-            if (!isConnected) {
-                Spacer(modifier = Modifier.width(8.dp))
+            if (isConnected) {
                 Icon(
-                    imageVector = Icons.Rounded.LinkOff,
+                    imageVector = Icons.Rounded.Link, // <-- Icona Catena Intera
+                    contentDescription = "Connesso",
+                    modifier = Modifier.size(18.dp),
+                    tint = MaterialTheme.colorScheme.primary // Stesso colore Monet della scritta "Connesso"
+                )
+            } else {
+                Icon(
+                    imageVector = Icons.Rounded.LinkOff, // <-- Icona Catena Spezzata
                     contentDescription = "Disconnesso",
                     modifier = Modifier.size(18.dp),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant // Stesso grigio della scritta "Disconnesso"
                 )
             }
         }
 
-        // 🚀 IL FIX CHIAVE:
-        // Rimosso .weight(1f), ora c'è un elegante margine fisso di 48.dp
         Spacer(modifier = Modifier.height(48.dp))
 
-        // --- 4. SEZIONE IMPOSTAZIONI (Agganciata al centro-alto) ---
+        // --- SEZIONE IMPOSTAZIONI ---
         Column(
             modifier = Modifier.fillMaxWidth()
         ) {
@@ -268,57 +234,6 @@ fun MainScreen(gattServerManager: GattServerManager, onOpenNotificationsClick: (
     }
 }
 
-// Replica esatta del design della batteria di macOS con supporto allo stato disconnesso (Fade)
-@Composable
-fun MacStyleBatteryIcon(level: Int, isCharging: Boolean, isConnected: Boolean = true) {
-    val fillColor = when {
-        !isConnected -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
-        isCharging -> Color(0xFF4CAF50)
-        else -> MaterialTheme.colorScheme.onSurfaceVariant
-    }
-
-    Box(modifier = Modifier.size(width = 22.dp, height = 11.dp), contentAlignment = Alignment.Center) {
-        Canvas(modifier = Modifier.fillMaxSize()) {
-            val stroke = 1.5.dp.toPx()
-            val bodyWidth = size.width * 0.88f
-            val capWidth = size.width * 0.12f
-            val capHeight = size.height * 0.45f
-            val corner = CornerRadius(2.dp.toPx(), 2.dp.toPx())
-
-            // 1. Guscio esterno
-            drawRoundRect(
-                color = fillColor,
-                topLeft = Offset(stroke / 2, stroke / 2),
-                size = Size(bodyWidth - stroke, size.height - stroke),
-                cornerRadius = corner,
-                style = Stroke(width = stroke)
-            )
-
-            // 2. Polo positivo (tappino a destra)
-            drawRoundRect(
-                color = fillColor,
-                topLeft = Offset(bodyWidth - (stroke / 2), (size.height - capHeight) / 2),
-                size = Size(capWidth, capHeight),
-                cornerRadius = CornerRadius(1.dp.toPx(), 1.dp.toPx())
-            )
-
-            // 3. Barra di riempimento interna proporzionale
-            val pad = 2.dp.toPx()
-            val maxFill = bodyWidth - (pad * 2)
-            val actualFill = maxFill * (level / 100f)
-            if (level > 0) {
-                drawRoundRect(
-                    color = fillColor,
-                    topLeft = Offset(pad, pad),
-                    size = Size(actualFill, size.height - (pad * 2)),
-                    cornerRadius = CornerRadius(1.dp.toPx(), 1.dp.toPx())
-                )
-            }
-        }
-    }
-}
-
-// Componente riga per la lista Impostazioni in basso
 @Composable
 fun SettingsCardItem(
     icon: ImageVector,

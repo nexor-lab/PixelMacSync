@@ -53,34 +53,12 @@ class GattServerManager private constructor(private val context: Context) {
     private val CCC_DESCRIPTOR_UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
     private val NOTIFICATIONS_UUID = UUID.fromString("22222222-73F5-4BC4-A12F-17D1AD07A961")
     private val COMMAND_UUID = UUID.fromString("44444444-73F5-4BC4-A12F-17D1AD07A961")
-
-    // --- NUOVO UUID PER LO STATO DEL MAC ---
-    private val MAC_STATE_UUID = UUID.fromString("55555555-73F5-4BC4-A12F-17D1AD07A961")
-
     private var notificationsCharacteristic: BluetoothGattCharacteristic? = null
 
     private val _connectionState = MutableStateFlow("In attesa di connessione...")
     val connectionState: StateFlow<String> = _connectionState
 
-    // --- STRUTTURA DATI MAC E FLUSSO PER LA UI ---
-    data class MacInfo(val name: String, val batteryLevel: Int, val isCharging: Boolean)
-    private val _macState = MutableStateFlow<MacInfo?>(null)
-    val macState: StateFlow<MacInfo?> = _macState
-
-    // 🚀 SISTEMA DI CACHE: Memoria persistente
-    private val prefs = context.getSharedPreferences("MacSync_Prefs", Context.MODE_PRIVATE)
-
-    init {
-        // Ripristino della memoria cache all'avvio del servizio
-        val cachedName = prefs.getString("mac_name", null)
-        val cachedBattery = prefs.getInt("mac_battery", -1)
-        val cachedCharging = prefs.getBoolean("mac_charging", false)
-        if (cachedName != null && cachedBattery != -1) {
-            _macState.value = MacInfo(cachedName, cachedBattery, cachedCharging)
-        }
-    }
-
-    // --- VARIABILI DI STATO ANDROID ---
+    // --- VARIABILI DI STATO ---
     private var currentBatteryLevel = 0
     private var isCharging = false
     private var currentCellularNetwork = "--"
@@ -91,6 +69,7 @@ class GattServerManager private constructor(private val context: Context) {
 
     private val telephonyManager = context.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
     private val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+
 
     // 1. Ascoltatore del Wi-Fi (Versione Caching Ottimizzata + Fix SSID)
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
@@ -128,7 +107,6 @@ class GattServerManager private constructor(private val context: Context) {
             notifyMacTelemetry()
         }
     }
-
     private fun getNetworkString(networkType: Int): String {
         return when (networkType) {
             TelephonyManager.NETWORK_TYPE_NR -> "5G"
@@ -225,7 +203,7 @@ class GattServerManager private constructor(private val context: Context) {
 
         if (mac != null && characteristic != null && gattServer != null) {
             val networkStringToUse = if (isWifiConnected) wifiSSID else currentCellularNetwork
-            val payload = "$currentBatteryLevel\u001F$isCharging\u001F$networkStringToUse\u001F$currentSignal\u001F$isWifiConnected\u001F$isHotspotActive\u001F${android.os.Build.MODEL}"
+            val payload = "$currentBatteryLevel\u001F$isCharging\u001F$networkStringToUse\u001F$currentSignal\u001F$isWifiConnected\u001F$isHotspotActive"
             val data = payload.toByteArray(Charsets.UTF_8)
             gattServer?.notifyCharacteristicChanged(mac, characteristic, false, data)
         }
@@ -248,14 +226,9 @@ class GattServerManager private constructor(private val context: Context) {
                 connectedMac = device
                 _connectionState.value = "Connesso al Mac! \uD83C\uDF4F"
                 notifyMacTelemetry()
-            } else {
-                // Qualsiasi stato diverso da connesso viene trattato come disconnessione
-                if (connectedMac?.address == device.address || connectedMac == null) {
-                    connectedMac = null
-                    _connectionState.value = "Disconnesso"
-                    // 🚀 RIMOSSO _macState.value = null
-                    // Ora i dati restano visibili in UI come "Ultimo stato noto"
-                }
+            } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+                connectedMac = null
+                _connectionState.value = "Disconnesso. In attesa..."
             }
         }
 
@@ -263,7 +236,7 @@ class GattServerManager private constructor(private val context: Context) {
             super.onCharacteristicReadRequest(device, requestId, offset, characteristic)
             if (characteristic.uuid == TELEMETRY_UUID) {
                 val networkStringToUse = if (isWifiConnected) wifiSSID else currentCellularNetwork
-                val payload = "$currentBatteryLevel\u001F$isCharging\u001F$networkStringToUse\u001F$currentSignal\u001F$isWifiConnected\u001F$isHotspotActive\u001F${android.os.Build.MODEL}"
+                val payload = "$currentBatteryLevel\u001F$isCharging\u001F$networkStringToUse\u001F$currentSignal\u001F$isWifiConnected\u001F$isHotspotActive"
                 val data = payload.toByteArray(Charsets.UTF_8)
                 gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, data)
             }
@@ -288,35 +261,6 @@ class GattServerManager private constructor(private val context: Context) {
         ) {
             super.onCharacteristicWriteRequest(device, requestId, characteristic, preparedWrite, responseNeeded, offset, value)
 
-            // --- RICEZIONE DATI DAL MAC ---
-            if (characteristic.uuid == MAC_STATE_UUID && value != null) {
-                val payload = String(value, Charsets.UTF_8)
-                Log.d("MacSync", "Dati Mac ricevuti: $payload")
-
-                val parts = payload.split("|")
-                if (parts.size >= 3) {
-                    val newInfo = MacInfo(
-                        name = parts[0],
-                        batteryLevel = parts[1].toIntOrNull() ?: 0,
-                        isCharging = parts[2].toBooleanStrictOrNull() ?: false
-                    )
-                    _macState.value = newInfo
-
-                    // 🚀 Aggiorniamo la cache sul disco del telefono
-                    prefs.edit()
-                        .putString("mac_name", newInfo.name)
-                        .putInt("mac_battery", newInfo.batteryLevel)
-                        .putBoolean("mac_charging", newInfo.isCharging)
-                        .apply()
-                }
-
-                if (responseNeeded) {
-                    gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, value)
-                }
-                return
-            }
-
-            // --- ALTRI COMANDI ---
             if (characteristic.uuid == COMMAND_UUID && value != null) {
                 val fullCommand = String(value, Charsets.UTF_8)
                 Log.d("MacSync", "Ricevuto pacchetto comandi dal Mac: $fullCommand")
@@ -345,6 +289,7 @@ class GattServerManager private constructor(private val context: Context) {
                             context.sendBroadcast(intent)
                         }
                     }
+                    // --- NUOVO COMANDO: RICHIESTA DI SINCRONIZZAZIONE A FREDDO ---
                     "SYNC_REQ" -> {
                         Log.d("MacSync", "Il Mac ha richiesto la sincronizzazione a freddo!")
                         val intent = Intent("it.luigi.macsync.SYNC_REQUEST")
@@ -413,18 +358,10 @@ class GattServerManager private constructor(private val context: Context) {
         )
         service.addCharacteristic(commandCharacteristic)
 
-        // --- NUOVA CARATTERISTICA: STATO DEL MAC ---
-        val macStateCharacteristic = BluetoothGattCharacteristic(
-            MAC_STATE_UUID,
-            BluetoothGattCharacteristic.PROPERTY_WRITE,
-            BluetoothGattCharacteristic.PERMISSION_WRITE
-        )
-        service.addCharacteristic(macStateCharacteristic)
-
         localTelemetryCharacteristic.addDescriptor(clientConfigDescriptor)
         service.addCharacteristic(localTelemetryCharacteristic)
-
         gattServer?.addService(service)
+
         telemetryCharacteristic = localTelemetryCharacteristic
     }
 
