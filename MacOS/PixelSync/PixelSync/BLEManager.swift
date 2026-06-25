@@ -10,7 +10,7 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
     var pixelPeripheral: CBPeripheral?
     
     let serviceUUID = CBUUID(string: "58DF214B-9942-45A5-BAF9-7B24F5D0232C")
-    let telemetryUUID = CBUUID(string: "33333333-73F5-4BC4-A12F-17D1AD07A961")
+    let telemetryUUID = CBUUID(string: "CEFB6548-6C8A-4D25-A086-C8A69D3F6625")
     let notificationsUUID = CBUUID(string: "22222222-73F5-4BC4-A12F-17D1AD07A961")
     let commandUUID = CBUUID(string: "44444444-73F5-4BC4-A12F-17D1AD07A961")
     
