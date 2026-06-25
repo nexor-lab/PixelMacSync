@@ -108,7 +108,7 @@ Per garantire una comunicazione sicura e univoca, il progetto utilizza i seguent
 
 * **Service Principale:** `58DF214B-9942-45A5-BAF9-7B24F5D0232C`
 * **Canale Telemetria (Read/Notify):** `CEFB6548-6C8A-4D25-A086-C8A69D3F6625`
-* **Canale Notifiche (Notify):** `22222222-73F5-4BC4-A12F-17D1AD07A961`
+* **Canale Notifiche (Notify):** `6E6C9609-9FFA-42E2-A882-B0C4398D58DE`
 * **Canale Comandi (Write):** `44444444-73F5-4BC4-A12F-17D1AD07A961`
 
 Il pacchetto telemetrico è formattato in questo ordine:
@@ -272,7 +272,7 @@ To ensure secure and unique communication, the project uses the following immuta
 
 * **Main Service:** `58DF214B-9942-45A5-BAF9-7B24F5D0232C`
 * **Telemetry Channel (Read/Notify):** `CEFB6548-6C8A-4D25-A086-C8A69D3F6625`
-* **Notification Channel (Notify):** `22222222-73F5-4BC4-A12F-17D1AD07A961`
+* **Notification Channel (Notify):** `6E6C9609-9FFA-42E2-A882-B0C4398D58DE`
 * **Command Channel (Write):** `44444444-73F5-4BC4-A12F-17D1AD07A961`
 
 The telemetry packet is formatted in this order:
