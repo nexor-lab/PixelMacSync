@@ -106,7 +106,7 @@ L’app macOS agisce come **Central / GATT Client** e vive nella Menu Bar.
 
 Per garantire una comunicazione sicura e univoca, il progetto utilizza i seguenti UUID immutabili (**⚠️ da modificare obbligatoriamente prima della compilazione su entrambi i dispositivi**):
 
-* **Service Principale:** `E20A39F4-73F5-4BC4-A12F-17D1AD07A961`
+* **Service Principale:** `58DF214B-9942-45A5-BAF9-7B24F5D0232C`
 * **Canale Telemetria (Read/Notify):** `33333333-73F5-4BC4-A12F-17D1AD07A961`
 * **Canale Notifiche (Notify):** `22222222-73F5-4BC4-A12F-17D1AD07A961`
 * **Canale Comandi (Write):** `44444444-73F5-4BC4-A12F-17D1AD07A961`
@@ -270,7 +270,7 @@ The macOS app acts as the **Central / GATT Client** and lives in the Menu Bar.
 
 To ensure secure and unique communication, the project uses the following immutable UUIDs (**⚠️ these must be changed before compiling on both devices**):
 
-* **Main Service:** `E20A39F4-73F5-4BC4-A12F-17D1AD07A961`
+* **Main Service:** `58DF214B-9942-45A5-BAF9-7B24F5D0232C`
 * **Telemetry Channel (Read/Notify):** `33333333-73F5-4BC4-A12F-17D1AD07A961`
 * **Notification Channel (Notify):** `22222222-73F5-4BC4-A12F-17D1AD07A961`
 * **Command Channel (Write):** `44444444-73F5-4BC4-A12F-17D1AD07A961`
