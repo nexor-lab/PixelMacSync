@@ -64,8 +64,8 @@ L’app Android agisce come **Peripheral / GATT Server** ed è ottimizzata per l
 
 
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/f269ba38-e4fa-4da9-8fee-4704925e5ffa" width="300" />
-  <img src="https://github.com/user-attachments/assets/3eb51e38-2b7c-4977-a411-fce849127947" width="300" />
+  <img src="https://github.com/user-attachments/assets/1a3caa7b-d75c-4b5b-8d17-f07829351716" width="300" />
+  <img src="https://github.com/user-attachments/assets/cd07089a-2362-41d9-a85e-0e1a90a205dc" width="300" />
 </p>
 
 
