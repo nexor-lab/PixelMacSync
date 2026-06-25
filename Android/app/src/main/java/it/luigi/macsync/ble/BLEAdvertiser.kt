@@ -22,7 +22,7 @@ class BLEAdvertiser(context: Context) {
     // Variabile di sicurezza per non avviare due volte l'antenna
     private var isAdvertising = false
 
-    private val serviceUUID = UUID.fromString("E20A39F4-73F5-4BC4-A12F-17D1AD07A961")
+    private val serviceUUID = UUID.fromString("58DF214B-9942-45A5-BAF9-7B24F5D0232C")
 
     private val advertiseSettings = AdvertiseSettings.Builder()
         .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
