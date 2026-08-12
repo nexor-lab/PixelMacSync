@@ -1,7 +1,7 @@
 # 🍏⇄🤖 PixelMacSync
 
 ### PixelSync (macOS) ⇄ MacSync (Android)
-(🇬🇧 Scroll down for the English readme, READ IT!🇬🇧 )
+(🇬🇧 Scroll down for the English readme, READ IT!)
 
 PixelMacSync è un progetto open-source che fornisce un’integrazione nativa tra macOS e Android tramite **Bluetooth Low Energy (BLE)**.
 L’obiettivo è offrire sincronizzazione di notifiche, telemetria e controllo remoto senza dipendere da Wi‑Fi, cloud o connessioni TCP persistenti.
@@ -25,15 +25,15 @@ L’obiettivo è offrire sincronizzazione di notifiche, telemetria e controllo r
 > ---
 > ℹ️ *Nota sulla Privacy Android (Pallino della localizzazione)*: Per inviare al Mac il nome reale della rete Wi-Fi (SSID), l'app Android interroga API di rete che richiedono il permesso di localizzazione. Questo accenderà l'indicatore blu della privacy sul telefono. Se preferisci nasconderlo nativamente, revoca il permesso `ACCESS_FINE_LOCATION` (consenti posizione esatta) dalle impostazioni di Android: il server farà un fallback automatico inviando la stringa fissa `"Wi-Fi"`, spegnendo l'indicatore per sempre senza causare crash.
 
-## 🎯 Design Goals (Obiettivi di Progetto)
+## 🎯 Obiettivi di Progetto
 
 * Solo Bluetooth Low Energy (BLE)
-* Sincronizzazione stateless (senza stato)
+* Sincronizzazione stateless
 * Architettura incentrata sul risparmio energetico (Battery-first)
 * Client nativi per Android e macOS
 * Nessun servizio cloud o server esterno
 * Nessuna dipendenza dalla rete Wi-Fi locale
-* Comunicazione event-driven (guidata dagli eventi)
+* Comunicazione event-driven
 
 > 💡 **Filosofia di Design**
 >
