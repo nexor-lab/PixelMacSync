@@ -18,14 +18,22 @@ import android.content.pm.PackageManager
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
+import android.net.Uri
 import android.os.BatteryManager
+import android.provider.ContactsContract
 import android.telephony.SignalStrength
 import android.telephony.TelephonyCallback
 import android.telephony.TelephonyDisplayInfo
 import android.telephony.TelephonyManager
 import android.util.Log
+import it.luigi.macsync.HotspotController
+import it.luigi.macsync.MediaSessionMonitor
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
 import java.util.UUID
 
 @SuppressLint("MissingPermission")
@@ -55,8 +63,11 @@ class GattServerManager private constructor(private val context: Context) {
     private val COMMAND_UUID = UUID.fromString("586B06E6-CCC5-44B8-BFD9-5D2514A67842")
     private var notificationsCharacteristic: BluetoothGattCharacteristic? = null
 
-    private val _connectionState = MutableStateFlow("In attesa di connessione...")
+    private val _connectionState = MutableStateFlow(context.getString(it.luigi.macsync.R.string.status_waiting))
     val connectionState: StateFlow<String> = _connectionState
+
+    private val _connected = MutableStateFlow(false)
+    val connected: StateFlow<Boolean> = _connected
 
     // --- VARIABILI DI STATO ---
     private var currentBatteryLevel = 0
@@ -65,7 +76,12 @@ class GattServerManager private constructor(private val context: Context) {
     private var currentSignal = 0
     private var isWifiConnected = false
     private var wifiSSID = "Wi-Fi"
-    private var isHotspotActive = false
+    @Volatile private var isHotspotActive = false
+
+    // --- STATO CHIAMATE ---
+    private var wasRinging = false
+    private var lastKnownNumber: String = ""
+    private val callScope = CoroutineScope(Dispatchers.IO)
 
     private val telephonyManager = context.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
     private val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
@@ -151,6 +167,51 @@ class GattServerManager private constructor(private val context: Context) {
         }
     }
 
+    // 2b. Ascoltatore dello stato delle chiamate (telefono in entrata/uscita)
+    private val callStateCallback = object : TelephonyCallback(),
+        TelephonyCallback.CallStateListener {
+
+        override fun onCallStateChanged(state: Int) {
+            when (state) {
+                TelephonyManager.CALL_STATE_RINGING -> {
+                    wasRinging = true
+                    // Piccola attesa per far arrivare il numero dal broadcast PHONE_STATE.
+                    callScope.launch {
+                        delay(200)
+                        val name = resolveContactName(lastKnownNumber)
+                        sendCallEvent("RINGING", lastKnownNumber, name)
+                    }
+                }
+                TelephonyManager.CALL_STATE_OFFHOOK -> {
+                    wasRinging = false
+                    sendCallEvent("OFFHOOK", lastKnownNumber, "")
+                }
+                TelephonyManager.CALL_STATE_IDLE -> {
+                    if (wasRinging) {
+                        sendCallEvent("MISSED", lastKnownNumber, "")
+                        wasRinging = false
+                    } else {
+                        sendCallEvent("IDLE", lastKnownNumber, "")
+                    }
+                    lastKnownNumber = ""
+                }
+            }
+        }
+    }
+
+    // 2c. Broadcast di sistema: ci fornisce il numero in arrivo (best effort).
+    private val phoneStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == TelephonyManager.ACTION_PHONE_STATE_CHANGED) {
+                val state = intent.getStringExtra(TelephonyManager.EXTRA_STATE)
+                val number = intent.getStringExtra(TelephonyManager.EXTRA_INCOMING_NUMBER)
+                if (state == TelephonyManager.EXTRA_STATE_RINGING && !number.isNullOrBlank()) {
+                    lastKnownNumber = number
+                }
+            }
+        }
+    }
+
     // 3. Ascoltatore Batteria
     private val batteryReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -214,8 +275,68 @@ class GattServerManager private constructor(private val context: Context) {
         val characteristic = notificationsCharacteristic
 
         if (mac != null && characteristic != null && gattServer != null) {
-            val safePayload = payload.take(150).toByteArray()
+            val bytes = payload.toByteArray(Charsets.UTF_8)
+            // Il valore viene troncato per restare entro l'MTU (max ~180 byte).
+            val safePayload = if (bytes.size > 180) bytes.copyOf(180) else bytes
             gattServer?.notifyCharacteristicChanged(mac, characteristic, false, safePayload)
+        }
+    }
+
+    /**
+     * Evento chiamata verso il Mac.
+     * Formato: CALL\u001F<event>\u001F<number>\u001F<name>
+     * event ∈ { RINGING, OFFHOOK, IDLE, MISSED }
+     */
+    // --- CONTROLLO HOTSPOT (root) ---
+    // Invia lo stato REALE (dal broadcast WIFI_AP_STATE_CHANGED), mai ottimistico.
+    private fun sendHotspotState() {
+        val state = if (isHotspotActive) "ON" else "OFF"
+        sendNotificationToMac("HOTSPOT_STATE\u001F$state")
+        Log.d("MacSync", "Stato hotspot inviato: $state")
+    }
+
+    private fun handleHotspotCommand(enable: Boolean) {
+        callScope.launch {
+            Log.d("MacSync", "Comando hotspot: ${if (enable) "ENABLE" else "DISABLE"}")
+            val ok = if (enable) HotspotController.enable(context) else HotspotController.disable()
+            if (!ok) {
+                sendNotificationToMac("HOTSPOT_ERROR\u001F${if (enable) "enable_failed" else "disable_failed"}")
+                return@launch
+            }
+            // Attende che lo stato reale del sistema si allinei.
+            var matched = false
+            for (i in 0 until 14) {
+                if (isHotspotActive == enable) { matched = true; break }
+                delay(500)
+            }
+            if (matched) sendHotspotState()
+            else sendNotificationToMac("HOTSPOT_ERROR\u001Fstate_mismatch")
+        }
+    }
+
+    private fun sendCallEvent(event: String, number: String, name: String) {
+        val payload = "CALL\u001F$event\u001F$number\u001F$name"
+        Log.d("MacSync", "Invio evento chiamata: $event ($number / $name)")
+        sendNotificationToMac(payload)
+    }
+
+    private fun resolveContactName(number: String): String {
+        if (number.isBlank()) return ""
+        if (context.checkSelfPermission(android.Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) {
+            return ""
+        }
+        return try {
+            val uri = Uri.withAppendedPath(ContactsContract.PhoneLookup.CONTENT_FILTER_URI, Uri.encode(number))
+            context.contentResolver.query(
+                uri,
+                arrayOf(ContactsContract.PhoneLookup.DISPLAY_NAME),
+                null, null, null
+            )?.use { cursor ->
+                if (cursor.moveToFirst()) cursor.getString(0) ?: "" else ""
+            } ?: ""
+        } catch (e: Exception) {
+            Log.e("MacSync", "Errore risoluzione contatto: ${e.message}")
+            ""
         }
     }
 
@@ -224,11 +345,13 @@ class GattServerManager private constructor(private val context: Context) {
             super.onConnectionStateChange(device, status, newState)
             if (newState == BluetoothProfile.STATE_CONNECTED) {
                 connectedMac = device
-                _connectionState.value = "Connesso al Mac! \uD83C\uDF4F"
+                _connected.value = true
+                _connectionState.value = context.getString(it.luigi.macsync.R.string.status_connected)
                 notifyMacTelemetry()
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                 connectedMac = null
-                _connectionState.value = "Disconnesso. In attesa..."
+                _connected.value = false
+                _connectionState.value = context.getString(it.luigi.macsync.R.string.status_disconnected)
             }
         }
 
@@ -269,16 +392,10 @@ class GattServerManager private constructor(private val context: Context) {
                 val commandType = parts[0]
 
                 when (commandType) {
-                    "HOTSPOT_ON" -> {
-                        val intent = Intent("it.luigi.macsync.HOTSPOT_ON")
-                        intent.setPackage("com.arlosoft.macrodroid")
-                        context.sendBroadcast(intent)
-                    }
-                    "HOTSPOT_OFF" -> {
-                        val intent = Intent("it.luigi.macsync.HOTSPOT_OFF")
-                        intent.setPackage("com.arlosoft.macrodroid")
-                        context.sendBroadcast(intent)
-                    }
+                    // Root-controlled real system hotspot (HyperOS/Android 15).
+                    "HOTSPOT_ON", "HOTSPOT_ENABLE" -> handleHotspotCommand(true)
+                    "HOTSPOT_OFF", "HOTSPOT_DISABLE" -> handleHotspotCommand(false)
+                    "HOTSPOT_STATUS" -> sendHotspotState()
                     "KILL" -> {
                         if (parts.size >= 2) {
                             val notifIdToKill = parts[1]
@@ -295,6 +412,20 @@ class GattServerManager private constructor(private val context: Context) {
                         val intent = Intent("it.luigi.macsync.SYNC_REQUEST")
                         intent.setPackage(context.applicationContext.packageName)
                         context.sendBroadcast(intent)
+                    }
+                    // --- CONTROLLO MUSICA (MediaSession) ---
+                    "MUSIC_PLAY" -> MediaSessionMonitor.play()
+                    "MUSIC_PAUSE" -> MediaSessionMonitor.pause()
+                    "MUSIC_NEXT" -> MediaSessionMonitor.next()
+                    "MUSIC_PREV" -> MediaSessionMonitor.previous()
+                    "MUSIC_SEEK" -> {
+                        val ms = parts.getOrNull(1)?.toLongOrNull()
+                        if (ms != null) MediaSessionMonitor.seekTo(ms)
+                    }
+                    "MUSIC_STATUS" -> MediaSessionMonitor.requestState()
+                    "MUSIC_VOLUME_SET" -> {
+                        val percent = parts.getOrNull(1)?.toIntOrNull()
+                        if (percent != null) MediaSessionMonitor.setVolume(percent)
                     }
                 }
 
@@ -323,6 +454,22 @@ class GattServerManager private constructor(private val context: Context) {
         if (context.checkSelfPermission(android.Manifest.permission.READ_PHONE_STATE) == PackageManager.PERMISSION_GRANTED) {
             telephonyManager.registerTelephonyCallback(context.mainExecutor, telephonyCallback)
             currentCellularNetwork = getNetworkString(telephonyManager.dataNetworkType)
+
+            // Stato chiamate + numero in arrivo (Android 15/16 → API 35+).
+            try {
+                telephonyManager.registerTelephonyCallback(context.mainExecutor, callStateCallback)
+            } catch (e: Exception) {
+                Log.e("MacSync", "Impossibile registrare CallStateListener: ${e.message}")
+            }
+            try {
+                context.registerReceiver(
+                    phoneStateReceiver,
+                    IntentFilter(TelephonyManager.ACTION_PHONE_STATE_CHANGED),
+                    Context.RECEIVER_EXPORTED
+                )
+            } catch (e: Exception) {
+                Log.e("MacSync", "Impossibile registrare phoneStateReceiver: ${e.message}")
+            }
         }
     }
 
@@ -374,6 +521,8 @@ class GattServerManager private constructor(private val context: Context) {
         context.unregisterReceiver(hotspotReceiver)
 
         telephonyManager.unregisterTelephonyCallback(telephonyCallback)
+        try { telephonyManager.unregisterTelephonyCallback(callStateCallback) } catch (_: Exception) {}
+        try { context.unregisterReceiver(phoneStateReceiver) } catch (_: Exception) {}
         connectivityManager.unregisterNetworkCallback(networkCallback)
         gattServer?.close()
     }

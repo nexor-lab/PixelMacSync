@@ -1,3 +1,36 @@
 <resources>
     <string name="app_name">MacSync</string>
+
+    <!-- Main screen -->
+    <string name="device_label">MacBook Pro</string>
+    <string name="requesting_permissions">Requesting Bluetooth permissions…</string>
+    <string name="settings">Settings</string>
+    <string name="notifications">Notifications</string>
+    <string name="notifications_subtitle">Sync notifications with the Mac</string>
+    <string name="notification_access">Notification access</string>
+    <string name="notification_access_subtitle">Tap to grant the system permission</string>
+    <string name="battery_opt_title">Battery optimization is on</string>
+    <string name="battery_opt_subtitle">Set MacSync to “Unrestricted” for background operation</string>
+
+    <!-- Connection status -->
+    <string name="status_connected">Connected</string>
+    <string name="status_disconnected">Disconnected</string>
+    <string name="status_waiting">Waiting for connection…</string>
+
+    <!-- App selection sheet -->
+    <string name="app_notifications_title">Notification apps</string>
+    <string name="search">Search</string>
+    <string name="clear">Clear</string>
+    <string name="icon_of">Icon of %1$s</string>
+    <string name="cd_connected">Connected</string>
+    <string name="cd_disconnected">Disconnected</string>
+
+    <!-- Foreground service -->
+    <string name="fgs_channel_name">Mac Sync</string>
+    <string name="fgs_channel_desc">Keeps the BLE connection to the Mac alive</string>
+    <string name="fgs_title">MacSync running</string>
+    <string name="fgs_text">Listening in background…</string>
+    <string name="hotspot_profile_title">Hotspot to save on Mac</string>
+    <string name="hotspot_ssid_label">SSID</string>
+    <string name="hotspot_password_label">Password</string>
 </resources>

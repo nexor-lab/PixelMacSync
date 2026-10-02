@@ -1,2 +1,22 @@
 .DS_Store
 *.jks
+
+# Private handover doc: contains local secrets/paths (cert + keystore passwords)
+MIGRATION.md
+
+# Local automation runtime state (noise / machine-specific)
+AUTOMATION_STATE.md
+HUMAN_INTERVENTION_REQUIRED
+
+# Build artifacts
+Android/build/
+Android/app/build/
+Android/local.properties
+Android/keystore/
+Android/*.apk
+MacOS/build/
+MacOS/*.dmg
+*.apk
+*.idsig
+*.dmg
+*.xcuserstate

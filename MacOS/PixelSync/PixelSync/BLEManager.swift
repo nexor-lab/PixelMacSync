@@ -5,6 +5,23 @@ import UserNotifications
 import AppKit
 import UniformTypeIdentifiers
 
+/// Latest music session state pushed by Android over BLE.
+struct MusicState: Equatable {
+    var title: String = ""
+    var artist: String = ""
+    var album: String = ""
+    var durationMs: Int = 0
+    var positionMs: Int = 0
+    var isPlaying: Bool = false
+    var stopped: Bool = true
+    var coverKey: String = ""
+    var coverPath: String? = nil
+    var volumePercent: Int = 0
+    var updatedAt: Date = Date()
+
+    var hasTrack: Bool { stopped == false }
+}
+
 class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNotificationCenterDelegate {
     var centralManager: CBCentralManager!
     var pixelPeripheral: CBPeripheral?
@@ -20,18 +37,39 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
     
     // --- DIZIONARIO DINAMICO DELLE APP ---
     var appMap: [String: String] = [:]
+
+    // Buffer di riassemblaggio icone (i callback CB arrivano sulla main queue).
+    private var iconBuffers: [String: [Int: String]] = [:]
     
     // 🚀 Variabile per il nome del dispositivo Android
     @Published var deviceName: String = "Telefono"
     
     @Published var isSwitchedOn = false
-    @Published var connectionStatus = "Disconnesso"
+    @Published var connectionState: L10n.State = .disconnected
+    var connectionStatus: String { L10n.state(connectionState) }
+    var isConnected: Bool { connectionState == .connected }
+
+    // Real hotspot state (from Android), never assumed.
+    @Published var hotspotState: HotspotState = .unknown
+    var hotspotStateText: String { L10n.hotspotState(hotspotState) }
+    var hotspotBusy: Bool { hotspotState == .enabling || hotspotState == .disabling }
     @Published var batteryLevel: String = "--%"
     @Published var isCharging: Bool = false
     @Published var networkType: String = "---"
     @Published var signalStrength: Int = 0
     @Published var isWifi: Bool = false
     @Published var isHotspotActive: Bool = false
+
+    // Latest media session (title/artist/album/progress/cover) from Android.
+    @Published var music = MusicState()
+
+    // Cover art reassembly buffer (CB callbacks arrive on the main queue).
+    private var artBuffers: [String: [Int: String]] = [:]
+
+    // macOS 12.7 refuses UNUserNotificationCenter for apps not signed with an
+    // Apple-issued certificate (UNErrorDomain Code=1). When that happens we
+    // deliver to Notification Center via /usr/bin/osascript instead.
+    private(set) var notificationsAuthorized = false
 
     // Calcolo del percorso del file JSON nella cartella Documenti
     var configURL: URL? {
@@ -50,8 +88,9 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
         super.init()
         centralManager = CBCentralManager(delegate: self, queue: nil)
         
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, error in
-            print("MacSync: Permessi notifiche macOS concessi: \(granted)")
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { [weak self] granted, error in
+            self?.notificationsAuthorized = granted
+            NSLog("MacSync: Permessi notifiche macOS concessi: \(granted) errore: \(String(describing: error))")
         }
         
         UNUserNotificationCenter.current().delegate = self
@@ -71,7 +110,7 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
             if let data = try? Data(contentsOf: url),
                let decoded = try? JSONDecoder().decode([String: String].self, from: data) {
                 self.appMap = decoded
-                print("MacSync: Mappa app caricata correttamente da JSON: \(self.appMap)")
+                NSLog("MacSync: Mappa app caricata correttamente da JSON: \(self.appMap)")
                 return
             }
         }
@@ -89,12 +128,12 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
         guard let url = configURL else { return }
         if let data = try? JSONEncoder().encode(appMap) {
             try? data.write(to: url)
-            print("MacSync: Configurazione JSON aggiornata in Documenti/MacSync/")
+            NSLog("MacSync: Configurazione JSON aggiornata in Documenti/MacSync/")
         }
     }
 
     @objc func macDidSleep() {
-        print("MacSync: Coperchio chiuso o stop display. Sgancio il Bluetooth preventivamente.")
+        NSLog("MacSync: Coperchio chiuso o stop display. Sgancio il Bluetooth preventivamente.")
         if let peripheral = pixelPeripheral {
             centralManager.cancelPeripheralConnection(peripheral)
         }
@@ -102,16 +141,18 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
     }
 
     @objc func macDidWake() {
-        print("MacSync: Sistema sveglio. Riavvio motore Bluetooth pulito.")
+        NSLog("MacSync: Sistema sveglio. Riavvio motore Bluetooth pulito.")
         
         DispatchQueue.main.async {
-            self.connectionStatus = "Risveglio..."
+            self.connectionState = .waking
             self.batteryLevel = "--%"
             self.isCharging = false
             self.networkType = "---"
             self.signalStrength = 0
             self.isWifi = false
             self.isHotspotActive = false
+            self.hotspotState = .unknown
+            self.resetMusic()
         }
 
         // Diamo 4 secondi al Mac per riattivare i driver hardware
@@ -123,14 +164,14 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
         if central.state == .poweredOn {
             isSwitchedOn = true
-            connectionStatus = "Scansione..."
+            connectionState = .scanning
             
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 self.startScanningOrReconnect()
             }
         } else {
             isSwitchedOn = false
-            connectionStatus = "Bluetooth OFF"
+            connectionState = .bluetoothOff
             
             pixelPeripheral?.delegate = nil
             pixelPeripheral = nil
@@ -143,6 +184,8 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
             signalStrength = 0
             isWifi = false
             isHotspotActive = false
+            hotspotState = .unknown
+            resetMusic()
         }
     }
 
@@ -152,11 +195,11 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
         centralManager.stopScan()
         self.pixelPeripheral = peripheral
         self.pixelPeripheral?.delegate = self
-        connectionStatus = "Connessione..."
+        connectionState = .connecting
         
         connectionAttempts += 1
         if connectionAttempts > 3 {
-            print("MacSync: Loop di connessione rilevato! Eseguo Hard Reset interno...")
+            NSLog("MacSync: Loop di connessione rilevato! Eseguo Hard Reset interno...")
             forceRestartBluetooth()
             return
         }
@@ -166,9 +209,9 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
         DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) { [weak self] in
             guard let self = self else { return }
             if self.pixelPeripheral?.identifier == peripheral.identifier && peripheral.state != .connected {
-                print("MacSync: Timeout connessione in scansione! Il Telefono non risponde.")
+                NSLog("MacSync: Timeout connessione in scansione! Il Telefono non risponde.")
                 self.centralManager.cancelPeripheralConnection(peripheral)
-                self.connectionStatus = "Ricerca..."
+                self.connectionState = .scanning
                 
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
                     if self.centralManager.state == .poweredOn {
@@ -181,21 +224,23 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
     
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
         connectionAttempts = 0
-        connectionStatus = "Connesso al Pixel"
+        connectionState = .connected
         peripheral.discoverServices([serviceUUID])
     }
     
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
-        print("MacSync: Dispositivo disconnesso. Ripristino stato e riavvio scansione.")
+        NSLog("MacSync: Dispositivo disconnesso. Ripristino stato e riavvio scansione.")
         
         DispatchQueue.main.async {
-            self.connectionStatus = "Ricerca..."
+            self.connectionState = .scanning
             self.batteryLevel = "--%"
             self.isCharging = false
             self.networkType = "---"
             self.signalStrength = 0
             self.isWifi = false
             self.isHotspotActive = false
+            self.hotspotState = .unknown
+            self.resetMusic()
             
             self.centralManager.stopScan()
             
@@ -208,7 +253,7 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
     }
     
     func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
-        print("MacSync: Connessione fallita dal sistema.")
+        NSLog("MacSync: Connessione fallita dal sistema.")
         DispatchQueue.main.async {
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
                 if self.centralManager.state == .poweredOn {
@@ -218,20 +263,85 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
         }
     }
     
+    /// Sends a real hotspot command over BLE; the UI updates only when Android
+    /// confirms the actual system state (never optimistically).
     func setRemoteHotspot(enable: Bool) {
-        guard let peripheral = pixelPeripheral, let characteristic = commandCharacteristic else {
-            print("MacSync: Impossibile inviare il comando. Dispositivo o canale non pronto.")
+        guard isConnected, let peripheral = pixelPeripheral, let characteristic = commandCharacteristic else {
+            NSLog("MacSync: Hotspot: dispositivo o canale non pronto.")
             return
         }
-        
-        let commandString = enable ? "HOTSPOT_ON" : "HOTSPOT_OFF"
+        hotspotState = enable ? .enabling : .disabling
+        let commandString = enable ? "HOTSPOT_ENABLE" : "HOTSPOT_DISABLE"
         if let data = commandString.data(using: .utf8) {
             peripheral.writeValue(data, for: characteristic, type: .withResponse)
-            print("MacSync: Inviato comando -> \(commandString)")
-            
-            DispatchQueue.main.async {
-                self.isHotspotActive = enable
+            NSLog("MacSync: Inviato comando -> \(commandString)")
+            // Timeout guard: if Android does not confirm, surface an error.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 12.0) { [weak self] in
+                guard let self = self else { return }
+                if self.hotspotState == (enable ? .enabling : .disabling) {
+                    self.hotspotState = .error
+                    NSLog("MacSync: Hotspot timeout (nessuna conferma da Android).")
+                }
             }
+        }
+    }
+
+    /// Asks Android for the current hotspot state (used after reconnect).
+    func queryHotspotState() {
+        guard isConnected, let peripheral = pixelPeripheral, let characteristic = commandCharacteristic else { return }
+        if let data = "HOTSPOT_STATUS".data(using: .utf8) {
+            peripheral.writeValue(data, for: characteristic, type: .withResponse)
+        }
+    }
+
+    // MARK: - Music control (Mac -> Android)
+
+    /// Sends a raw command to Android if the command channel is ready.
+    func sendCommand(_ command: String) {
+        guard isConnected, let peripheral = pixelPeripheral, let characteristic = commandCharacteristic else {
+            return
+        }
+        if let data = command.data(using: .utf8) {
+            peripheral.writeValue(data, for: characteristic, type: .withResponse)
+            NSLog("MacSync: Inviato comando -> \(command)")
+        }
+    }
+
+    func musicPlay() { sendCommand("MUSIC_PLAY") }
+    func musicPause() { sendCommand("MUSIC_PAUSE") }
+    func musicToggle() { music.isPlaying ? musicPause() : musicPlay() }
+    func musicNext() { sendCommand("MUSIC_NEXT") }
+    func musicPrevious() { sendCommand("MUSIC_PREV") }
+
+    /// Seeks and optimistically advances the local progress clock.
+    func musicSeek(toMs ms: Int) {
+        let clamped = max(0, min(ms, music.durationMs))
+        sendCommand("MUSIC_SEEK\u{1F}\(clamped)")
+        DispatchQueue.main.async {
+            self.music.positionMs = clamped
+            self.music.updatedAt = Date()
+        }
+    }
+
+    /// Asks Android to re-send the current metadata + cover (after reconnect).
+    func queryMusicStatus() {
+        sendCommand("MUSIC_STATUS")
+    }
+
+    /// Sets the phone's media volume (0..100). Android echoes the real value.
+    func setMusicVolume(percent: Int) {
+        let clamped = max(0, min(100, percent))
+        sendCommand("MUSIC_VOLUME_SET\u{1F}\(clamped)")
+        DispatchQueue.main.async {
+            self.music.volumePercent = clamped
+        }
+    }
+
+    /// Clears the music panel (used on disconnect / bluetooth reset).
+    private func resetMusic() {
+        DispatchQueue.main.async {
+            self.music = MusicState()
+            self.artBuffers.removeAll()
         }
     }
     
@@ -251,7 +361,7 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
         if let peripheral = systemConnected.first {
             self.pixelPeripheral = peripheral
             self.pixelPeripheral?.delegate = self
-            connectionStatus = "Connessione (Cache)..."
+            connectionState = .cacheConnecting
             
             connectionAttempts += 1
             if connectionAttempts > 3 {
@@ -265,7 +375,7 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
                 guard let self = self else { return }
                 if self.pixelPeripheral?.identifier == peripheral.identifier && peripheral.state != .connected {
                     self.centralManager.cancelPeripheralConnection(peripheral)
-                    self.connectionStatus = "Ricerca..."
+                    self.connectionState = .scanning
                     
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
                         self.forceRestartBluetooth()
@@ -274,13 +384,13 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
             }
             
         } else {
-            connectionStatus = "Ricerca..."
+            connectionState = .scanning
             centralManager.stopScan()
             centralManager.scanForPeripherals(withServices: [serviceUUID], options: nil)
             
             DispatchQueue.main.asyncAfter(deadline: .now() + 20.0) { [weak self] in
                 guard let self = self else { return }
-                if self.connectionStatus == "Ricerca..." && self.pixelPeripheral == nil {
+                if self.connectionState == .scanning && self.pixelPeripheral == nil {
                     self.forceRestartBluetooth()
                 }
             }
@@ -299,13 +409,15 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
         self.connectionAttempts = 0
         
         DispatchQueue.main.async {
-            self.connectionStatus = "Riavvio in corso..."
+            self.connectionState = .restarting
             self.batteryLevel = "--%"
             self.isCharging = false
             self.networkType = "---"
             self.signalStrength = 0
             self.isWifi = false
             self.isHotspotActive = false
+            self.hotspotState = .unknown
+            self.resetMusic()
         }
         
         centralManager.delegate = nil
@@ -348,12 +460,20 @@ extension BLEManager: CBPeripheralDelegate {
                 
                 // --- FIX: SYNC A FREDDO (Reconnection Sync) ---
                 UNUserNotificationCenter.current().removeAllDeliveredNotifications()
-                print("MacSync: Centro notifiche Mac svuotato per la sincronizzazione.")
+                NSLog("MacSync: Centro notifiche Mac svuotato per la sincronizzazione.")
                 
                 let syncCommand = "SYNC_REQ"
                 if let data = syncCommand.data(using: .utf8) {
                     peripheral.writeValue(data, for: characteristic, type: .withResponse)
-                    print("MacSync: Comando SYNC_REQ inviato ad Android.")
+                    NSLog("MacSync: Comando SYNC_REQ inviato ad Android.")
+                }
+                // Ask for the real hotspot state after (re)connect.
+                if let data = "HOTSPOT_STATUS".data(using: .utf8) {
+                    peripheral.writeValue(data, for: characteristic, type: .withResponse)
+                }
+                // Ask for the current music metadata/cover after (re)connect.
+                if let data = "MUSIC_STATUS".data(using: .utf8) {
+                    peripheral.writeValue(data, for: characteristic, type: .withResponse)
                 }
             }
         }
@@ -362,66 +482,109 @@ extension BLEManager: CBPeripheralDelegate {
     func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
         
         if characteristic.uuid == telemetryUUID, let data = characteristic.value,
-           let payload = String(data: data, encoding: .utf8) {
-            
-            let parts = payload.components(separatedBy: "\u{001F}")
-            
+           let fields = PixelPacket.fields(from: data),
+           let telemetry = PixelPacket.parseTelemetry(fields) {
+
             DispatchQueue.main.async {
-                // 🚀 Gestisce correttamente il nome dispositivo inviato da Android
-                if parts.count >= 7 {
-                    self.batteryLevel = "\(parts[0])%"
-                    self.isCharging = (parts[1] == "true")
-                    self.networkType = parts[2]
-                    self.signalStrength = Int(parts[3]) ?? 0
-                    self.isWifi = (parts[4] == "true")
-                    self.isHotspotActive = (parts[5] == "true")
-                    self.deviceName = parts[6]
-                }
+                self.batteryLevel = telemetry.battery
+                self.isCharging = telemetry.isCharging
+                self.networkType = telemetry.network
+                self.signalStrength = telemetry.signal
+                self.isWifi = telemetry.isWifi
+                self.isHotspotActive = telemetry.isHotspot
+                self.deviceName = telemetry.deviceName
+                // Real hotspot state from Android telemetry (keeps macOS in sync
+                // even if the hotspot is toggled on the phone).
+                self.hotspotState = telemetry.isHotspot ? .on : .off
             }
         }
-        
-        if characteristic.uuid == notificationsUUID {
-            if let data = characteristic.value, let payload = String(data: data, encoding: .utf8) {
-                let parts = payload.components(separatedBy: "\u{001F}")
-                guard !parts.isEmpty else { return }
-                
-                let action = parts[0]
-                
-                if action == "POST" && parts.count >= 5 {
-                    let notifId = parts[1]
-                    let bundleId = parts[2]
-                    let title = parts[3]
-                    let body = parts[4]
-                    
-                    let content = UNMutableNotificationContent()
-                    content.title = title
-                    content.body = body
-                    content.sound = UNNotificationSound.default
-                    
-                    content.userInfo = [
-                        "androidPackage": bundleId,
-                        "notifId": notifId
-                    ]
-                    
-                    let fileManager = FileManager.default
-                    if let picturesURL = fileManager.urls(for: .picturesDirectory, in: .userDomainMask).first {
-                        let iconsFolderURL = picturesURL.appendingPathComponent("MacSyncIcons", isDirectory: true)
-                        let iconFileURL = iconsFolderURL.appendingPathComponent("\(bundleId).png")
-                        if fileManager.fileExists(atPath: iconFileURL.path) {
-                            do {
-                                let attachment = try UNNotificationAttachment(identifier: bundleId, url: iconFileURL, options: nil)
-                                content.attachments = [attachment]
-                            } catch { }
-                        }
+
+        if characteristic.uuid == notificationsUUID, let data = characteristic.value,
+           let fields = PixelPacket.fields(from: data) {
+
+            // Trasferimento icone app (una tantum, cache su disco).
+            if let iconPacket = PixelPacket.parseIcon(fields) {
+                self.handleIconPacket(iconPacket)
+                return
+            }
+
+            // Copertina del brano in riproduzione (una tantum per brano).
+            if let art = PixelPacket.parseArt(fields) {
+                self.handleArtPacket(art)
+                return
+            }
+
+            // Metadati della sessione musicale (titolo/artista/album/progresso).
+            if let meta = PixelPacket.parseMusic(fields) {
+                DispatchQueue.main.async {
+                    let trackChanged = meta.title != self.music.title
+                        || meta.artist != self.music.artist
+                        || meta.album != self.music.album
+                    let keyChanged = meta.coverKey != self.music.coverKey
+                    self.music.coverKey = meta.coverKey
+                    // Clear the previous cover on a track/key change, then show
+                    // the cached one for this key immediately (no waiting for
+                    // the art transfer). An out-of-order ART_END is ignored.
+                    if (trackChanged || keyChanged) {
+                        self.music.coverPath = nil
                     }
-                    
-                    let request = UNNotificationRequest(identifier: notifId, content: content, trigger: nil)
-                    UNUserNotificationCenter.current().add(request)
-                    
-                } else if action == "REMOVE" && parts.count >= 2 {
-                    let notifId = parts[1]
-                    UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [notifId])
-                    print("MacSync: Rimossa notifica dal Mac (ID: \(notifId))")
+                    if self.music.coverPath == nil, !meta.coverKey.isEmpty,
+                       let cached = self.cachedCoverURL(for: meta.coverKey) {
+                        self.music.coverPath = cached.path
+                    }
+                    self.music.title = meta.title
+                    self.music.artist = meta.artist
+                    self.music.album = meta.album
+                    self.music.durationMs = meta.durationMs
+                    self.music.positionMs = meta.positionMs
+                    self.music.isPlaying = meta.isPlaying
+                    self.music.stopped = (meta.state == .stopped)
+                    self.music.updatedAt = Date()
+                }
+                return
+            }
+
+            // Volume of the phone's media stream.
+            if let volume = PixelPacket.parseVolume(fields) {
+                DispatchQueue.main.async {
+                    self.music.volumePercent = max(0, min(100, volume))
+                }
+                return
+            }
+
+            // Risposte di controllo hotspot.
+            if let hs = PixelPacket.parseHotspot(fields) {
+                DispatchQueue.main.async {
+                    switch hs.kind {
+                    case .state: self.hotspotState = (hs.value == "ON") ? .on : .off
+                    case .error: self.hotspotState = .error
+                    }
+                }
+                NSLog("MacSync: Hotspot \(hs.kind == .state ? "STATE" : "ERROR") -> \(hs.value)")
+                return
+            }
+
+            // Eventi chiamata (estensioni del protocollo).
+            if let call = PixelPacket.parseCall(fields) {
+                self.handleCallEvent(event: call.event.rawValue, number: call.number, name: call.name)
+                return
+            }
+
+            if let notification = PixelPacket.parseNotification(fields) {
+                switch notification.kind {
+                case .post:
+                    self.deliverNotification(id: notification.id,
+                                             title: notification.title,
+                                             body: notification.body,
+                                             package: notification.package,
+                                             appLabel: notification.appLabel)
+                    NSLog("MacSync: POST ricevuto id=\(notification.id) pkg=\(notification.package) title=\(notification.title)")
+
+                case .remove:
+                    if self.notificationsAuthorized {
+                        UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [notification.id])
+                    }
+                    NSLog("MacSync: REMOVE ricevuto id=\(notification.id)")
                 }
             }
         }
@@ -438,12 +601,12 @@ extension BLEManager {
         if let androidPackage = userInfo["androidPackage"] as? String,
            let notifId = userInfo["notifId"] as? String {
             
-            print("MacSync: Click rilevato per pacchetto: \(androidPackage)")
+            NSLog("MacSync: Click rilevato per pacchetto: \(androidPackage)")
             
             if let macAppName = appMap[androidPackage] {
                 launchMacApp(named: macAppName)
             } else {
-                print("MacSync: Pacchetto sconosciuto. Mostro il selettore di applicazioni...")
+                NSLog("MacSync: Pacchetto sconosciuto. Mostro il selettore di applicazioni...")
                 promptUserToSelectApp(for: androidPackage)
             }
             
@@ -453,7 +616,7 @@ extension BLEManager {
                let characteristic = self.commandCharacteristic {
                 
                 peripheral.writeValue(data, for: characteristic, type: .withResponse)
-                print("MacSync: Inviato comando di Reverse Dismiss -> \(killCommand)")
+                NSLog("MacSync: Inviato comando di Reverse Dismiss -> \(killCommand)")
             }
         }
         
@@ -461,7 +624,7 @@ extension BLEManager {
     }
     
     private func launchMacApp(named name: String) {
-        print("MacSync: Avvio applicazione -> \(name)")
+        NSLog("MacSync: Avvio applicazione -> \(name)")
         let task = Process()
         task.launchPath = "/usr/bin/open"
         task.arguments = ["-a", name]
@@ -489,7 +652,7 @@ extension BLEManager {
                     self.appMap[androidPackage] = appName
                     self.saveAppMap()
                     
-                    print("MacSync: Nuova associazione memorizzata: \(androidPackage) -> \(appName)")
+                    NSLog("MacSync: Nuova associazione memorizzata: \(androidPackage) -> \(appName)")
                     
                     self.launchMacApp(named: appName)
                 }
@@ -499,5 +662,199 @@ extension BLEManager {
     
     func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
         completionHandler([.banner, .sound])
+    }
+}
+
+// MARK: - Gestione eventi chiamata (Android -> Mac)
+extension BLEManager {
+
+    /// Restituisce il testo nella lingua del sistema (zh / en).
+    private func loc(_ zh: String, _ en: String) -> String {
+        let lang = Locale.preferredLanguages.first ?? "en"
+        return lang.hasPrefix("zh") ? zh : en
+    }
+
+    /// Reassembles an app icon sent by Android and caches it at
+    /// ~/Pictures/MacSyncIcons/<package>.png (used by the notification icon lookup).
+    func handleIconPacket(_ packet: PixelPacket.IconPacket) {
+        switch packet.kind {
+        case .begin:
+            iconBuffers[packet.package] = [:]
+            NSLog("MacSync: Icona in arrivo per \(packet.package)")
+        case .data:
+            iconBuffers[packet.package, default: [:]][packet.seq] = packet.chunk
+        case .end:
+            guard let parts = iconBuffers.removeValue(forKey: packet.package) else { return }
+            let b64 = parts.keys.sorted().compactMap { parts[$0] }.joined()
+            guard let data = Data(base64Encoded: b64), !data.isEmpty else {
+                NSLog("MacSync: Icona non decodificabile per \(packet.package)")
+                return
+            }
+            guard let pictures = FileManager.default.urls(for: .picturesDirectory, in: .userDomainMask).first else { return }
+            let folder = pictures.appendingPathComponent("MacSyncIcons", isDirectory: true)
+            try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let file = folder.appendingPathComponent("\(packet.package).png")
+            do {
+                try data.write(to: file)
+                NSLog("MacSync: Icona salvata per \(packet.package) (\(data.count) bytes) -> \(file.path)")
+            } catch {
+                NSLog("MacSync: Scrittura icona fallita: \(error)")
+            }
+        }
+    }
+
+    /// Reassembles cover art sent by Android and caches it at
+    /// ~/Pictures/MacSyncCovers/<key>.jpg (JPEG bytes from Android).
+    func handleArtPacket(_ packet: PixelPacket.ArtPacket) {
+        switch packet.kind {
+        case .begin:
+            artBuffers[packet.key] = [:]
+            NSLog("MacSync: Copertina in arrivo per \(packet.key)")
+        case .data:
+            artBuffers[packet.key, default: [:]][packet.seq] = packet.chunk
+        case .end:
+            guard let parts = artBuffers.removeValue(forKey: packet.key) else { return }
+            let b64 = parts.keys.sorted().compactMap { parts[$0] }.joined()
+            guard let data = Data(base64Encoded: b64), !data.isEmpty else {
+                NSLog("MacSync: Copertina non decodificabile per \(packet.key)")
+                return
+            }
+            guard let file = coverURL(for: packet.key) else { return }
+            do {
+                try data.write(to: file)
+                NSLog("MacSync: Copertina salvata per \(packet.key) (\(data.count) bytes) -> \(file.path)")
+                DispatchQueue.main.async {
+                    // Only adopt this cover if it is the one the current track
+                    // announced; stale/superseded transfers are dropped.
+                    if self.music.coverKey.isEmpty || self.music.coverKey == packet.key {
+                        self.music.coverPath = file.path
+                    } else {
+                        NSLog("MacSync: Copertina obsoleta ignorata \(packet.key) (attuale \(self.music.coverKey))")
+                    }
+                }
+            } catch {
+                NSLog("MacSync: Scrittura copertina fallita: \(error)")
+            }
+        }
+    }
+
+    /// Cache location for a cover key: ~/Pictures/MacSyncCovers/<key>.jpg
+    private func coverURL(for key: String) -> URL? {
+        guard let pictures = FileManager.default.urls(for: .picturesDirectory, in: .userDomainMask).first else {
+            return nil
+        }
+        let folder = pictures.appendingPathComponent("MacSyncCovers", isDirectory: true)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        return folder.appendingPathComponent("\(key).jpg")
+    }
+
+    /// Returns the cached cover URL only if a file already exists.
+    private func cachedCoverURL(for key: String) -> URL? {
+        guard !key.isEmpty, let url = coverURL(for: key),
+              FileManager.default.fileExists(atPath: url.path) else { return nil }
+        return url
+    }
+
+    func handleCallEvent(event: String, number: String, name: String) {
+        let center = UNUserNotificationCenter.current()
+        let subtitle = name
+        let body = !number.isEmpty ? number : (name.isEmpty ? loc("未知号码", "Unknown number") : name)
+
+        let incomingId = "call-\(number)-incoming"
+        let activeId = "call-\(number)-active"
+
+        switch event {
+        case "RINGING":
+            postCallNotification(id: incomingId,
+                                 title: loc("来电", "Incoming call"),
+                                 subtitle: subtitle,
+                                 body: body,
+                                 sound: true)
+        case "MISSED":
+            center.removeDeliveredNotifications(withIdentifiers: [incomingId])
+            postCallNotification(id: "call-\(number)-missed",
+                                 title: loc("未接来电", "Missed call"),
+                                 subtitle: subtitle,
+                                 body: body,
+                                 sound: true)
+        case "OFFHOOK":
+            center.removeDeliveredNotifications(withIdentifiers: [incomingId])
+            postCallNotification(id: activeId,
+                                 title: loc("通话中", "Call answered"),
+                                 subtitle: subtitle,
+                                 body: body,
+                                 sound: false)
+        case "IDLE":
+            center.removeDeliveredNotifications(withIdentifiers: [incomingId, activeId])
+        default:
+            break
+        }
+        NSLog("MacSync: Evento chiamata gestito -> \(event) \(body)")
+    }
+
+    private func postCallNotification(id: String, title: String, subtitle: String, body: String, sound: Bool) {
+        deliverNotification(id: id, title: title, body: body, subtitle: subtitle, sound: sound)
+    }
+}
+
+// MARK: - Delivery to macOS Notification Center
+extension BLEManager {
+
+    /// Delivers a notification. Uses the native UserNotifications framework when
+    /// the app is authorized; otherwise (macOS 12.7 refuses apps that are not
+    /// signed with an Apple-issued certificate) falls back to Notification
+    /// Center via /usr/bin/osascript.
+    func deliverNotification(id: String, title: String, body: String,
+                             subtitle: String = "", package: String = "",
+                             appLabel: String = "", sound: Bool = true) {
+        // Header = sender app name; subtitle = original notification title.
+        let headerTitle = appLabel.isEmpty ? title : appLabel
+        let headerSubtitle = appLabel.isEmpty ? subtitle : title
+
+        if notificationsAuthorized {
+            let content = UNMutableNotificationContent()
+            content.title = headerTitle
+            if !headerSubtitle.isEmpty { content.subtitle = headerSubtitle }
+            content.body = body
+            if sound { content.sound = UNNotificationSound.default }
+
+            if !package.isEmpty {
+                content.userInfo = ["androidPackage": package, "notifId": id]
+                let fileManager = FileManager.default
+                if let picturesURL = fileManager.urls(for: .picturesDirectory, in: .userDomainMask).first {
+                    let iconURL = picturesURL
+                        .appendingPathComponent("MacSyncIcons", isDirectory: true)
+                        .appendingPathComponent("\(package).png")
+                    if fileManager.fileExists(atPath: iconURL.path),
+                       let attachment = try? UNNotificationAttachment(identifier: package, url: iconURL, options: nil) {
+                        content.attachments = [attachment]
+                    }
+                }
+            }
+            UNUserNotificationCenter.current().add(
+                UNNotificationRequest(identifier: id, content: content, trigger: nil))
+        } else {
+            // UserNotifications refused (non-Apple signature) -> deliver via
+            // osascript. The banner shows the sender app name as the title
+            // (the icon remains the system script icon; see COMPATIBILITY.md).
+            deliverViaOsascript(title: headerTitle, subtitle: headerSubtitle, body: body, sound: sound)
+        }
+    }
+
+    private func deliverViaOsascript(title: String, subtitle: String, body: String, sound: Bool) {
+        func escape(_ s: String) -> String {
+            s.replacingOccurrences(of: "\\", with: "\\\\")
+             .replacingOccurrences(of: "\"", with: "\\\"")
+        }
+        var script = "display notification \"\(escape(body))\" with title \"\(escape(title))\""
+        if !subtitle.isEmpty { script += " subtitle \"\(escape(subtitle))\"" }
+        if sound { script += " sound name \"default\"" }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        process.arguments = ["-e", script]
+        do { try process.run() } catch {
+            NSLog("MacSync: osascript delivery failed: \(error)")
+        }
     }
 }

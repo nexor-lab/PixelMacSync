@@ -1,0 +1,36 @@
+<resources>
+    <string name="app_name">MacSync</string>
+
+    <!-- 主界面 -->
+    <string name="device_label">MacBook Pro</string>
+    <string name="requesting_permissions">正在请求蓝牙权限…</string>
+    <string name="settings">设置</string>
+    <string name="notifications">通知</string>
+    <string name="notifications_subtitle">与 Mac 同步通知</string>
+    <string name="notification_access">通知使用权</string>
+    <string name="notification_access_subtitle">点按以授予系统权限</string>
+    <string name="battery_opt_title">电池优化已开启</string>
+    <string name="battery_opt_subtitle">将 MacSync 设为“无限制”以在后台运行</string>
+
+    <!-- 连接状态 -->
+    <string name="status_connected">已连接</string>
+    <string name="status_disconnected">未连接</string>
+    <string name="status_waiting">等待连接…</string>
+
+    <!-- 应用选择 -->
+    <string name="app_notifications_title">通知应用</string>
+    <string name="search">搜索</string>
+    <string name="clear">清除</string>
+    <string name="icon_of">%1$s 的图标</string>
+    <string name="cd_connected">已连接</string>
+    <string name="cd_disconnected">未连接</string>
+
+    <!-- 前台服务 -->
+    <string name="fgs_channel_name">Mac 同步</string>
+    <string name="fgs_channel_desc">保持与 Mac 的 BLE 连接</string>
+    <string name="fgs_title">MacSync 运行中</string>
+    <string name="fgs_text">后台监听中…</string>
+    <string name="hotspot_profile_title">需在 Mac 保存的热点</string>
+    <string name="hotspot_ssid_label">网络名称</string>
+    <string name="hotspot_password_label">密码</string>
+</resources>

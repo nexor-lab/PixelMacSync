@@ -1,5 +1,11 @@
 # 🍏⇄🤖 PixelMacSync
 
+> **本 Fork 说明（中文）**：这是一个把上游 [`LK024/PixelMacSync`](https://github.com/LK024/PixelMacSync)
+> 移植到 **macOS 12.7 / Intel** 并新增 **电话事件、Root 远程热点、App 图标同步、音乐控件** 等功能的
+> Fork。功能清单、实现方式、来源与改动、构建/安装、限制与安全说明，请见 **[`FORK.md`](FORK.md)**；
+> 协议见 [`BLE_PROTOCOL.md`](BLE_PROTOCOL.md)，变更见 [`CHANGELOG.md`](CHANGELOG.md)，
+> 测试见 [`TEST_REPORT.md`](TEST_REPORT.md)。
+
 ### PixelSync (macOS) ⇄ MacSync (Android)
 (🇬🇧 Scroll down for the English readme, READ IT!)
 

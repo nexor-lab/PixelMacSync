@@ -2,12 +2,14 @@ package it.luigi.macsync.ble
 
 import android.app.Notification
 import android.content.BroadcastReceiver
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
+import it.luigi.macsync.AppIconSender
 
 class MacSyncNotificationListener : NotificationListenerService() {
 
@@ -47,26 +49,58 @@ class MacSyncNotificationListener : NotificationListenerService() {
 
     override fun onCreate() {
         super.onCreate()
+        it.luigi.macsync.NotificationFilter.ensureInitialized(applicationContext)
         val killFilter = IntentFilter("it.luigi.macsync.KILL_NOTIFICATION")
         registerReceiver(killReceiver, killFilter, Context.RECEIVER_NOT_EXPORTED)
 
         val syncFilter = IntentFilter("it.luigi.macsync.SYNC_REQUEST")
         registerReceiver(syncReceiver, syncFilter, Context.RECEIVER_NOT_EXPORTED)
 
+        startMediaMonitor()
         Log.d("MacSync", "MacSyncNotificationListener avviato: Ricevitori armati.")
     }
 
     override fun onDestroy() {
         unregisterReceiver(killReceiver)
         unregisterReceiver(syncReceiver)
+        it.luigi.macsync.MediaSessionMonitor.stop()
         Log.d("MacSync", "MacSyncNotificationListener terminato: Ricevitori rimossi.")
         super.onDestroy()
     }
 
+    private fun startMediaMonitor() {
+        // The listener identity is what authorises MediaSessionManager access.
+        val component = ComponentName(this, MacSyncNotificationListener::class.java)
+        it.luigi.macsync.MediaSessionMonitor.start(applicationContext, component)
+    }
+
+    // --- CICLO DI VITA DELL'ASCOLTO (Android 8+) ---
+    // Alcuni OEM (HyperOS/MIUI) possono lasciare il listener "enabled ma non
+    // live": in quel caso il sistema non consegna le notifiche. onListenerConnected
+    // ci conferma che siamo realmente collegati; su disconnessione chiediamo un
+    // rebind esplicito (API 24+).
+    override fun onListenerConnected() {
+        super.onListenerConnected()
+        Log.d("MacSync", "NotificationListener CONNESSO (live).")
+        it.luigi.macsync.NotificationFilter.ensureInitialized(applicationContext)
+        startMediaMonitor()
+    }
+
+    override fun onListenerDisconnected() {
+        super.onListenerDisconnected()
+        Log.d("MacSync", "NotificationListener DISCONNESSO: richiedo il rebind...")
+        // Media access is granted through the listener; drop it while offline.
+        it.luigi.macsync.MediaSessionMonitor.stop()
+        try {
+            requestRebind(ComponentName(this, MacSyncNotificationListener::class.java))
+        } catch (e: Exception) {
+            Log.e("MacSync", "requestRebind non riuscito: ${e.message}")
+        }
+    }
+
     // --- 2. LA FOTOGRAFIA E L'INVIO AL MAC ---
     private fun sendSnapshotToMac() {
-        val prefs = applicationContext.getSharedPreferences("MacSync_Prefs", Context.MODE_PRIVATE)
-        val enabledApps = prefs.getStringSet("enabled_apps", setOf()) ?: setOf()
+        val enabledApps = it.luigi.macsync.NotificationFilter.enabledApps(applicationContext)
         val currentNotifications = this.activeNotifications ?: return
 
         for (sbn in currentNotifications) {
@@ -85,17 +119,17 @@ class MacSyncNotificationListener : NotificationListenerService() {
 
             if (title.isBlank() && text.isBlank()) continue
 
-            // Rigeneriamo un ID per il Mac e lo salviamo nella mappa
-            val uniqueMacId = System.currentTimeMillis().toString(36).takeLast(5) + (10..99).random().toString()
-            val key = sbn.key
-            val idList = macNotificationIds[key] ?: mutableListOf()
-            idList.add(uniqueMacId)
-            macNotificationIds[key] = idList
+            // ID stabile e deterministico: lo stesso key → lo stesso ID sul Mac,
+            // così reinvii/snapshot non generano notifiche duplicate.
+            val uniqueMacId = stableId(sbn)
+            macNotificationIds[sbn.key] = mutableListOf(uniqueMacId)
 
             // Inviamo il pacchetto esattamente come se fosse una notifica normale
             val separator = "\u001F"
-            val payload = "POST$separator$uniqueMacId$separator$packageName$separator$title$separator$text"
+            val appLabel = appLabel(packageName)
+            val payload = "POST$separator$uniqueMacId$separator$packageName$separator$title$separator$text$separator$appLabel"
             sendToGattServer(payload)
+            AppIconSender.sendIfNeeded(applicationContext, packageName) { sendToGattServer(it) }
         }
         Log.d("MacSync", "Snapshot inviato con successo al Mac.")
     }
@@ -109,9 +143,8 @@ class MacSyncNotificationListener : NotificationListenerService() {
 
         if (packageName == "android" || packageName == "com.android.systemui") return
 
-        val prefs = applicationContext.getSharedPreferences("MacSync_Prefs", Context.MODE_PRIVATE)
-        val enabledApps = prefs.getStringSet("enabled_apps", setOf())
-        if (enabledApps?.contains(packageName) == false) return
+        val enabledApps = it.luigi.macsync.NotificationFilter.enabledApps(applicationContext)
+        if (!enabledApps.contains(packageName)) return
 
         val extras = sbn.notification.extras
         val title = extras.getString(Notification.EXTRA_TITLE)?.trim() ?: ""
@@ -119,16 +152,24 @@ class MacSyncNotificationListener : NotificationListenerService() {
 
         if (title.isBlank() && text.isBlank()) return
 
-        val uniqueMacId = System.currentTimeMillis().toString(36).takeLast(5) + (10..99).random().toString()
-        val key = sbn.key
-        val idList = macNotificationIds[key] ?: mutableListOf()
-        idList.add(uniqueMacId)
-        macNotificationIds[key] = idList
+        val uniqueMacId = stableId(sbn)
+        macNotificationIds[sbn.key] = mutableListOf(uniqueMacId)
 
         val separator = "\u001F"
-        val payload = "POST$separator$uniqueMacId$separator$packageName$separator$title$separator$text"
+        val appLabel = appLabel(packageName)
+        val payload = "POST$separator$uniqueMacId$separator$packageName$separator$title$separator$text$separator$appLabel"
         sendToGattServer(payload)
+        AppIconSender.sendIfNeeded(applicationContext, packageName) { sendToGattServer(it) }
     }
+
+    /** Human-readable app name shown as the macOS notification header. */
+    private fun appLabel(packageName: String): String =
+        try {
+            val pm = packageManager
+            pm.getApplicationLabel(pm.getApplicationInfo(packageName, 0)).toString()
+        } catch (e: Exception) {
+            packageName
+        }
 
     // --- 4. QUANDO LA NOTIFICA VIENE RIMOSSA DAL TELEFONO ---
     override fun onNotificationRemoved(sbn: StatusBarNotification, rankingMap: RankingMap, reason: Int) {
@@ -148,6 +189,11 @@ class MacSyncNotificationListener : NotificationListenerService() {
             sendToGattServer(payload)
         }
     }
+
+    // ID deterministico basato sul key della notifica: evita duplicati al Mac
+    // anche in caso di reinvio o di snapshot dopo una riconnessione.
+    private fun stableId(sbn: StatusBarNotification): String =
+        "n" + Integer.toHexString(sbn.key.hashCode())
 
     private fun sendToGattServer(payload: String) {
         val intent = Intent("it.luigi.macsync.NEW_NOTIFICATION")

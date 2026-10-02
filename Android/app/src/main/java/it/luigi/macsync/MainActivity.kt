@@ -25,6 +25,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -42,6 +43,7 @@ class MainActivity : ComponentActivity() {
         )
         super.onCreate(savedInstanceState)
 
+        NotificationFilter.ensureInitialized(this)
         gattServerManager = GattServerManager.getInstance(this)
 
         setContent {
@@ -61,6 +63,11 @@ private fun isNotificationServiceEnabled(context: Context): Boolean {
     val pkgName = context.packageName
     val flat = Settings.Secure.getString(context.contentResolver, "enabled_notification_listeners")
     return flat != null && flat.contains(pkgName)
+}
+
+private fun isIgnoringBatteryOptimizations(context: Context): Boolean {
+    val pm = context.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+    return pm.isIgnoringBatteryOptimizations(context.packageName)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -91,9 +98,11 @@ fun MainScreen(gattServerManager: GattServerManager, onOpenNotificationsClick: (
     var permissionsGranted by remember { mutableStateOf(false) }
 
     val statusText by gattServerManager.connectionState.collectAsState()
+    val isConnected by gattServerManager.connected.collectAsState()
 
     val context = LocalContext.current
     val isListenerGranted = isNotificationServiceEnabled(context)
+    val batteryOptimized = !isIgnoringBatteryOptimizations(context)
 
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
@@ -123,8 +132,11 @@ fun MainScreen(gattServerManager: GattServerManager, onOpenNotificationsClick: (
                 Manifest.permission.BLUETOOTH_CONNECT,
                 Manifest.permission.BLUETOOTH_ADVERTISE,
                 Manifest.permission.READ_PHONE_STATE,
+                Manifest.permission.READ_CONTACTS,
+                Manifest.permission.POST_NOTIFICATIONS,
                 Manifest.permission.ACCESS_COARSE_LOCATION,
-                Manifest.permission.ACCESS_FINE_LOCATION
+                Manifest.permission.ACCESS_FINE_LOCATION,
+                Manifest.permission.NEARBY_WIFI_DEVICES
             )
         )
     }
@@ -149,20 +161,20 @@ fun MainScreen(gattServerManager: GattServerManager, onOpenNotificationsClick: (
         Spacer(modifier = Modifier.height(36.dp))
 
         if (!permissionsGranted) {
-            Text("Richiesta permessi Bluetooth...", modifier = Modifier.padding(top = 32.dp))
+            Text(stringResource(R.string.requesting_permissions), modifier = Modifier.padding(top = 32.dp))
             return@Column
         }
 
         Image(
             painter = painterResource(id = R.drawable.macbookpro),
-            contentDescription = "MacBook Pro",
+            contentDescription = stringResource(R.string.device_label),
             modifier = Modifier.size(165.dp)
         )
 
         Spacer(modifier = Modifier.height(16.dp))
 
         Text(
-            text = "MacBook Pro di Luigi",
+            text = stringResource(R.string.device_label),
             fontSize = 24.sp,
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.onSurface
@@ -170,22 +182,12 @@ fun MainScreen(gattServerManager: GattServerManager, onOpenNotificationsClick: (
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // --- RIGA STATO PULITA E COERENTE ---
-        val isConnected = !statusText.contains("Disconnesso", ignoreCase = true)
-
-        val cleanStatus = when {
-            statusText.contains("Disconnesso", ignoreCase = true) -> "Disconnesso"
-            statusText.contains("Connesso", ignoreCase = true) -> "Connesso"
-            else -> statusText
-        }
-
-
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Center
         ) {
             Text(
-                text = cleanStatus,
+                text = if (isConnected) stringResource(R.string.status_connected) else stringResource(R.string.status_disconnected),
                 style = MaterialTheme.typography.bodyLarge,
                 color = if (isConnected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                 fontWeight = FontWeight.Medium
@@ -195,17 +197,17 @@ fun MainScreen(gattServerManager: GattServerManager, onOpenNotificationsClick: (
 
             if (isConnected) {
                 Icon(
-                    imageVector = Icons.Rounded.Link, // <-- Icona Catena Intera
-                    contentDescription = "Connesso",
+                    imageVector = Icons.Rounded.Link,
+                    contentDescription = stringResource(R.string.cd_connected),
                     modifier = Modifier.size(18.dp),
-                    tint = MaterialTheme.colorScheme.primary // Stesso colore Monet della scritta "Connesso"
+                    tint = MaterialTheme.colorScheme.primary
                 )
             } else {
                 Icon(
-                    imageVector = Icons.Rounded.LinkOff, // <-- Icona Catena Spezzata
-                    contentDescription = "Disconnesso",
+                    imageVector = Icons.Rounded.LinkOff,
+                    contentDescription = stringResource(R.string.cd_disconnected),
                     modifier = Modifier.size(18.dp),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant // Stesso grigio della scritta "Disconnesso"
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }
@@ -217,7 +219,7 @@ fun MainScreen(gattServerManager: GattServerManager, onOpenNotificationsClick: (
             modifier = Modifier.fillMaxWidth()
         ) {
             Text(
-                text = "Impostazioni",
+                text = stringResource(R.string.settings),
                 style = MaterialTheme.typography.titleSmall,
                 color = MaterialTheme.colorScheme.primary,
                 fontWeight = FontWeight.Bold,
@@ -226,8 +228,8 @@ fun MainScreen(gattServerManager: GattServerManager, onOpenNotificationsClick: (
 
             SettingsCardItem(
                 icon = Icons.Rounded.Notifications,
-                title = "Notifiche",
-                subtitle = "Sincronizza notifiche con il Mac",
+                title = stringResource(R.string.notifications),
+                subtitle = stringResource(R.string.notifications_subtitle),
                 onClick = onOpenNotificationsClick
             )
 
@@ -235,11 +237,28 @@ fun MainScreen(gattServerManager: GattServerManager, onOpenNotificationsClick: (
                 Spacer(modifier = Modifier.height(8.dp))
                 SettingsCardItem(
                     icon = Icons.Rounded.Warning,
-                    title = "Accesso alle Notifiche",
-                    subtitle = "Tocca per concedere il permesso di sistema",
+                    title = stringResource(R.string.notification_access),
+                    subtitle = stringResource(R.string.notification_access_subtitle),
                     isWarning = true,
                     onClick = {
                         context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+                    }
+                )
+            }
+
+            if (batteryOptimized) {
+                Spacer(modifier = Modifier.height(8.dp))
+                SettingsCardItem(
+                    icon = Icons.Rounded.Warning,
+                    title = stringResource(R.string.battery_opt_title),
+                    subtitle = stringResource(R.string.battery_opt_subtitle),
+                    isWarning = true,
+                    onClick = {
+                        try {
+                            context.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                        } catch (e: Exception) {
+                            context.startActivity(Intent(Settings.ACTION_SETTINGS))
+                        }
                     }
                 )
             }

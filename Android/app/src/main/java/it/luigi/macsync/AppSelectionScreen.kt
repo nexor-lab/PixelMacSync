@@ -27,6 +27,7 @@ import androidx.compose.ui.graphics.asComposePath
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
@@ -161,7 +162,7 @@ fun AppSelectionScreen() {
             ) {
                 // Titolo centrale in puro stile widget di Android Stock
                 Text(
-                    text = "App Notifiche",
+                    text = stringResource(R.string.app_notifications_title),
                     style = MaterialTheme.typography.titleLarge,
                     modifier = Modifier.padding(bottom = 12.dp)
                 )
@@ -170,14 +171,14 @@ fun AppSelectionScreen() {
                 TextField(
                     value = searchQuery,
                     onValueChange = { searchQuery = it },
-                    placeholder = { Text("Cerca") },
+                    placeholder = { Text(stringResource(R.string.search)) },
                     leadingIcon = {
-                        Icon(Icons.Default.Search, contentDescription = "Cerca")
+                        Icon(Icons.Default.Search, contentDescription = stringResource(R.string.search))
                     },
                     trailingIcon = {
                         if (searchQuery.isNotEmpty()) {
                             IconButton(onClick = { searchQuery = "" }) {
-                                Icon(Icons.Default.Clear, contentDescription = "Cancella")
+                                Icon(Icons.Default.Clear, contentDescription = stringResource(R.string.clear))
                             }
                         }
                     },
@@ -252,7 +253,7 @@ fun AppRow(appItem: AppItem, onCheckedChange: (Boolean) -> Unit) {
     ) {
         Image(
             bitmap = appItem.icon,
-            contentDescription = "Icona di ${appItem.name}",
+            contentDescription = stringResource(R.string.icon_of, appItem.name),
             modifier = Modifier.size(48.dp)
         )
 

@@ -14,8 +14,14 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+    <!-- Opzionale: risolve il nome del contatto delle chiamate in arrivo. -->
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <!-- Read the saved SoftAP (hotspot) configuration so we reuse its SSID/passphrase. -->
+    <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES"
+        android:usesPermissionFlags="neverForLocation"
+        tools:targetApi="tiramisu" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" tools:ignore="BackgroundLocationPolicy" />
@@ -37,6 +43,7 @@
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
         </receiver>
 
@@ -64,6 +71,7 @@
         <service
             android:name=".MacSyncBleService"
             android:foregroundServiceType="connectedDevice"
+            android:stopWithTask="false"
             android:exported="false" />
 
     </application>
