@@ -1,5 +1,17 @@
 # COMPATIBILITY.md — macOS 12.7 / Intel port audit
 
+## 0. 适配范围（Scope，本 Fork）
+
+| 端 / 项 | 支持范围 | 实测 |
+|---|---|---|
+| **macOS** | **12.7 Monterey 及以上**（Intel x86_64；`ARCH=arm64`/`universal` 可构建） | MacBookPro12,1 / 12.7.6 |
+| **Android** | **15（API 35）及以上**；`compileSdk`/`targetSdk` **36** | POCO F5 Pro / HyperOS 3.0 |
+| **Root** | 需要（SukiSU/Magisk）以真实开关热点；**不需要 MacroDroid** | SukiSU Ultra |
+| **连接** | 仅 **BLE 4.2+**（不使用 Wi‑Fi/局域网/云/TCP） | — |
+| **功能** | 通知 / 电话事件 / 远程热点 / App 图标同步 / **音乐控件（含音量）** / 遥测 | 真机 PASS |
+
+> 对比上游：上游要求 **macOS 13+ / Android 16+ / MacroDroid**；本 Fork 已下移适配并移除 MacroDroid 依赖。
+
 Target: **macOS 12.7 Monterey, Intel x86_64, MacBookPro12,1**
 Toolchain available: **Command Line Tools 14.2 only (Swift 5.7.2, SDK 13.1)** —
 *no full Xcode*.

@@ -6,6 +6,18 @@
 > 协议见 [`BLE_PROTOCOL.md`](BLE_PROTOCOL.md)，变更见 [`CHANGELOG.md`](CHANGELOG.md)，
 > 测试见 [`TEST_REPORT.md`](TEST_REPORT.md)。
 
+## 适配范围（本 Fork）
+
+> 中文速览。下方意大利语 / 英语正文为上游原文，其中的旧要求（macOS 13+ / Android 16+ / 依赖 MacroDroid）已在本 Fork 更正。
+
+| 组件 | 支持范围 |
+| --- | --- |
+| **macOS** | **macOS 12.7 Monterey 及以上**（Intel x86_64 实测；`ARCH=arm64` / `universal` 亦可构建） |
+| **Android** | **Android 15（API 35）及以上**，`compileSdk/targetSdk 36`（POCO F5 Pro / HyperOS 实测） |
+| **Root** | 需要（SukiSU / Magisk）以**真实**开关热点；**不再需要 MacroDroid** |
+| **连接** | 仅 BLE 4.2+，不使用 Wi‑Fi / 局域网 / 云 / TCP |
+| **对比上游** | 上游要求 macOS 13+ / Android 16+ 并依赖 MacroDroid，本 Fork 已下移适配并移除该依赖 |
+
 ### PixelSync (macOS) ⇄ MacSync (Android)
 (🇬🇧 Scroll down for the English readme, READ IT!)
 
@@ -23,10 +35,10 @@ L’obiettivo è offrire sincronizzazione di notifiche, telemetria e controllo r
 > * Android: `GattServerManager.kt` e `BLEAdvertiser.kt`
 > * macOS: `BLEManager.swift`
 > 
-> **2. Dipendenza per il controllo dell'Hotspot Remoto**
-> Il toggle dell'Hotspot dal Mac invia un Intent broadcast ad Android per aggirare le restrizioni di sistema. Questo richiede l'app di terze parti **MacroDroid**.
-> * Devi creare due macro che si attivino alla ricezione degli intent `it.luigi.macsync.HOTSPOT_ON` e `it.luigi.macsync.HOTSPOT_OFF`.
-> * Se non usi MacroDroid, ignora semplicemente il toggle o commenta la relativa sezione in `ContentView.swift` su macOS.
+> **2. Controllo Hotspot Remoto (root, senza MacroDroid)**
+> In questo fork il toggle dell'Hotspot dal Mac **non usa più MacroDroid**: il comando viene eseguito realmente via root
+> (`cmd wifi start-softap` / `stop-softap`) usando il profilo SoftAP già salvato sul telefono. Serve un telefono con
+> **root** (SukiSU/Magisk) e il consenso root per l'app `it.luigi.macsync`.
 >
 > ---
 > ℹ️ *Nota sulla Privacy Android (Pallino della localizzazione)*: Per inviare al Mac il nome reale della rete Wi-Fi (SSID), l'app Android interroga API di rete che richiedono il permesso di localizzazione. Questo accenderà l'indicatore blu della privacy sul telefono. Se preferisci nasconderlo nativamente, revoca il permesso `ACCESS_FINE_LOCATION` (consenti posizione esatta) dalle impostazioni di Android: il server farà un fallback automatico inviando la stringa fissa `"Wi-Fi"`, spegnendo l'indicatore per sempre senza causare crash.
@@ -51,11 +63,11 @@ L’obiettivo è offrire sincronizzazione di notifiche, telemetria e controllo r
 
 ## 📋 Requisiti
 
-| Componente     | Requisito minimo                               |
+| Componente     | Requisito minimo (fork)                        |
 | -------------- | ---------------------------------------------- |
-| **Android** | Android 16+ (ottimizzato per Google Pixel)     |
-| **macOS** | macOS 13 Ventura+                              |
-| **MacroDroid** | Richiesto per il controllo remoto dell'Hotspot |
+| **Android** | Android 15+ (API 35, target 36) — testato su POCO F5 Pro / HyperOS |
+| **macOS** | macOS 12.7 Monterey+ (Intel x86_64; `ARCH=arm64`/`universal` disponibili) |
+| **Root** | Richiesto (SukiSU/Magisk) per controllare davvero l'Hotspot — **MacroDroid non più necessario** |
 | **Bluetooth** | BLE 4.2+ su entrambi i dispositivi             |
 
 ---
@@ -68,7 +80,7 @@ L’obiettivo è offrire sincronizzazione di notifiche, telemetria e controllo r
 * 🛡️ **Filtro anti-doppioni**: le notifiche “summary” o raggruppate di alcune app vengono filtrate per ridurre rumore e duplicati.
 * 🧹 **Dismiss bidirezionale**: una notifica aperta o rimossa su un lato viene sincronizzata anche sull’altro lato, nei limiti delle API disponibili.
 * 🖱️ **Apertura app dinamica**: il mapping tra package name Android e app/PWA su macOS è configurabile e salvato in un file JSON locale.
-* 🚀 **Controllo hotspot remoto**: accendi e spegni l’hotspot del telefono dal Mac tramite integrazione con MacroDroid.
+* 🚀 **Controllo hotspot remoto (root)**: accendi e spegni davvero l’hotspot del telefono dal Mac via root + comando di sistema, con stato reale.
 
 ---
 
@@ -83,7 +95,7 @@ L’app Android agisce come **Peripheral / GATT Server** ed è ottimizzata per l
 * **Motore BLE in background**: usa un *Foreground Service* per restare attivo anche durante i cicli di Doze.
 * **Notification interceptor & snapshot**: intercetta le notifiche e genera uno snapshot dello stato attivo quando richiesto dal Mac.
 * **GattServerManager & broadcasts**: riceve comandi dal Mac e li inoltra ai componenti interni dell’app.
-* **MacroDroid bridge**: delega l’attivazione/disattivazione dell’hotspot a MacroDroid tramite `Intent Broadcast`.
+* **Hotspot via root**: esegue realmente `cmd wifi start-softap` / `stop-softap` come root e riporta lo stato reale (nessun intent verso terzi).
 
 <p align="center">
   <img src="https://github.com/user-attachments/assets/1a3caa7b-d75c-4b5b-8d17-f07829351716" width="300" />
@@ -133,10 +145,8 @@ Il canale comandi supporta `HOTSPOT_ON`, `HOTSPOT_OFF`, `SYNC_REQ` e `KILL\u001F
 2. Vai in *Impostazioni → App → MacSync → Batteria* e imposta **"Senza restrizioni"**.
 3. Concedi i permessi richiesti al primo avvio: Bluetooth, Posizione, Dispositivi Vicini.
 4. Abilita **MacSync Notifiche** nell’Accesso alle Notifiche di sistema e seleziona le app desiderate dalla UI.
-5. **Configurazione MacroDroid (solo hotspot):**
-   * Installa MacroDroid dal Play Store.
-   * Macro 1: attivatore `it.luigi.macsync.HOTSPOT_ON` → azione: *Abilita Hotspot*.
-   * Macro 2: attivatore `it.luigi.macsync.HOTSPOT_OFF` → azione: *Disabilita Hotspot*.
+5. **Hotspot remoto (root):** concedi il permesso root all’app. Il toggle Hotspot dal Mac usa
+   `cmd wifi start-softap` / `stop-softap` e riporta lo stato reale. **MacroDroid non è più necessario.**
 
 ### Lato macOS
 
@@ -149,7 +159,7 @@ Il canale comandi supporta `HOTSPOT_ON`, `HOTSPOT_OFF`, `SYNC_REQ` e `KILL\u001F
 
 ## ⚠️ Limitazioni Note
 
-* **Hotspot — MacroDroid richiesto:** il controllo remoto dell’hotspot richiede MacroDroid installato e configurato.
+* **Hotspot — root richiesto:** il controllo remoto dell’hotspot usa root; senza root resta solo la lettura dello stato (nessun MacroDroid).
 * **Dismiss notifiche — solo al click:** la sincronizzazione del dismiss da Mac ad Android avviene solo quando si clicca sulla notifica macOS, non quando la si swipe via.
 * **Notifiche di gruppo:** alcune app inviano notifiche summary raggruppate; il filtro riduce il rumore ma il comportamento finale dipende dall’app stessa.
 
@@ -184,10 +194,10 @@ The goal is to offer notification synchronization, telemetry, and remote control
 > * Android: `GattServerManager.kt` and `BLEAdvertiser.kt`
 > * macOS: `BLEManager.swift`
 > 
-> **2. Dependency for Remote Hotspot Control**
-> The Hotspot toggle from the Mac sends a broadcast Intent to Android to bypass system tethering restrictions. This requires the third-party app **MacroDroid**.
-> * You must create two macros that trigger upon receiving the intents `it.luigi.macsync.HOTSPOT_ON` and `it.luigi.macsync.HOTSPOT_OFF`.
-> * If you don't use MacroDroid, simply ignore the toggle or comment out the relevant section in `ContentView.swift` on macOS.
+> **2. Remote Hotspot Control (root, no MacroDroid)**
+> In this fork the Mac hotspot toggle **no longer uses MacroDroid**: the command is executed for real via root
+> (`cmd wifi start-softap` / `stop-softap`) using the phone's saved SoftAP profile. A **rooted** phone
+> (SukiSU/Magisk) and a root grant for `it.luigi.macsync` are required.
 >
 > ---
 > ℹ️ *Android Privacy Note (Location dot)*: To display the real name of your Wi-Fi network (SSID) on the Mac, the Android app queries network APIs that require location permissions. This will turn on the blue privacy indicator on the phone. If you prefer to hide it natively, revoke the `ACCESS_FINE_LOCATION` permission from Android settings: the server will automatically fallback to sending the static string `"Wi-Fi"`, turning off the indicator permanently without causing crashes.
@@ -215,11 +225,11 @@ The goal is to offer notification synchronization, telemetry, and remote control
 
 ## 📋 Requirements
 
-| Component      | Minimum Requirement                           |
+| Component      | Minimum Requirement (fork)                    |
 | -------------- | --------------------------------------------- |
-| **Android** | Android 16+ (optimized for Google Pixel)      |
-| **macOS** | macOS 13 Ventura+                             |
-| **MacroDroid** | Required for remote Hotspot control           |
+| **Android** | Android 15+ (API 35, target 36) — tested on POCO F5 Pro / HyperOS |
+| **macOS** | macOS 12.7 Monterey+ (Intel x86_64; `ARCH=arm64`/`universal` also buildable) |
+| **Root** | Required (SukiSU/Magisk) for real Hotspot control — **MacroDroid no longer needed** |
 | **Bluetooth** | BLE 4.2+ on both devices                      |
 
 ---
@@ -232,7 +242,7 @@ The goal is to offer notification synchronization, telemetry, and remote control
 * 🛡️ **Anti-Duplicate Filter**: "Summary" or grouped notifications from certain apps are filtered out to reduce noise and duplicates.
 * 🧹 **Bidirectional Dismiss**: A notification opened or dismissed on one side is synced to the other side, within the limits of the available APIs.
 * 🖱️ **Dynamic App Launching**: The mapping between Android package names and macOS apps/PWAs is configurable and saved in a local JSON file.
-* 🚀 **Remote Hotspot Control**: Turn the phone's hotspot on and off from the Mac via MacroDroid integration.
+* 🚀 **Remote Hotspot Control (root)**: Turn the phone's hotspot on and off from the Mac for real via root + system command, with real state.
 
 ---
 
@@ -247,7 +257,7 @@ The Android app acts as the **Peripheral / GATT Server** and is optimized for th
 * **Background BLE Engine**: Uses a *Foreground Service* to stay active even during Doze cycles.
 * **Notification Interceptor & Snapshot**: Intercepts notifications and generates a snapshot of the active state when requested by the Mac.
 * **GattServerManager & Broadcasts**: Receives commands from the Mac and forwards them to internal app components.
-* **MacroDroid Bridge**: Delegates hotspot activation/deactivation to MacroDroid via `Intent Broadcast`.
+* **Hotspot via root**: Actually runs `cmd wifi start-softap` / `stop-softap` as root and reports the real state (no third-party intents).
 
 <p align="center">
   <img src="https://github.com/user-attachments/assets/1a3caa7b-d75c-4b5b-8d17-f07829351716" width="300" />
@@ -297,10 +307,8 @@ The command channel supports `HOTSPOT_ON`, `HOTSPOT_OFF`, `SYNC_REQ`, and `KILL\
 2. Go to *Settings → Apps → MacSync → Battery* and set it to **"Unrestricted"**.
 3. Grant required permissions on first launch: Bluetooth, Location, Nearby Devices.
 4. Enable **MacSync Notifications** in the system's Notification Access and select the desired apps from the UI.
-5. **MacroDroid Configuration (Hotspot only):**
-   * Install MacroDroid from the Play Store.
-   * Macro 1: Trigger `it.luigi.macsync.HOTSPOT_ON` → Action: *Enable Hotspot*.
-   * Macro 2: Trigger `it.luigi.macsync.HOTSPOT_OFF` → Action: *Disable Hotspot*.
+5. **Remote Hotspot (root):** grant root to the app. The Mac hotspot toggle uses
+   `cmd wifi start-softap` / `stop-softap` and reports the real state. **MacroDroid is no longer needed.**
 
 ### macOS Side
 
@@ -313,7 +321,7 @@ The command channel supports `HOTSPOT_ON`, `HOTSPOT_OFF`, `SYNC_REQ`, and `KILL\
 
 ## ⚠️ Known Limitations
 
-* **Hotspot — MacroDroid Required:** Remote control of the hotspot requires MacroDroid to be installed and configured.
+* **Hotspot — root required:** Remote control of the hotspot uses root; without root only state reading works (no MacroDroid).
 * **Notification Dismiss — Click Only:** The dismiss synchronization from Mac to Android only occurs when the macOS notification is clicked, not when swiped away.
 * **Group Notifications:** Some apps send grouped summary notifications; the filter reduces noise, but the final behavior depends on the app itself.
 
