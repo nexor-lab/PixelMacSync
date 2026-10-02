@@ -12,6 +12,11 @@
 **macOS 12.7.6 (Monterey) / Intel x86_64**（MacBookPro12,1），并在此之上新增了若干功能
 （见第 4、5 节），其中最新的是 **音乐控件**。
 
+**本仓库**：`https://github.com/nexor-lab/PixelMacSync`
+**预编译包（Releases）**：`https://github.com/nexor-lab/PixelMacSync/releases`
+- Android：`PixelMacSync-Android.apk`
+- macOS：`PixelMacSync-macOS12-Intel.dmg`（ad-hoc 签名，不含个人证书）
+
 ## 2. 能做什么（功能总览）
 
 - **通知同步**：手机通知实时推到 Mac 原生通知中心，通知头显示来源 App 名，可选带 App 图标。
