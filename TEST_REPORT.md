@@ -9,6 +9,32 @@ Device: **POCO F5 Pro (23013PC75G / `mondrian`)**, Android 15 / API 35, HyperOS 
 
 ---
 
+## Apple Silicon (M4) real-device test — 2026-10-03
+
+Independent test on MacBook Pro 14" (Apple M4, 16 GB, macOS 26.3 / build 25D125).
+
+| # | Test | Result |
+|---|---|---|
+| M4-1 | `uname -m` / brand | **arm64** / `Apple M4` |
+| M4-2 | Universal binary slices (`lipo`) | **PASS** — `x86_64 arm64` |
+| M4-3 | Native run (no Rosetta) | **PASS** — `vmmap` Code Type ARM64 |
+| M4-4 | `LSMinimumSystemVersion` / `LSUIElement` | **PASS** — 12.0 / true |
+| M4-5 | ad-hoc signature valid | **PASS** — `codesign --verify` valid |
+| M4-6 | Gatekeeper (`spctl`) | **LIMITATION** — rejected (not notarized; right-click open) |
+| M4-7 | Menu-bar `NSStatusItem` (no Dock icon) | **PASS** |
+| M4-8 | Notification permission | **PASS** — `didGrant: 1` |
+| M4-9 | BLE: notification received from POCO F5 Pro | **PASS** — `POST ricevuto ... com.twitter.android` |
+| M4-10 | Mac→Android `pixelsync://reply` round-trip | **PASS** — `REPLY_RESULT ... ok` |
+| M4-11 | Banner click / inline reply UI / media | **NOT TESTED** — no screen-recording TCC (GUI scripting) |
+| M4-12 | Remote hotspot control | **LIMITATION** — needs Root/Shizuku (`enable_failed` without) |
+| M4-13 | Stability | **PASS** — no crash/fault; idle CPU 0%, ~80–107 MB |
+| M4-14 | Bundle version string | **LIMITATION** — still `2.0` (not bumped to 2.2) |
+
+Conclusion: the universal package runs **natively on Apple Silicon (M4)** with no
+Rosetta; notifications/BLE work and it is stable. Remaining gaps are not
+Apple-Silicon-compatibility issues: ad-hoc/not-notarized signing, hotspot
+privilege, and version-string bump.
+
 ## Android auth method (root / Shizuku) (2026-10-03, real device)
 
 | # | Test | Result |

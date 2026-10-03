@@ -1,8 +1,20 @@
 # PROJECT_STATUS.md — PixelMacSync macOS 12.7 / Intel port
 
-Last updated: 2026-10-03 (Android auth method: root/Shizuku + About)
-Branch: `macos12-port` (base `main` @ `e5a5c060…`) — **NOT COMMITTED**
+Last updated: 2026-10-03 (v2.2-beta published; Apple Silicon M4 verified)
+Branch: `macos12-port` — **v2.2-beta pushed** (`0c78cf3`)
 State: **RUNNING** (autonomous; marker cleared)
+
+## v2.2-beta publication + M4 verification — RESULT (2026-10-03)
+
+| Item | Status |
+|---|---|
+| Beta release `v2.2-beta` (prerelease) with APK + Universal DMG + 3 screenshots | **PASS** |
+| Asset names on the release | **FIXED** — were `PixelMacSync-.apk` / `…macOS12-.dmg`, re-uploaded correctly |
+| Release notes | **PASS** — now state Apple Silicon (M4) verified |
+| macOS Universal on Apple Silicon (M4, macOS 26.3) | **PASS** — native arm64, no Rosetta, notifications + BLE, no crash |
+| Bundle version string | **LIMITATION** — still `2.0` (bump pending) |
+| Gatekeeper | **LIMITATION** — ad-hoc, not notarized (right-click open) |
+| Banner click / inline reply UI / media on M4 | **NOT TESTED** — GUI scripting unavailable (no screen recording TCC) |
 
 ## Android authorization method (root / Shizuku) — RESULT (2026-10-03)
 
