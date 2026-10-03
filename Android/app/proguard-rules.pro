@@ -19,3 +19,8 @@
 # If you keep the line number information, uncomment this to
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
+
+# Shizuku: `Shizuku.newProcess` is private in API 13.1.5 and called via
+# reflection, so keep the classes/members from being renamed or stripped.
+-keep class rikka.shizuku.** { *; }
+-keep class moe.shizuku.** { *; }

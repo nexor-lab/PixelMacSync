@@ -134,8 +134,10 @@ Il pacchetto telemetrico è formattato in questo ordine:
 
 Le notifiche vengono inoltrate con prefisso `POST\u001F` o `REMOVE\u001F`.
 Il canale comandi supporta `HOTSPOT_ON`, `HOTSPOT_OFF`, `SYNC_REQ` e `KILL\u001F[ID_Notifica]`.
-Il `POST` può includere un 7º campo opzionale `url` (deep link http(s) estratto dagli extras).
-Al click sul Mac: `url` → `app_mappings.json` (nome App **o** URL) → selettore App.
+Il `POST` può includere un 7º campo `replyable` (1/0: se la notifica supporta la risposta inline).
+Al click del banner il Mac apre l'App mappata in `app_mappings.json` (solo per nome App); se non mappata, nessuna azione (niente selettore involontario).
+La notifica sul telefono viene cancellata **solo** quando la si rimuove dal Centro Notifiche, non al click.
+Risposta inline: `REPLY\u001F[id]\u001F[base64(testo)]` → l'Android usa il `RemoteInput` della notifica.
 
 ---
 
@@ -149,6 +151,9 @@ Al click sul Mac: `url` → `app_mappings.json` (nome App **o** URL) → seletto
 4. Abilita **MacSync Notifiche** nell’Accesso alle Notifiche di sistema e seleziona le app desiderate dalla UI.
 5. **Hotspot remoto (root):** concedi il permesso root all’app. Il toggle Hotspot dal Mac usa
    `cmd wifi start-softap` / `stop-softap` e riporta lo stato reale. **MacroDroid non è più necessario.**
+6. **Autorizzazione:** in *Impostazioni → Metodo di autorizzazione* scegli **Root** (shell `su`) oppure **Shizuku** (senza root). Con Shizuku, installa l’app dall’[link ufficiale](https://github.com/RikkaApps/Shizuku) e concedi il permesso.
+
+> **Harness di test (non distribuito):** il modulo Gradle `:notifytest` genera un’app separata che pubblica notifiche simulate (una normale senza azioni di risposta, una chat con `RemoteInput`) per verificare click/Open e risposta inline. Abilitala nella lista notifiche di PixelSync, poi usa i pulsanti o `adb shell am start -n it.luigi.macsync.notifytest/.MainActivity --es cmd post_x|post_chat|clear`.
 
 ### Lato macOS
 
@@ -298,8 +303,10 @@ The telemetry packet is formatted in this order:
 
 Notifications are forwarded with the prefix `POST\u001F` or `REMOVE\u001F`.
 The command channel supports `HOTSPOT_ON`, `HOTSPOT_OFF`, `SYNC_REQ`, and `KILL\u001F[Notification_ID]`.
-A `POST` may carry an optional 7th `url` field (best-effort http(s) deep link).
-On click the Mac resolves: `url` → `app_mappings.json` (app name **or** URL) → app picker.
+A `POST` may carry a 7th `replyable` field (1/0: whether the notification supports inline reply).
+Clicking a banner opens the app mapped in `app_mappings.json` (app name only); if unmapped it does nothing (no accidental picker).
+The phone notification is cleared **only** when you dismiss it in Notification Center, not on click.
+Inline reply: `REPLY\u001F[id]\u001F[base64(text)]` → Android injects it via the notification's `RemoteInput`.
 
 ---
 
@@ -313,6 +320,9 @@ On click the Mac resolves: `url` → `app_mappings.json` (app name **or** URL) �
 4. Enable **MacSync Notifications** in the system's Notification Access and select the desired apps from the UI.
 5. **Remote Hotspot (root):** grant root to the app. The Mac hotspot toggle uses
    `cmd wifi start-softap` / `stop-softap` and reports the real state. **MacroDroid is no longer needed.**
+6. **Authorization:** in *Settings → Authorization method* choose **Root** (`su` shell) or **Shizuku** (without root). For Shizuku, install the app from the [official link](https://github.com/RikkaApps/Shizuku) and grant permission.
+
+> **Test harness (not shipped):** the `:notifytest` Gradle module builds a separate app that posts simulated notifications (a plain one with no reply action, and a chat one with `RemoteInput`) to verify click/Open and inline reply. Enable it in PixelSync's notification list, then use the buttons or `adb shell am start -n it.luigi.macsync.notifytest/.MainActivity --es cmd post_x|post_chat|clear`.
 
 ### macOS Side
 
@@ -327,7 +337,10 @@ On click the Mac resolves: `url` → `app_mappings.json` (app name **or** URL) �
 
 * **Hotspot — root required:** Remote control of the hotspot uses root; without root only state reading works (no MacroDroid).
 * **Notification Dismiss — Click Only:** The dismiss synchronization from Mac to Android only occurs when the macOS notification is clicked, not when swiped away.
-* **Deep link — best effort:** The exact tap target is an opaque `PendingIntent` that cannot be serialised. The Mac can only open a link the app exposed in the notification extras (or a per-package mapping), not necessarily the specific post/chat. The optional `url` is dropped when a notification already fills the 180-byte BLE packet.
+* **Open by package mapping:** clicking a banner opens the app mapped in `app_mappings.json`. Webpage/URL mapping is not supported and there is **no app picker on notifications**; unmapped packages simply do nothing on click. Add mappings by editing `~/Documents/MacSync/app_mappings.json` (`"<android.package>": "<Mac App name>"`).
+* **Banner click does not dismiss the phone:** the phone notification is cleared only when the banner is dismissed in Notification Center.
+* **Inline reply — app dependent:** Only works when the origin app exposes a free-form `RemoteInput` action (WeChat/Telegram/SMS usually do; a social feed such as X often does not). The Mac only shows the reply field for notifications Android flags `replyable=1`; unanswered apps return `REPLY_RESULT … no_reply_action`.
+* **Inline reply — needs native notifications:** the reply text field comes from `UserNotifications`; the ad-hoc release build falls back to `osascript`, which cannot show custom actions. Sign with an Apple certificate for the inline reply UI.
 * **Group Notifications:** Some apps send grouped summary notifications; the filter reduces noise, but the final behavior depends on the app itself.
 
 ---

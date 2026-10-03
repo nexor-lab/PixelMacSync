@@ -33,4 +33,33 @@
     <string name="hotspot_profile_title">Hotspot to save on Mac</string>
     <string name="hotspot_ssid_label">SSID</string>
     <string name="hotspot_password_label">Password</string>
+
+    <!-- Authorization method -->
+    <string name="auth_method_title">Authorization method</string>
+    <string name="auth_method_root_short">Root</string>
+    <string name="auth_method_shizuku_short">Shizuku</string>
+    <string name="auth_root_title">Root (su)</string>
+    <string name="auth_root_desc">Run privileged commands through a rooted shell</string>
+    <string name="auth_shizuku_title">Shizuku</string>
+    <string name="auth_shizuku_desc">Privileged commands without root</string>
+    <string name="auth_status_available">Available</string>
+    <string name="auth_status_unavailable">Unavailable</string>
+    <string name="auth_shizuku_installed">Installed</string>
+    <string name="auth_shizuku_not_installed">Not installed</string>
+    <string name="auth_shizuku_running">Running</string>
+    <string name="auth_shizuku_not_running">Not running</string>
+    <string name="auth_shizuku_granted">Permission granted</string>
+    <string name="auth_shizuku_denied">Permission not granted</string>
+    <string name="auth_shizuku_grant">Grant permission</string>
+    <string name="auth_shizuku_install_hint">Not installed? Install it from the official link below.</string>
+    <string name="auth_shizuku_official">Shizuku official (GitHub)</string>
+    <string name="cd_expand">Expand</string>
+    <string name="cd_collapse">Collapse</string>
+
+    <!-- About -->
+    <string name="about_title">About</string>
+    <string name="about_desc">MacSync mirrors your phone to the Mac over BLE: notifications, calls, hotspot, app icons and media controls — no cloud, no Wi-Fi.</string>
+    <string name="about_version">Version %1$s</string>
+    <string name="about_repo">GitHub repository</string>
+    <string name="egg_message">🥚 BLE-only · no cloud · Thanks for using PixelMacSync!</string>
 </resources>

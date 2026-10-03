@@ -1,6 +1,7 @@
 package it.luigi.macsync.ble
 
 import android.app.Notification
+import android.app.RemoteInput
 import android.content.BroadcastReceiver
 import android.content.ComponentName
 import android.content.Context
@@ -48,6 +49,17 @@ class MacSyncNotificationListener : NotificationListenerService() {
         }
     }
 
+    // --- 1b. RICEVITORE DELLA RISPOSTA INLINE DAL MAC ---
+    private val replyReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == "it.luigi.macsync.REPLY_NOTIFICATION") {
+                val macNotifId = intent.getStringExtra("macNotifId") ?: return
+                val replyText = intent.getStringExtra("replyText") ?: return
+                sendReply(macNotifId, replyText)
+            }
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
         it.luigi.macsync.NotificationFilter.ensureInitialized(applicationContext)
@@ -57,6 +69,9 @@ class MacSyncNotificationListener : NotificationListenerService() {
         val syncFilter = IntentFilter("it.luigi.macsync.SYNC_REQUEST")
         registerReceiver(syncReceiver, syncFilter, Context.RECEIVER_NOT_EXPORTED)
 
+        val replyFilter = IntentFilter("it.luigi.macsync.REPLY_NOTIFICATION")
+        registerReceiver(replyReceiver, replyFilter, Context.RECEIVER_NOT_EXPORTED)
+
         startMediaMonitor()
         Log.d("MacSync", "MacSyncNotificationListener avviato: Ricevitori armati.")
     }
@@ -64,6 +79,7 @@ class MacSyncNotificationListener : NotificationListenerService() {
     override fun onDestroy() {
         unregisterReceiver(killReceiver)
         unregisterReceiver(syncReceiver)
+        unregisterReceiver(replyReceiver)
         it.luigi.macsync.MediaSessionMonitor.stop()
         Log.d("MacSync", "MacSyncNotificationListener terminato: Ricevitori rimossi.")
         super.onDestroy()
@@ -160,52 +176,61 @@ class MacSyncNotificationListener : NotificationListenerService() {
     }
 
     /**
-     * Costruisce il pacchetto POST. Il 7° campo (`url`) è opzionale e contiene
-     * un deep link http(s) estratto "best effort" dagli extras: il tap vero e
-     * proprio è un PendingIntent non serializzabile, quindi molte app non lo
-     * espongono. In quel caso il campo viene omesso (retrocompatibile).
+     * Costruisce il pacchetto POST. Il 7° campo opzionale indica se la notifica
+     * supporta una risposta inline (azione con RemoteInput libero, "1"/"0"):
+     * il Mac lo usa per mostrare o meno il campo "Rispondi". Il campo viene
+     * sempre inviato; i payload più vecchi a 6 campi restano validi.
      */
     private fun buildPostPayload(sbn: StatusBarNotification, macId: String, title: String, text: String): String {
         val separator = "\u001F"
         val appLabel = appLabel(sbn.packageName)
-        val base = "POST$separator$macId$separator${sbn.packageName}$separator$title$separator$text$separator$appLabel"
-        val url = extractUrl(sbn.notification.extras)
-        if (url.isEmpty()) return base
-        // Il canale notifiche tronca a 180 byte: meglio perdere l'URL opzionale
-        // che rischiare di tagliare a metà un carattere UTF-8 (o l'URL stesso).
-        val withUrl = "$base$separator$url"
-        return if (withUrl.toByteArray(Charsets.UTF_8).size <= 180) withUrl else base
+        val canReply = if (supportsReply(sbn)) "1" else "0"
+        return "POST$separator$macId$separator${sbn.packageName}$separator$title$separator$text$separator$appLabel$separator$canReply"
     }
 
-    /** Cerca un link http(s) esplicito negli extras della notifica. */
-    private fun extractUrl(extras: Bundle?): String {
-        if (extras == null) return ""
-        val preferred = listOf(
-            "android.url", "android.link", "url", "link",
-            Notification.EXTRA_TEXT,
-            Notification.EXTRA_BIG_TEXT,
-            Notification.EXTRA_SUB_TEXT,
-            Notification.EXTRA_SUMMARY_TEXT,
-            Notification.EXTRA_INFO_TEXT
-        )
-        val regex = Regex("https?://[^\\s\\u001F]+")
-        for (key in preferred) {
-            val candidate = extras.getCharSequence(key)?.toString() ?: continue
-            regex.find(candidate)?.value?.let { return sanitizeUrl(it) }
+    /** True se la notifica espone un'azione di risposta con RemoteInput libero. */
+    private fun supportsReply(sbn: StatusBarNotification): Boolean =
+        sbn.notification.actions?.any { action ->
+            action.remoteInputs?.any { it.allowFreeFormInput } == true
+        } ?: false
+
+    // --- RISPOSTA INLINE (Mac -> notifica) ---
+    // Trova la notifica ancora attiva tramite l'id stabile, individua un'azione
+    // con RemoteInput libero e invia il testo. Alcune app non espongono alcuna
+    // azione di risposta: in quel caso si segnala "no_reply_action".
+    private fun sendReply(macNotifId: String, text: String) {
+        val sbn = activeNotifications?.firstOrNull { stableId(it) == macNotifId }
+        if (sbn == null) {
+            Log.w("MacSync", "REPLY: notifica $macNotifId non più attiva.")
+            reportReplyResult(macNotifId, "not_found")
+            return
         }
-        for (key in extras.keySet()) {
-            if (preferred.contains(key)) continue
-            val candidate = extras.getCharSequence(key)?.toString() ?: continue
-            regex.find(candidate)?.value?.let { return sanitizeUrl(it) }
+        val action = sbn.notification.actions?.firstOrNull { act ->
+            act.remoteInputs?.any { it.allowFreeFormInput } == true
         }
-        return ""
+        val inputs = action?.remoteInputs?.filter { it.allowFreeFormInput }
+        if (action == null || inputs.isNullOrEmpty()) {
+            Log.w("MacSync", "REPLY: nessuna azione RemoteInput per ${sbn.packageName} (LIMITATION).")
+            reportReplyResult(macNotifId, "no_reply_action")
+            return
+        }
+        try {
+            val results = Bundle()
+            for (ri in inputs) results.putCharSequence(ri.resultKey, text)
+            val intent = Intent()
+            RemoteInput.addResultsToIntent(inputs.toTypedArray(), intent, results)
+            action.actionIntent.send(this, 0, intent)
+            Log.d("MacSync", "REPLY inviato a ${sbn.packageName} (${text.length} char)")
+            reportReplyResult(macNotifId, "ok")
+        } catch (e: Exception) {
+            Log.e("MacSync", "REPLY fallito: ${e.message}")
+            reportReplyResult(macNotifId, "error")
+        }
     }
 
-    private fun sanitizeUrl(url: String): String =
-        url.replace("\u001F", "")
-            .trim()
-            .trimEnd('.', ',', ';', ':', ')', ']', '}', '"', '\'')
-            .take(1000)
+    private fun reportReplyResult(macNotifId: String, result: String) {
+        sendToGattServer("REPLY_RESULT\u001F$macNotifId\u001F$result")
+    }
 
     /** Human-readable app name shown as the macOS notification header. */
     private fun appLabel(packageName: String): String =

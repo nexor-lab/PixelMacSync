@@ -89,6 +89,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // URL-scheme command hook, e.g.:
     //   open "pixelsync://hotspot/on" | "pixelsync://hotspot/off" | "pixelsync://hotspot/status"
     //   open "pixelsync://music/play" | ".../pause" | ".../next" | ".../prev" | ".../seek/30000"
+    //   open "pixelsync://reply?to=<notifId>&text=<text>"   (inline reply, automatable)
     // Useful for automation and for the menu-free control path.
     func application(_ application: NSApplication, open urls: [URL]) {
         for url in urls { handleCommandURL(url) }
@@ -122,6 +123,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         case "login":
             LoginItem.setEnabled(action == "on")
+        case "reply":
+            let comps = URLComponents(url: url, resolvingAgainstBaseURL: false)
+            let to = comps?.queryItems?.first(where: { $0.name == "to" })?.value ?? ""
+            let text = comps?.queryItems?.first(where: { $0.name == "text" })?.value ?? ""
+            if !to.isEmpty, !text.isEmpty { bleManager.sendReply(notifId: to, text: text) }
         default:
             break
         }

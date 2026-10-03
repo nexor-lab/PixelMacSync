@@ -3,7 +3,6 @@ import CoreBluetooth
 import Combine
 import UserNotifications
 import AppKit
-import UniformTypeIdentifiers
 
 /// Latest music session state pushed by Android over BLE.
 struct MusicState: Equatable {
@@ -94,6 +93,7 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
         }
         
         UNUserNotificationCenter.current().delegate = self
+        registerNotificationCategories()
         
         // Carichiamo la mappa delle app dal file esterno JSON
         loadAppMap()
@@ -103,26 +103,34 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
     }
 
     // --- CARICAMENTO E SALVATAGGIO CONFIGURAZIONE ---
+    /// Default map: Android package -> macOS app name. Missing entries are merged
+    /// into an existing file. Any legacy `http(s)` value is dropped (webpage
+    /// jumping was removed; only app-name mappings are supported now).
+    private static let defaultAppMap: [String: String] = [
+        "com.instagram.android": "Instagram",
+        "com.discord": "Discord",
+        "org.telegram.messenger": "Telegram"
+    ]
+
     func loadAppMap() {
         guard let url = configURL else { return }
         
-        if FileManager.default.fileExists(atPath: url.path) {
-            if let data = try? Data(contentsOf: url),
-               let decoded = try? JSONDecoder().decode([String: String].self, from: data) {
-                self.appMap = decoded
-                NSLog("MacSync: Mappa app caricata correttamente da JSON: \(self.appMap)")
-                return
+        if FileManager.default.fileExists(atPath: url.path),
+           let data = try? Data(contentsOf: url),
+           let decoded = try? JSONDecoder().decode([String: String].self, from: data) {
+            var merged = decoded.filter { !$0.value.hasPrefix("http://") && !$0.value.hasPrefix("https://") }
+            var changed = merged.count != decoded.count
+            for (key, value) in Self.defaultAppMap where merged[key] == nil {
+                merged[key] = value
+                changed = true
             }
+            self.appMap = merged
+            if changed { saveAppMap() }
+            NSLog("MacSync: Mappa app caricata correttamente da JSON: \(self.appMap)")
+            return
         }
         
-        // Se il file non esiste ancora, creiamo un default iniziale con app comuni.
-        // Il valore può essere un nome App ("Instagram") oppure un URL http(s).
-        self.appMap = [
-            "com.instagram.android": "Instagram",
-            "com.discord": "Discord",
-            "org.telegram.messenger": "Telegram",
-            "com.twitter.android": "https://x.com/notifications"
-        ]
+        self.appMap = Self.defaultAppMap
         saveAppMap()
     }
 
@@ -566,6 +574,21 @@ extension BLEManager: CBPeripheralDelegate {
                 return
             }
 
+            // Esito di un invio REPLY (per mostrare gli errori all'utente).
+            if let result = PixelPacket.parseReplyResult(fields) {
+                NSLog("MacSync: REPLY_RESULT id=\(result.id) -> \(result.status.rawValue)")
+                if result.status != .ok {
+                    DispatchQueue.main.async {
+                        self.deliverNotification(
+                            id: "reply-status-\(result.id)",
+                            title: L10n.replyFailedTitle,
+                            body: L10n.replyFailure(result.status.rawValue)
+                        )
+                    }
+                }
+                return
+            }
+
             // Eventi chiamata (estensioni del protocollo).
             if let call = PixelPacket.parseCall(fields) {
                 self.handleCallEvent(event: call.event.rawValue, number: call.number, name: call.name)
@@ -580,8 +603,8 @@ extension BLEManager: CBPeripheralDelegate {
                                              body: notification.body,
                                              package: notification.package,
                                              appLabel: notification.appLabel,
-                                             url: notification.url)
-                    NSLog("MacSync: POST ricevuto id=\(notification.id) pkg=\(notification.package) title=\(notification.title)")
+                                             canReply: notification.canReply)
+                    NSLog("MacSync: POST ricevuto id=\(notification.id) pkg=\(notification.package) title=\(notification.title) canReply=\(notification.canReply)")
 
                 case .remove:
                     if self.notificationsAuthorized {
@@ -604,48 +627,48 @@ extension BLEManager {
         if let androidPackage = userInfo["androidPackage"] as? String,
            let notifId = userInfo["notifId"] as? String {
             
-            NSLog("MacSync: Click rilevato per pacchetto: \(androidPackage)")
-            
-            // Priorità: deep link esplicito dal payload > mapping utente (URL o
-            // nome App) > selettore applicazioni.
-            if let urlString = userInfo["url"] as? String, !urlString.isEmpty {
-                openURL(urlString)
-            } else if let target = appMap[androidPackage] {
-                openMappedTarget(target)
-            } else {
-                NSLog("MacSync: Pacchetto sconosciuto. Mostro il selettore di applicazioni...")
-                promptUserToSelectApp(for: androidPackage)
+            // Inline reply: send the typed text back to the phone (no KILL —
+            // the app usually updates/clears its own notification).
+            if let textResponse = response as? UNTextInputNotificationResponse {
+                NSLog("MacSync: Reply inline per \(androidPackage) (\(textResponse.userText.count) char)")
+                sendReply(notifId: notifId, text: textResponse.userText)
+                completionHandler()
+                return
             }
             
-            let killCommand = "KILL\u{001F}\(notifId)"
-            if let data = killCommand.data(using: .utf8),
-               let peripheral = self.pixelPeripheral,
-               let characteristic = self.commandCharacteristic {
-                
-                peripheral.writeValue(data, for: characteristic, type: .withResponse)
-                NSLog("MacSync: Inviato comando di Reverse Dismiss -> \(killCommand)")
+            // Dismissed in Notification Center (swipe / clear) -> clear on phone.
+            // A plain click does NOT delete: the phone notification is kept.
+            if response.actionIdentifier == UNNotificationDismissActionIdentifier {
+                NSLog("MacSync: Notifica rimossa dal Centro -> inoltro KILL.")
+                sendKill(notifId)
+                completionHandler()
+                return
+            }
+            
+            // Plain banner click: open the mapped macOS app if known, otherwise
+            // do nothing. There is no app picker on notifications, so a click can
+            // never open a Finder-like panel.
+            if response.actionIdentifier == UNNotificationDefaultActionIdentifier {
+                if let target = appMap[androidPackage] {
+                    launchMacApp(named: target)
+                } else {
+                    NSLog("MacSync: Nessun mapping per \(androidPackage); nessuna azione.")
+                }
             }
         }
         
         completionHandler()
     }
     
-    /// A mapping value is either an http(s) URL or a macOS app name.
-    private func openMappedTarget(_ value: String) {
-        if value.hasPrefix("http://") || value.hasPrefix("https://") {
-            openURL(value)
-        } else {
-            launchMacApp(named: value)
+    /// Clears the originating notification on the phone (reverse dismiss).
+    private func sendKill(_ notifId: String) {
+        let killCommand = "KILL\u{001F}\(notifId)"
+        if let data = killCommand.data(using: .utf8),
+           let peripheral = self.pixelPeripheral,
+           let characteristic = self.commandCharacteristic {
+            peripheral.writeValue(data, for: characteristic, type: .withResponse)
+            NSLog("MacSync: Inviato comando di Reverse Dismiss -> \(killCommand)")
         }
-    }
-
-    private func openURL(_ urlString: String) {
-        NSLog("MacSync: Apertura URL -> \(urlString)")
-        guard let url = URL(string: urlString) else {
-            NSLog("MacSync: URL non valido, ignorato.")
-            return
-        }
-        NSWorkspace.shared.open(url)
     }
 
     private func launchMacApp(named name: String) {
@@ -655,34 +678,33 @@ extension BLEManager {
         task.arguments = ["-a", name]
         try? task.run()
     }
-    
-    private func promptUserToSelectApp(for androidPackage: String) {
-        DispatchQueue.main.async {
-            NSApp.activate(ignoringOtherApps: true)
-            
-            let openPanel = NSOpenPanel()
-            openPanel.title = "Seleziona l'app Mac da associare a \(androidPackage)"
-            openPanel.prompt = "Associa applicazione"
-            openPanel.showsHiddenFiles = false
-            openPanel.canChooseDirectories = false
-            openPanel.canCreateDirectories = false
-            openPanel.allowsMultipleSelection = false
-            openPanel.allowedContentTypes = [UTType.applicationBundle]
-            openPanel.directoryURL = URL(fileURLWithPath: "/Applications")
-            
-            if openPanel.runModal() == .OK {
-                if let url = openPanel.url {
-                    let appName = url.deletingPathExtension().lastPathComponent
-                    
-                    self.appMap[androidPackage] = appName
-                    self.saveAppMap()
-                    
-                    NSLog("MacSync: Nuova associazione memorizzata: \(androidPackage) -> \(appName)")
-                    
-                    self.launchMacApp(named: appName)
-                }
-            }
+
+    /// Sends `REPLY US <notifId> US <base64(text)>` to Android. The text is
+    /// shrunk character-by-character until the whole BLE write fits the
+    /// negotiated MTU (multi-byte safe: we drop whole Characters, not bytes).
+    func sendReply(notifId: String, text: String) {
+        guard isConnected, let peripheral = pixelPeripheral,
+              let characteristic = commandCharacteristic else {
+            NSLog("MacSync: REPLY non inviato: canale comando non pronto.")
+            return
         }
+        let maxLen = peripheral.maximumWriteValueLength(for: .withResponse)
+        func command(_ s: String) -> String {
+            "REPLY\u{1F}\(notifId)\u{1F}\(Data(s.utf8).base64EncodedString())"
+        }
+        var body = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !body.isEmpty, maxLen > 0 else { return }
+        var cmd = command(body)
+        while cmd.utf8.count > maxLen, !body.isEmpty {
+            body.removeLast()
+            cmd = command(body)
+        }
+        if body.count < text.count {
+            NSLog("MacSync: REPLY troncato a \(body.count) caratteri (max \(maxLen) byte).")
+        }
+        guard let data = cmd.data(using: .utf8) else { return }
+        peripheral.writeValue(data, for: characteristic, type: .withResponse)
+        NSLog("MacSync: Inviato REPLY (id=\(notifId), \(body.count) char)")
     }
     
     func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
@@ -825,13 +847,45 @@ extension BLEManager {
 // MARK: - Delivery to macOS Notification Center
 extension BLEManager {
 
+    /// Category with inline reply (origin app exposes RemoteInput) vs without.
+    static let messageCategoryReply = "PIXELSYNC_MESSAGE_REPLY"
+    static let messageCategoryPlain = "PIXELSYNC_MESSAGE_PLAIN"
+    private static let replyActionId = "PIXELSYNC_REPLY"
+
+    /// Registers two categories: one with an inline "Reply" text field (shown
+    /// only when Android reports the app supports replies) and a plain one.
+    /// No app picker is attached to notifications, so clicking a banner can
+    /// never open a Finder-like panel.
+    func registerNotificationCategories() {
+        let replyAction = UNTextInputNotificationAction(
+            identifier: Self.replyActionId,
+            title: L10n.reply,
+            options: [],
+            textInputButtonTitle: L10n.replySend,
+            textInputPlaceholder: L10n.replyPlaceholder
+        )
+        let withReply = UNNotificationCategory(
+            identifier: Self.messageCategoryReply,
+            actions: [replyAction],
+            intentIdentifiers: [],
+            options: []
+        )
+        let plain = UNNotificationCategory(
+            identifier: Self.messageCategoryPlain,
+            actions: [],
+            intentIdentifiers: [],
+            options: []
+        )
+        UNUserNotificationCenter.current().setNotificationCategories([withReply, plain])
+    }
+
     /// Delivers a notification. Uses the native UserNotifications framework when
     /// the app is authorized; otherwise (macOS 12.7 refuses apps that are not
     /// signed with an Apple-issued certificate) falls back to Notification
     /// Center via /usr/bin/osascript.
     func deliverNotification(id: String, title: String, body: String,
                              subtitle: String = "", package: String = "",
-                             appLabel: String = "", url: String = "", sound: Bool = true) {
+                             appLabel: String = "", canReply: Bool = false, sound: Bool = true) {
         // Header = sender app name; subtitle = original notification title.
         let headerTitle = appLabel.isEmpty ? title : appLabel
         let headerSubtitle = appLabel.isEmpty ? subtitle : title
@@ -844,9 +898,8 @@ extension BLEManager {
             if sound { content.sound = UNNotificationSound.default }
 
             if !package.isEmpty {
-                var info: [String: String] = ["androidPackage": package, "notifId": id]
-                if !url.isEmpty { info["url"] = url }
-                content.userInfo = info
+                content.userInfo = ["androidPackage": package, "notifId": id]
+                content.categoryIdentifier = canReply ? Self.messageCategoryReply : Self.messageCategoryPlain
                 let fileManager = FileManager.default
                 if let picturesURL = fileManager.urls(for: .picturesDirectory, in: .userDomainMask).first {
                     let iconURL = picturesURL

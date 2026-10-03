@@ -54,11 +54,14 @@ enum ParserTests {
             check(n?.package == "com.tencent.mm", "package")
             check(n?.title == "张三", "UTF-8 title")
             check(n?.body == "晚上一起吃饭吗？", "UTF-8 body")
-            check(n?.url == "", "missing url defaults empty")
+            check(n?.canReply == false, "missing reply flag defaults false")
 
-            let withUrl = PixelPacket.parseNotification(PixelPacket.fields(from: data("POST\(US)n9z8y7\(US)com.twitter.android\(US)tweet\(US)body\(US)X\(US)https://x.com/notifications"))!)
-            check(withUrl?.url == "https://x.com/notifications", "url 7th field")
-            check(withUrl?.appLabel == "X", "appLabel before url")
+            let replyable = PixelPacket.parseNotification(PixelPacket.fields(from: data("POST\(US)n9z8y7\(US)com.tencent.mm\(US)张三\(US)msg\(US)微信\(US)1"))!)
+            check(replyable?.canReply == true, "reply flag 1 -> canReply")
+            check(replyable?.appLabel == "微信", "appLabel before reply flag")
+
+            let notReplyable = PixelPacket.parseNotification(PixelPacket.fields(from: data("POST\(US)n1\(US)com.twitter.android\(US)t\(US)b\(US)X\(US)0"))!)
+            check(notReplyable?.canReply == false, "reply flag 0 -> no reply")
 
             check(PixelPacket.parseNotification(["POST", "id"]) == nil, "rejects short POST")
         }
@@ -69,6 +72,22 @@ enum ParserTests {
             let n = PixelPacket.parseNotification(fields)
             check(n?.kind == .remove, "kind == remove")
             check(n?.id == "n1a2b3", "remove id")
+        }
+
+        print("== Reply result ==")
+        do {
+            let ok = PixelPacket.parseReplyResult(PixelPacket.fields(from: data("REPLY_RESULT\(US)n1a2b3\(US)ok"))!)
+            check(ok?.id == "n1a2b3", "reply result id")
+            check(ok?.status == .ok, "reply result ok")
+
+            let noAction = PixelPacket.parseReplyResult(["REPLY_RESULT", "n1", "no_reply_action"])
+            check(noAction?.status == .noReplyAction, "reply result no_reply_action")
+
+            let unknown = PixelPacket.parseReplyResult(["REPLY_RESULT", "n1", "weird"])
+            check(unknown?.status == .error, "unknown reply status defaults to error")
+
+            check(PixelPacket.parseReplyResult(["REPLY_RESULT", "n1"]) == nil, "rejects short reply result")
+            check(PixelPacket.parseReplyResult(PixelPacket.fields(from: data("POST\(US)x\(US)y\(US)z\(US)w"))!) == nil, "POST is not a reply result")
         }
 
         print("== Call events ==")

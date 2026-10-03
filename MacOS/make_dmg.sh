@@ -5,7 +5,14 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP="$SCRIPT_DIR/build/PixelSync.app"
-DMG_NAME="PixelMacSync-macOS12-Intel"
+# Name follows ARCH unless overridden, e.g.:
+#   ARCH=universal ./make_dmg.sh   -> PixelMacSync-macOS12-Universal.dmg
+case "${ARCH:-x86_64}" in
+  universal) DEFAULT_NAME="PixelMacSync-macOS12-Universal" ;;
+  arm64)     DEFAULT_NAME="PixelMacSync-macOS12-AppleSilicon" ;;
+  *)         DEFAULT_NAME="PixelMacSync-macOS12-Intel" ;;
+esac
+DMG_NAME="${DMG_NAME:-$DEFAULT_NAME}"
 STAGE="/tmp/pixelsync_dmg_stage"
 
 if [ ! -d "$APP" ]; then

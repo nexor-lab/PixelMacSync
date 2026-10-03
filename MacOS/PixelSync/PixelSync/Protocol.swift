@@ -52,23 +52,45 @@ enum PixelPacket {
         let title: String
         let body: String
         let appLabel: String   // sender app name (empty on older payloads)
-        let url: String        // best-effort http(s) deep link (empty on older payloads)
+        let canReply: Bool     // origin app exposes a free-form reply action
     }
 
     static func parseNotification(_ fields: [String]) -> Notification? {
         guard let action = fields.first else { return nil }
         if action == "POST", fields.count >= 5 {
             let appLabel = fields.count >= 6 ? fields[5] : ""
-            let url = fields.count >= 7 ? fields[6] : ""
+            let replyFlag = fields.count >= 7 ? fields[6].lowercased() : "0"
+            let canReply = (replyFlag == "1" || replyFlag == "true" || replyFlag == "reply")
             return Notification(kind: .post, id: fields[1], package: fields[2],
                                 title: fields[3], body: fields[4], appLabel: appLabel,
-                                url: url)
+                                canReply: canReply)
         }
         if action == "REMOVE", fields.count >= 2 {
             return Notification(kind: .remove, id: fields[1], package: "",
-                                title: "", body: "", appLabel: "", url: "")
+                                title: "", body: "", appLabel: "", canReply: false)
         }
         return nil
+    }
+
+    // MARK: - Reply result (Android -> Mac)
+
+    /// Outcome of a `REPLY` command, so the Mac can surface failures (an app
+    /// without a RemoteInput reply action, a notification already dismissed…).
+    struct ReplyResult: Equatable {
+        enum Status: String {
+            case ok
+            case notFound = "not_found"
+            case noReplyAction = "no_reply_action"
+            case error
+        }
+        let id: String
+        let status: Status
+    }
+
+    static func parseReplyResult(_ fields: [String]) -> ReplyResult? {
+        guard fields.count >= 3, fields[0] == "REPLY_RESULT" else { return nil }
+        return ReplyResult(id: fields[1],
+                           status: ReplyResult.Status(rawValue: fields[2]) ?? .error)
     }
 
     // MARK: - Call

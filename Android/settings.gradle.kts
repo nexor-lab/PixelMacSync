@@ -24,3 +24,6 @@ dependencyResolutionManagement {
 
 rootProject.name = "MacSync"
 include(":app")
+// Test harness (not shipped): posts simulated X / chat notifications to verify
+// the Mac click-to-open and inline-reply pipelines.
+include(":notifytest")

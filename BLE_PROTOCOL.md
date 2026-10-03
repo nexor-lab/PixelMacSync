@@ -70,7 +70,7 @@ menu-bar popover.
 Two actions, each a single `US`-separated packet:
 
 ```
-POST   US <id> US <packageName> US <title> US <body> US <appLabel> [US <url>]
+POST   US <id> US <packageName> US <title> US <body> US <appLabel> [US <replyable>]
 REMOVE US <id>
 ```
 
@@ -83,10 +83,10 @@ REMOVE US <id>
 - Android filters out group summaries and system packages (`android`,
   `com.android.systemui`) and only forwards packages in the user's enabled set.
 - `appLabel` (6th field) is the sender app's display name (see *Sender app name*).
-- `url` (7th field, optional) is a best-effort `http(s)` deep link scraped from
-  the notification extras. The real tap target is an opaque `PendingIntent` that
-  cannot be serialised, so most apps leave this empty. When present, the Mac
-  opens it on click (highest priority).
+- `replyable` (7th field, optional) is `1` when the notification exposes a
+  free-form `RemoteInput` reply action, else `0`. The Mac shows the inline
+  **Reply** field only for `1`, so the user can tell which notifications can be
+  answered. Older 6-field payloads default to `0`.
 
 ## Command channel (Write from Mac)
 
@@ -102,11 +102,39 @@ MUSIC_NEXT
 MUSIC_PREV
 MUSIC_SEEK US <positionMs>
 MUSIC_STATUS
+REPLY US <id> US <base64(text)>
 ```
 
 `HOTSPOT_ON` / `HOTSPOT_OFF` are accepted as aliases of `HOTSPOT_ENABLE` /
 `HOTSPOT_DISABLE` (the upstream MacroDroid path is replaced by a real root
 control — see HOTSPOT.md).
+
+### Inline reply (Mac → Android → notified app)
+
+`REPLY US <id> US <base64(text)>` asks Android to answer the origin
+notification inline. Android finds the still-active `StatusBarNotification`
+whose stable id matches, picks its action that exposes free-form `RemoteInput`,
+and injects the text via
+`RemoteInput.addResultsToIntent(...)` + `action.actionIntent.send(...)`.
+base64 keeps the separator/UTF-8 safe. The reply is truncated on the Mac so the
+whole BLE write fits `maximumWriteValueLength(for: .withResponse)`.
+
+Outcome (Android → Mac, on the Notifications channel):
+
+```
+REPLY_RESULT US <id> US ok
+REPLY_RESULT US <id> US not_found
+REPLY_RESULT US <id> US no_reply_action
+REPLY_RESULT US <id> US error
+```
+
+`no_reply_action` is the expected **LIMITATION** for apps that only offer
+"mark as read"/dismiss (no free-form reply). Whether a banner even shows the
+reply field is driven by the `replyable` flag of its `POST` (see above), so the
+user can tell at a glance which notifications can be answered. The macOS inline
+reply UI itself requires the app to show a native `UserNotifications` banner,
+i.e. an Apple-issued signature; with the ad-hoc release build notifications fall
+back to `osascript`, which cannot render custom actions.
 
 ### Hotspot replies (Android → Mac, on the Notifications channel)
 
@@ -153,18 +181,21 @@ backward compatible (older payloads simply omit the field).
   when the user clicks the Mac banner). Mac also handles this by looking the
   Android package up in `Documents/MacSync/app_mappings.json`.
 
-### Click-to-open (Mac side)
+### Click actions (Mac side)
 
-When the user clicks a banner, the Mac resolves the target in this order:
+There is **no app picker on notifications** (it used to look like Finder). A
+banner shows only the **Reply** field, and only when the origin notification is
+`replyable=1`. Targets come from `Documents/MacSync/app_mappings.json` (Android
+package → macOS app name, opened via `open -a`); URL/webpage mappings were
+removed. To add a mapping, edit that JSON (or the app's defaults).
 
-1. the optional 7th `url` field of the `POST` (e.g. a scraped tweet permalink);
-2. the user mapping in `Documents/MacSync/app_mappings.json`, whose value may be
-   a macOS app name (`"Instagram"`, opened via `open -a`) **or** an `http(s)`
-   URL (`"com.twitter.android": "https://x.com/notifications"`, opened in the
-   default browser);
-3. otherwise it shows an `NSOpenPanel` to pick a `.app`, and saves the choice.
+- **Plain banner click**: opens the mapped app if known, otherwise does nothing.
+  It **never** deletes the phone notification and never opens a Finder-like panel.
+- **Dismiss in Notification Center** (swipe / clear): sends `KILL US <id>`, the
+  only path that clears the originating phone notification.
+- **Reply**: sends `REPLY` and leaves the phone notification in place.
 
-The Mac also sends `KILL US <id>` so the phone-side notification is cleared.
+Missing default entries are merged into an existing `app_mappings.json` on load.
 
 ## Call-event extension (NEW in this port)
 

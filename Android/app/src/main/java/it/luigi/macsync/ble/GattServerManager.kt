@@ -25,6 +25,7 @@ import android.telephony.SignalStrength
 import android.telephony.TelephonyCallback
 import android.telephony.TelephonyDisplayInfo
 import android.telephony.TelephonyManager
+import android.util.Base64
 import android.util.Log
 import it.luigi.macsync.HotspotController
 import it.luigi.macsync.MediaSessionMonitor
@@ -298,7 +299,7 @@ class GattServerManager private constructor(private val context: Context) {
     private fun handleHotspotCommand(enable: Boolean) {
         callScope.launch {
             Log.d("MacSync", "Comando hotspot: ${if (enable) "ENABLE" else "DISABLE"}")
-            val ok = if (enable) HotspotController.enable(context) else HotspotController.disable()
+            val ok = if (enable) HotspotController.enable(context) else HotspotController.disable(context)
             if (!ok) {
                 sendNotificationToMac("HOTSPOT_ERROR\u001F${if (enable) "enable_failed" else "disable_failed"}")
                 return@launch
@@ -426,6 +427,26 @@ class GattServerManager private constructor(private val context: Context) {
                     "MUSIC_VOLUME_SET" -> {
                         val percent = parts.getOrNull(1)?.toIntOrNull()
                         if (percent != null) MediaSessionMonitor.setVolume(percent)
+                    }
+                    // --- RISPOSTA INLINE A UNA NOTIFICA (Mac -> telefono) ---
+                    // Formato: REPLY US <macNotifId> US <base64(testo)>
+                    "REPLY" -> {
+                        if (parts.size >= 3) {
+                            val macNotifId = parts[1]
+                            val text = try {
+                                String(Base64.decode(parts[2], Base64.DEFAULT), Charsets.UTF_8)
+                            } catch (e: Exception) {
+                                Log.e("MacSync", "REPLY: base64 non valido: ${e.message}")
+                                null
+                            }
+                            if (!text.isNullOrEmpty()) {
+                                val intent = Intent("it.luigi.macsync.REPLY_NOTIFICATION")
+                                intent.putExtra("macNotifId", macNotifId)
+                                intent.putExtra("replyText", text)
+                                intent.setPackage(context.applicationContext.packageName)
+                                context.sendBroadcast(intent)
+                            }
+                        }
                     }
                 }
 

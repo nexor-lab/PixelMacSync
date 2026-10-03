@@ -312,11 +312,28 @@ object MediaSessionMonitor {
     /** Sets the media volume to [percent] (0..100). */
     fun setVolume(percent: Int) {
         mainHandler.post {
-            val am = audioManager ?: return@post
+            val am = audioManager ?: run {
+                Log.w(TAG, "setVolume ignorato: AudioManager non pronto")
+                return@post
+            }
             val max = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
             val value = (percent.coerceIn(0, 100) * max + 50) / 100
-            am.setStreamVolume(AudioManager.STREAM_MUSIC, value, 0)
-            // The ContentObserver echoes the new value back to the Mac.
+            val before = am.getStreamVolume(AudioManager.STREAM_MUSIC)
+            try {
+                am.setStreamVolume(AudioManager.STREAM_MUSIC, value, 0)
+            } catch (e: SecurityException) {
+                Log.e(TAG, "setStreamVolume SecurityException: ${e.message}")
+            } catch (e: Exception) {
+                Log.e(TAG, "setStreamVolume error: ${e.javaClass.simpleName}: ${e.message}")
+            }
+            val after = am.getStreamVolume(AudioManager.STREAM_MUSIC)
+            Log.d(TAG, "setVolume $percent% -> $value (prima=$before, dopo=$after, max=$max)")
+            if (after != value) {
+                Log.w(TAG, "Il volume non è stato applicato (OEM/contenuto?): richiesto=$value reale=$after")
+            }
+            // Echo the real value even if the Settings ContentObserver did not
+            // fire (MIUI/HyperOS sometimes does not), so the Mac slider stays in sync.
+            sendVolume(force = true)
         }
     }
 

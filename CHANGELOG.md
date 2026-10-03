@@ -1,5 +1,143 @@
 # CHANGELOG.md
 
+## [android-auth-method + about] — 2026-10-03
+
+Android app: choose how privileged commands run (root or Shizuku), plus an
+About section and a small easter egg. UI, protocol and macOS side untouched.
+
+### Added
+
+- **Authorization method card** (collapsible, below *Notifications*): one header
+  row (shield icon + “Authorization method” + current method + chevron) that
+  expands to Root / Shizuku radio options with live status.
+  - **Root**: `su` (status = available/unavailable).
+  - **Shizuku**: privileged shell without root; shows installed / running /
+    granted state, the official GitHub link, an “install from this link” hint
+    and a **Grant permission** button.
+- **About card** at the bottom: short description, version and a link to the
+  GitHub repository.
+- **Easter egg**: long-press the “MacSync” title.
+- **`PrivilegeManager`**: unified privileged shell (root `su` or Shizuku) with
+  the method persisted in `MacSync_Prefs`; `HotspotController` now runs through
+  it.
+- Shizuku deps (`dev.rikka.shizuku:api` + `:provider`) and the `ShizukuProvider`
+  manifest entry.
+
+### Notes / fixes
+
+- `Shizuku.newProcess` is **private** in API 13.1.5 (deprecated, removal planned
+  in API 14), so it is called reflectively; a ProGuard keep rule preserves it.
+- Avoid `Process.waitFor(timeout)`: `ShizukuRemoteProcess` throws
+  `IllegalArgumentException("process hasn't exited")`; output is now read on a
+  worker thread with a timeout (and stderr merged via `sh -c "… 2>&1"`).
+- The collapse uses only `AnimatedVisibility` (no `animateContentSize`) so the
+  content and the card frame animate together (no rubber-band / residual height).
+- Light/dark supported (Material3 theme colors only).
+
+### Verification (real POCO F5 Pro)
+
+- Root: status **Available**.
+- Shizuku: permission granted → status **Granted**.
+- Hotspot **enable/disable while Shizuku is selected** → **PASS** (AP interface
+  `wlan2` up, then `HOTSPOT_STATE OFF`; no `process hasn't exited` error).
+- UI: light + dark rendering **PASS**; expand/collapse spacing/alignment fixed.
+
+## [notification-behavior + notifytest] — 2026-10-03
+
+### Behavior changes
+
+- **No app picker on notifications at all.** The explicit "Open" action and the
+  `NSOpenPanel` picker were removed, so neither a stray nor an intentional
+  notification click can open a Finder-like panel. Add mappings by editing
+  `~/Documents/MacSync/app_mappings.json`.
+- **Removed webpage/deep-link jumping.** `POST` no longer carries a `url`, the
+  Mac never opens an `http(s)` link, and `app_mappings.json` only accepts macOS
+  app names (legacy `http(s)` values are dropped on load). Clicking a banner
+  opens the mapped app by **package name**; unmapped packages do nothing.
+- **Clicking a banner no longer clears the phone notification.** The phone side
+  is cleared **only** when the banner is dismissed in Notification Center
+  (`UNNotificationDismissActionIdentifier` → `KILL`). Reply also leaves it.
+- **Reply capability is explicit.** The optional 7th `POST` field is now
+  `replyable` (`1`/`0`): Android sets it when the notification exposes a
+  free-form `RemoteInput`. The Mac shows the inline **Reply** field only for
+  `1` (two notification categories), so the user can tell which notifications
+  can be answered. Old 6-field payloads default to `0`.
+- The **Open** action (kept) shows the `NSOpenPanel` picker only when no mapping
+  exists and the user explicitly chose Open — never on a plain click.
+
+### New: Android test harness (`Android/notifytest`, not shipped)
+
+Separate debug app (`it.luigi.macsync.notifytest`):
+- posts a **plain** notification with no reply action (must show no reply field);
+- posts a **chat** notification with a real free-form `RemoteInput` reply action;
+  the reply comes back to `ReplyReceiver` and is shown as a notification.
+
+Driven by buttons or `adb shell am start … --es cmd post_x|post_chat|clear`.
+Enable the app in PixelSync's notification list to have it forwarded.
+
+### Fixed
+
+- Removed noisy `W Bundle` runtime warnings from the old URL extras scan.
+
+### Added
+
+- `pixelsync://reply?to=<notifId>&text=<text>` URL hook (also automates
+  inline-reply testing).
+- `POST` log line now includes `canReply=`.
+
+### Verification (real POCO F5 Pro + real Mac, BLE)
+
+- Chat notification (`replyable=1`): Mac inline reply → Android `RemoteInput` →
+  test app received it; `REPLY_RESULT ok`.
+- Plain notification (`replyable=0`): forwarded; Mac chooses the no-reply
+  category.
+- Real X notification forwarded (no reply action → `canReply=0`).
+- Real WeChat reply: **NOT TESTED** (needs an incoming message; the equivalent
+  RemoteInput path is verified end-to-end).
+
+## [notification-inline-reply] — 2026-10-03 (POC)
+
+New feature: **reply to phone notifications from the Mac** via the origin app's
+`RemoteInput` (public API, BLE-only). POC — plumbing + build; real-device
+behaviour not yet verified.
+
+### Android
+
+- **`MacSyncNotificationListener.kt`** — new `REPLY_NOTIFICATION` receiver.
+  `sendReply` matches the still-active `StatusBarNotification` by stable id,
+  picks the action exposing free-form `RemoteInput`, injects the text with
+  `RemoteInput.addResultsToIntent(...)` + `action.actionIntent.send(...)`, and
+  replies `REPLY_RESULT US <id> US ok|not_found|no_reply_action|error`.
+- **`GattServerManager.kt`** — new `REPLY US <id> US <base64(text)>` command;
+  decodes base64 and broadcasts it to the listener.
+
+### macOS
+
+- **`Protocol.swift`** — `parseReplyResult` (`REPLY_RESULT`), unit-tested.
+- **`BLEManager.swift`** —
+  - registers a `UNNotificationCategory` with a `UNTextInputNotificationAction`
+    (required for the banner to show a reply field) and tags message
+    notifications with `categoryIdentifier`;
+  - `didReceive` handles `UNTextInputNotificationResponse.userText` →
+    `sendReply(notifId:text:)` (`REPLY US <id> US <base64>`), shrinking the text
+    character-by-character to fit `maximumWriteValueLength(for: .withResponse)`;
+  - surfaces non-`ok` `REPLY_RESULT` as a local failure banner.
+- **`Localization.swift`** — reply / send / placeholder / failure strings (zh/en).
+
+### Docs
+
+- `BLE_PROTOCOL.md` / `README.md`: `REPLY`, `REPLY_RESULT`, and the two
+  limitations (app must expose RemoteInput; inline UI needs a native
+  Apple-signed notification, so the ad-hoc build falls back to `osascript`).
+
+### Verification
+
+- `MacOS/run_tests.sh` — **66 passed, 0 failed**.
+- Android release build — **PASS**.
+- macOS build + launch smoke test — **PASS**.
+- **Real-device RemoteInput (WeChat / Telegram / SMS)** — **NOT TESTED**
+  (no device attached; `adb devices` empty).
+
 ## [notification-click-open] — 2026-10-03
 
 New feature: **clicking a Mac banner opens the matching local app or web page**.

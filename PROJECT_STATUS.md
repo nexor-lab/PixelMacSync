@@ -1,8 +1,59 @@
 # PROJECT_STATUS.md — PixelMacSync macOS 12.7 / Intel port
 
-Last updated: 2026-10-03 (Notification click-to-open)
+Last updated: 2026-10-03 (Android auth method: root/Shizuku + About)
 Branch: `macos12-port` (base `main` @ `e5a5c060…`) — **NOT COMMITTED**
 State: **RUNNING** (autonomous; marker cleared)
+
+## Android authorization method (root / Shizuku) — RESULT (2026-10-03)
+
+| Item | Status |
+|---|---|
+| Collapsible “Authorization method” card (Root / Shizuku radios, status, icon) | **PASS** — light + dark |
+| Root status | **PASS** — Available |
+| Shizuku status + grant flow | **PASS** — Installed / Running / Granted |
+| Shizuku official GitHub link + install hint | **PASS** |
+| `PrivilegeManager` unifies `su` / Shizuku; persisted selection | **PASS** |
+| Hotspot enable via Shizuku (`cmd wifi start-softap`) | **PASS** — AP interface `wlan2` up |
+| Hotspot disable via Shizuku | **PASS** — `HOTSPOT_STATE OFF` |
+| `Shizuku.newProcess` reflection + threaded read (no `waitFor`) | **PASS** |
+| About card (desc + version + repo link) | **PASS** |
+| Long-press title easter egg | **PASS** |
+| Collapse animation (no rubber-band / residual height) | **PASS** |
+| Grant button left-aligned with the Shizuku link | **PASS** |
+
+## Notification behavior + NotifyTest — RESULT (2026-10-03, real device)
+
+| Item | Status |
+|---|---|
+| Webpage/deep-link jumping removed (package→app mapping only) | **PASS** — `url` field gone; legacy URL mappings dropped |
+| Banner click does not clear the phone notification | **PASS** — KILL only on Notification-Center dismiss |
+| Reply capability flag (`POST` 7th field `replyable`) | **PASS** — parser tests include it |
+| Mac shows Reply field only for `replyable=1` (two categories) | **PASS** — build + code |
+| Android test harness `:notifytest` (plain + RemoteInput chat) | **PASS** — builds/installs/runs |
+| Mac inline reply → Android RemoteInput (test app) | **PASS** — `REPLY_RESULT ok`, phone received it |
+| Real X notification | **PASS** forwarded; no reply action (`canReply=0`) |
+| Noisy `W Bundle` warnings | **PASS** — removed |
+| Real WeChat reply | **NOT TESTED** — needs an incoming WeChat message |
+| Notification-Center dismiss → KILL | **NOT TESTED** — needs a manual swipe |
+
+## Notification inline reply — RESULT (2026-10-03, POC)
+
+Reply to a phone notification from the Mac via the origin app's `RemoteInput`
+(public API, BLE-only). Protocol: Mac→Android `REPLY US <id> US <base64(text)>`;
+Android→Mac `REPLY_RESULT US <id> US ok|not_found|no_reply_action|error`.
+
+| Item | Status |
+|---|---|
+| Android `REPLY` command + base64 decode (`GattServerManager`) | **PASS** — release APK built |
+| Android `RemoteInput` send (action lookup + `addResultsToIntent` + `send`) | **PASS** — code / build |
+| Android `REPLY_RESULT` feedback | **PASS** — code |
+| macOS `parseReplyResult` | **PASS** — parser tests **66/0** |
+| macOS `UNNotificationCategory` + `UNTextInputNotificationAction` registration | **PASS** — build + launch smoke |
+| macOS `didReceive` userText → `REPLY` (MTU-capped, multi-byte safe) | **PASS** — code |
+| Reply failure surfaced to the user | **PASS** — code |
+| **Real-device RemoteInput on WeChat / Telegram / SMS** | **NOT TESTED** — no device attached |
+| Inline reply UI on ad-hoc build | **LIMITATION** — requires Apple-signed native notification; ad-hoc uses `osascript` (no custom actions) |
+| Apps without a free-form reply action (e.g. many social feeds) | **LIMITATION** — returns `no_reply_action` |
 
 ## Notification click-to-open — RESULT (2026-10-03)
 

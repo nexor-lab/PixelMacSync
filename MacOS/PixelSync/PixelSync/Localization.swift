@@ -84,4 +84,18 @@ enum L10n {
     // MARK: - Login item
 
     static var launchAtLogin: String { t("Launch at login", "开机自动启动") }
+
+    // MARK: - Inline reply
+
+    static var reply: String { t("Reply", "回复") }
+    static var replySend: String { t("Send", "发送") }
+    static var replyPlaceholder: String { t("Type a reply…", "输入回复…") }
+    static var replyFailedTitle: String { t("Reply not sent", "回复未发送") }
+    static func replyFailure(_ reason: String) -> String {
+        switch reason {
+        case "no_reply_action": return t("This app does not support replies.", "该应用不支持回复。")
+        case "not_found":       return t("The notification is no longer active.", "该通知已不在。")
+        default:                return t("Could not deliver the reply.", "无法发送回复。")
+        }
+    }
 }

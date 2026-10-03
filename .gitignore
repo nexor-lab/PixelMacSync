@@ -12,6 +12,7 @@ HUMAN_INTERVENTION_REQUIRED
 # Build artifacts
 Android/build/
 Android/app/build/
+Android/notifytest/build/
 Android/local.properties
 Android/keystore/
 Android/*.apk

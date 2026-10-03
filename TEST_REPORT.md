@@ -9,6 +9,61 @@ Device: **POCO F5 Pro (23013PC75G / `mondrian`)**, Android 15 / API 35, HyperOS 
 
 ---
 
+## Android auth method (root / Shizuku) (2026-10-03, real device)
+
+| # | Test | Result |
+|---|---|---|
+| A1 | Collapsible auth card renders (light + dark) | **PASS** |
+| A2 | Root status = Available | **PASS** |
+| A3 | Shizuku install/run/grant states | **PASS** — Granted after request |
+| A4 | Official GitHub link + grant button alignment | **PASS** |
+| A5 | Hotspot enable via Shizuku | **PASS** — AP interface `wlan2` up; no `hasn't exited` error |
+| A6 | Hotspot disable via Shizuku | **PASS** — `HOTSPOT_STATE OFF` |
+| A7 | Expand/collapse (no rubber-band, no residual height) | **PASS** |
+| A8 | About card + long-press easter egg | **PASS** |
+| A9 | Full build (R8 + apksigner) | **PASS** |
+
+## Notification behavior + NotifyTest (2026-10-03, real device)
+
+| # | Test | Result |
+|---|---|---|
+| U1 | `:notifytest` debug build + install | **PASS** |
+| U2 | Plain notification → `replyable=0` (no reply field) | **PASS** (code) |
+| U3 | Chat notification → `replyable=1`; Mac reply → Android RemoteInput | **PASS** — phone received `UNIQ7788`; `REPLY_RESULT ok` |
+| U4 | Parser tests incl. reply flag | **PASS** — 67 passed, 0 failed |
+| U5 | URL/webpage mapping removed (legacy dropped) | **PASS** (code) |
+| U6 | Banner click does not send KILL | **PASS** (code) |
+| U7 | Notification-Center dismiss → KILL | **NOT TESTED** — needs manual swipe |
+| U8 | Real WeChat reply | **NOT TESTED** — no incoming WeChat message |
+
+## NotifyTest harness + UX fixes (2026-10-03, real device)
+
+| # | Test | Result |
+|---|---|---|
+| T1 | `:notifytest` debug build + install | **PASS** |
+| T2 | Simulated X with `android.url` forwarded | **PASS** — `url=https://x.com/notifications` |
+| T3 | `url` cache survives no-url re-post (same id) | **PASS** |
+| T4 | Mac reply `UNIQ7788` → Android RemoteInput → test app | **PASS** — confirmation notification text `UNIQ7788` |
+| T5 | `REPLY_RESULT ok` round-trip | **PASS** |
+| T6 | Real X notification forwarded | **PASS** — `url` empty (X sends no link) |
+| T7 | Missing default mapping auto-merged (X) | **PASS** |
+| T8 | Banner click: no Finder-like picker | **PASS** (code) — target or no-op; picker only via “打开” |
+| T9 | Real WeChat reply | **NOT TESTED** — no incoming WeChat message |
+| T10 | `W Bundle` warnings from URL scan | **PASS** — removed |
+
+## Notification inline reply — POC (2026-10-03)
+
+| # | Test | Result |
+|---|---|---|
+| R1 | Android release build (`REPLY` + `REPLY_RESULT`) | **PASS** — signed APK |
+| R2 | macOS build + launch smoke (category registration) | **PASS** |
+| R3 | BLE parser unit tests | **PASS** — **66 passed, 0 failed** (incl. `REPLY_RESULT`) |
+| R4 | Mac maps `UNTextInputNotificationResponse.userText` → `REPLY` | **PASS** (code) |
+| R5 | Android finds RemoteInput action + sends | **PASS** (code) |
+| R6 | `REPLY_RESULT no_reply_action` fallback | **PASS** (code) |
+| R7 | **Real-device** RemoteInput: WeChat / Telegram / SMS | **NOT TESTED** — `adb devices` empty |
+| R8 | Inline reply field on ad-hoc release build | **LIMITATION** — native `UserNotifications` needed (Apple-signed) |
+
 ## Notification click-to-open (2026-10-03)
 
 | # | Test | Result |
