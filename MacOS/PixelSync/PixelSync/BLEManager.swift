@@ -115,11 +115,13 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
             }
         }
         
-        // Se il file non esiste ancora, creiamo un default iniziale con app comuni
+        // Se il file non esiste ancora, creiamo un default iniziale con app comuni.
+        // Il valore può essere un nome App ("Instagram") oppure un URL http(s).
         self.appMap = [
             "com.instagram.android": "Instagram",
             "com.discord": "Discord",
-            "org.telegram.messenger": "Telegram"
+            "org.telegram.messenger": "Telegram",
+            "com.twitter.android": "https://x.com/notifications"
         ]
         saveAppMap()
     }
@@ -577,7 +579,8 @@ extension BLEManager: CBPeripheralDelegate {
                                              title: notification.title,
                                              body: notification.body,
                                              package: notification.package,
-                                             appLabel: notification.appLabel)
+                                             appLabel: notification.appLabel,
+                                             url: notification.url)
                     NSLog("MacSync: POST ricevuto id=\(notification.id) pkg=\(notification.package) title=\(notification.title)")
 
                 case .remove:
@@ -603,8 +606,12 @@ extension BLEManager {
             
             NSLog("MacSync: Click rilevato per pacchetto: \(androidPackage)")
             
-            if let macAppName = appMap[androidPackage] {
-                launchMacApp(named: macAppName)
+            // Priorità: deep link esplicito dal payload > mapping utente (URL o
+            // nome App) > selettore applicazioni.
+            if let urlString = userInfo["url"] as? String, !urlString.isEmpty {
+                openURL(urlString)
+            } else if let target = appMap[androidPackage] {
+                openMappedTarget(target)
             } else {
                 NSLog("MacSync: Pacchetto sconosciuto. Mostro il selettore di applicazioni...")
                 promptUserToSelectApp(for: androidPackage)
@@ -623,6 +630,24 @@ extension BLEManager {
         completionHandler()
     }
     
+    /// A mapping value is either an http(s) URL or a macOS app name.
+    private func openMappedTarget(_ value: String) {
+        if value.hasPrefix("http://") || value.hasPrefix("https://") {
+            openURL(value)
+        } else {
+            launchMacApp(named: value)
+        }
+    }
+
+    private func openURL(_ urlString: String) {
+        NSLog("MacSync: Apertura URL -> \(urlString)")
+        guard let url = URL(string: urlString) else {
+            NSLog("MacSync: URL non valido, ignorato.")
+            return
+        }
+        NSWorkspace.shared.open(url)
+    }
+
     private func launchMacApp(named name: String) {
         NSLog("MacSync: Avvio applicazione -> \(name)")
         let task = Process()
@@ -806,7 +831,7 @@ extension BLEManager {
     /// Center via /usr/bin/osascript.
     func deliverNotification(id: String, title: String, body: String,
                              subtitle: String = "", package: String = "",
-                             appLabel: String = "", sound: Bool = true) {
+                             appLabel: String = "", url: String = "", sound: Bool = true) {
         // Header = sender app name; subtitle = original notification title.
         let headerTitle = appLabel.isEmpty ? title : appLabel
         let headerSubtitle = appLabel.isEmpty ? subtitle : title
@@ -819,7 +844,9 @@ extension BLEManager {
             if sound { content.sound = UNNotificationSound.default }
 
             if !package.isEmpty {
-                content.userInfo = ["androidPackage": package, "notifId": id]
+                var info: [String: String] = ["androidPackage": package, "notifId": id]
+                if !url.isEmpty { info["url"] = url }
+                content.userInfo = info
                 let fileManager = FileManager.default
                 if let picturesURL = fileManager.urls(for: .picturesDirectory, in: .userDomainMask).first {
                     let iconURL = picturesURL

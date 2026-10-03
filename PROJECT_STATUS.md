@@ -1,8 +1,25 @@
 # PROJECT_STATUS.md — PixelMacSync macOS 12.7 / Intel port
 
-Last updated: 2026-10-02 (Music control)
+Last updated: 2026-10-03 (Notification click-to-open)
 Branch: `macos12-port` (base `main` @ `e5a5c060…`) — **NOT COMMITTED**
 State: **RUNNING** (autonomous; marker cleared)
+
+## Notification click-to-open — RESULT (2026-10-03)
+
+Clicking a Mac banner resolves the target: explicit `url` from the payload →
+`app_mappings.json` (app name **or** URL) → `NSOpenPanel` app picker. The
+`POST` 7th `url` field is optional/best-effort (Android taps are opaque
+`PendingIntent`s).
+
+| Item | Status |
+|---|---|
+| Android `POST` optional 7th `url` field (best-effort extras scrape) | **PASS** — release APK built |
+| macOS `Protocol.parseNotification` reads optional `url` | **PASS** — parser tests **60/0** |
+| `app_mappings.json` value as URL (`open <url>`) vs app name (`open -a`) | **PASS** — build + unit tests |
+| Click priority url > mapping > picker | **PASS** — code path |
+| Default map seeds `com.twitter.android → https://x.com/notifications` | **PASS** |
+| Real-device click test (WeChat / X / Telegram) | **NOT TESTED** |
+| Exact post/chat deep link | **LIMITATION** — `PendingIntent` not serialisable; only links present in extras |
 
 ## Music control — RESULT (2026-10-02)
 

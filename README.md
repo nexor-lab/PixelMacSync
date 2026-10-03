@@ -134,6 +134,8 @@ Il pacchetto telemetrico è formattato in questo ordine:
 
 Le notifiche vengono inoltrate con prefisso `POST\u001F` o `REMOVE\u001F`.
 Il canale comandi supporta `HOTSPOT_ON`, `HOTSPOT_OFF`, `SYNC_REQ` e `KILL\u001F[ID_Notifica]`.
+Il `POST` può includere un 7º campo opzionale `url` (deep link http(s) estratto dagli extras).
+Al click sul Mac: `url` → `app_mappings.json` (nome App **o** URL) → selettore App.
 
 ---
 
@@ -296,6 +298,8 @@ The telemetry packet is formatted in this order:
 
 Notifications are forwarded with the prefix `POST\u001F` or `REMOVE\u001F`.
 The command channel supports `HOTSPOT_ON`, `HOTSPOT_OFF`, `SYNC_REQ`, and `KILL\u001F[Notification_ID]`.
+A `POST` may carry an optional 7th `url` field (best-effort http(s) deep link).
+On click the Mac resolves: `url` → `app_mappings.json` (app name **or** URL) → app picker.
 
 ---
 
@@ -323,6 +327,7 @@ The command channel supports `HOTSPOT_ON`, `HOTSPOT_OFF`, `SYNC_REQ`, and `KILL\
 
 * **Hotspot — root required:** Remote control of the hotspot uses root; without root only state reading works (no MacroDroid).
 * **Notification Dismiss — Click Only:** The dismiss synchronization from Mac to Android only occurs when the macOS notification is clicked, not when swiped away.
+* **Deep link — best effort:** The exact tap target is an opaque `PendingIntent` that cannot be serialised. The Mac can only open a link the app exposed in the notification extras (or a per-package mapping), not necessarily the specific post/chat. The optional `url` is dropped when a notification already fills the 180-byte BLE packet.
 * **Group Notifications:** Some apps send grouped summary notifications; the filter reduces noise, but the final behavior depends on the app itself.
 
 ---

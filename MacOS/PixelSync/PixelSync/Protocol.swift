@@ -52,18 +52,21 @@ enum PixelPacket {
         let title: String
         let body: String
         let appLabel: String   // sender app name (empty on older payloads)
+        let url: String        // best-effort http(s) deep link (empty on older payloads)
     }
 
     static func parseNotification(_ fields: [String]) -> Notification? {
         guard let action = fields.first else { return nil }
         if action == "POST", fields.count >= 5 {
             let appLabel = fields.count >= 6 ? fields[5] : ""
+            let url = fields.count >= 7 ? fields[6] : ""
             return Notification(kind: .post, id: fields[1], package: fields[2],
-                                title: fields[3], body: fields[4], appLabel: appLabel)
+                                title: fields[3], body: fields[4], appLabel: appLabel,
+                                url: url)
         }
         if action == "REMOVE", fields.count >= 2 {
             return Notification(kind: .remove, id: fields[1], package: "",
-                                title: "", body: "", appLabel: "")
+                                title: "", body: "", appLabel: "", url: "")
         }
         return nil
     }

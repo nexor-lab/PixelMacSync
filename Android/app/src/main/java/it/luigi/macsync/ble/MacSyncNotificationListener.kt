@@ -6,6 +6,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.os.Bundle
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
@@ -125,9 +126,7 @@ class MacSyncNotificationListener : NotificationListenerService() {
             macNotificationIds[sbn.key] = mutableListOf(uniqueMacId)
 
             // Inviamo il pacchetto esattamente come se fosse una notifica normale
-            val separator = "\u001F"
-            val appLabel = appLabel(packageName)
-            val payload = "POST$separator$uniqueMacId$separator$packageName$separator$title$separator$text$separator$appLabel"
+            val payload = buildPostPayload(sbn, uniqueMacId, title, text)
             sendToGattServer(payload)
             AppIconSender.sendIfNeeded(applicationContext, packageName) { sendToGattServer(it) }
         }
@@ -155,12 +154,58 @@ class MacSyncNotificationListener : NotificationListenerService() {
         val uniqueMacId = stableId(sbn)
         macNotificationIds[sbn.key] = mutableListOf(uniqueMacId)
 
-        val separator = "\u001F"
-        val appLabel = appLabel(packageName)
-        val payload = "POST$separator$uniqueMacId$separator$packageName$separator$title$separator$text$separator$appLabel"
+        val payload = buildPostPayload(sbn, uniqueMacId, title, text)
         sendToGattServer(payload)
         AppIconSender.sendIfNeeded(applicationContext, packageName) { sendToGattServer(it) }
     }
+
+    /**
+     * Costruisce il pacchetto POST. Il 7° campo (`url`) è opzionale e contiene
+     * un deep link http(s) estratto "best effort" dagli extras: il tap vero e
+     * proprio è un PendingIntent non serializzabile, quindi molte app non lo
+     * espongono. In quel caso il campo viene omesso (retrocompatibile).
+     */
+    private fun buildPostPayload(sbn: StatusBarNotification, macId: String, title: String, text: String): String {
+        val separator = "\u001F"
+        val appLabel = appLabel(sbn.packageName)
+        val base = "POST$separator$macId$separator${sbn.packageName}$separator$title$separator$text$separator$appLabel"
+        val url = extractUrl(sbn.notification.extras)
+        if (url.isEmpty()) return base
+        // Il canale notifiche tronca a 180 byte: meglio perdere l'URL opzionale
+        // che rischiare di tagliare a metà un carattere UTF-8 (o l'URL stesso).
+        val withUrl = "$base$separator$url"
+        return if (withUrl.toByteArray(Charsets.UTF_8).size <= 180) withUrl else base
+    }
+
+    /** Cerca un link http(s) esplicito negli extras della notifica. */
+    private fun extractUrl(extras: Bundle?): String {
+        if (extras == null) return ""
+        val preferred = listOf(
+            "android.url", "android.link", "url", "link",
+            Notification.EXTRA_TEXT,
+            Notification.EXTRA_BIG_TEXT,
+            Notification.EXTRA_SUB_TEXT,
+            Notification.EXTRA_SUMMARY_TEXT,
+            Notification.EXTRA_INFO_TEXT
+        )
+        val regex = Regex("https?://[^\\s\\u001F]+")
+        for (key in preferred) {
+            val candidate = extras.getCharSequence(key)?.toString() ?: continue
+            regex.find(candidate)?.value?.let { return sanitizeUrl(it) }
+        }
+        for (key in extras.keySet()) {
+            if (preferred.contains(key)) continue
+            val candidate = extras.getCharSequence(key)?.toString() ?: continue
+            regex.find(candidate)?.value?.let { return sanitizeUrl(it) }
+        }
+        return ""
+    }
+
+    private fun sanitizeUrl(url: String): String =
+        url.replace("\u001F", "")
+            .trim()
+            .trimEnd('.', ',', ';', ':', ')', ']', '}', '"', '\'')
+            .take(1000)
 
     /** Human-readable app name shown as the macOS notification header. */
     private fun appLabel(packageName: String): String =

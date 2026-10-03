@@ -1,8 +1,9 @@
 .DS_Store
 *.jks
 
-# Private handover doc: contains local secrets/paths (cert + keystore passwords)
+# Private handover docs: contain local secrets/paths (cert + keystore passwords)
 MIGRATION.md
+HANDOVER.md
 
 # Local automation runtime state (noise / machine-specific)
 AUTOMATION_STATE.md

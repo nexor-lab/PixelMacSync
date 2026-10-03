@@ -70,7 +70,7 @@ menu-bar popover.
 Two actions, each a single `US`-separated packet:
 
 ```
-POST   US <id> US <packageName> US <title> US <body>
+POST   US <id> US <packageName> US <title> US <body> US <appLabel> [US <url>]
 REMOVE US <id>
 ```
 
@@ -82,6 +82,11 @@ REMOVE US <id>
 - The Mac also applies its own dedup naturally (same identifier = same banner).
 - Android filters out group summaries and system packages (`android`,
   `com.android.systemui`) and only forwards packages in the user's enabled set.
+- `appLabel` (6th field) is the sender app's display name (see *Sender app name*).
+- `url` (7th field, optional) is a best-effort `http(s)` deep link scraped from
+  the notification extras. The real tap target is an opaque `PendingIntent` that
+  cannot be serialised, so most apps leave this empty. When present, the Mac
+  opens it on click (highest priority).
 
 ## Command channel (Write from Mac)
 
@@ -147,6 +152,19 @@ backward compatible (older payloads simply omit the field).
 - `KILL US <id>` → Android cancels the originating notification (reverse dismiss
   when the user clicks the Mac banner). Mac also handles this by looking the
   Android package up in `Documents/MacSync/app_mappings.json`.
+
+### Click-to-open (Mac side)
+
+When the user clicks a banner, the Mac resolves the target in this order:
+
+1. the optional 7th `url` field of the `POST` (e.g. a scraped tweet permalink);
+2. the user mapping in `Documents/MacSync/app_mappings.json`, whose value may be
+   a macOS app name (`"Instagram"`, opened via `open -a`) **or** an `http(s)`
+   URL (`"com.twitter.android": "https://x.com/notifications"`, opened in the
+   default browser);
+3. otherwise it shows an `NSOpenPanel` to pick a `.app`, and saves the choice.
+
+The Mac also sends `KILL US <id>` so the phone-side notification is cleared.
 
 ## Call-event extension (NEW in this port)
 

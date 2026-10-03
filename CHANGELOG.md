@@ -1,5 +1,42 @@
 # CHANGELOG.md
 
+## [notification-click-open] — 2026-10-03
+
+New feature: **clicking a Mac banner opens the matching local app or web page**.
+BLE-only, backward compatible (the new field is optional).
+
+### Android
+
+- **`MacSyncNotificationListener.kt`** — `POST` may now carry an optional 7th
+  field `url`, a best-effort `http(s)` deep link scraped from the notification
+  extras (known keys first: `android.url`/`android.link`/`url`/`link` +
+  text/sub-text/big-text/summary/info; then a scan of all `CharSequence` extras).
+  The real tap target is an opaque `PendingIntent` and cannot be serialised, so
+  the field is omitted when nothing is found. Shared `buildPostPayload` helper
+  used by both live posts and reconnect snapshots.
+
+### macOS
+
+- **`Protocol.swift`** — `Notification` gains `url`; `parseNotification` reads
+  the optional 7th field (empty on older payloads). Parser tests cover it.
+- **`BLEManager.swift`** — `deliverNotification` forwards `url` in `userInfo`.
+  On click the target resolves in priority order: explicit `url` → user mapping
+  → app picker. `app_mappings.json` values may now be an `http(s)` URL (opened
+  in the browser) in addition to a macOS app name (`open -a`). Default map seeds
+  `com.twitter.android → https://x.com/notifications`.
+
+### Docs
+
+- `BLE_PROTOCOL.md` / `README.md` document the optional `url` field and the
+  click-to-open resolution order + the best-effort deep-link limitation.
+
+### Verification
+
+- `MacOS/run_tests.sh` — **60 passed, 0 failed**.
+- Android release build — **PASS**.
+- macOS x86_64 build (ad-hoc) — **PASS**.
+- Real-device (WeChat / X / Telegram) — **NOT TESTED**.
+
 ## [music-control] — 2026-10-02
 
 New feature: **music control** (phone now-playing -> Mac display + remote

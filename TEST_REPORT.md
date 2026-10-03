@@ -9,6 +9,22 @@ Device: **POCO F5 Pro (23013PC75G / `mondrian`)**, Android 15 / API 35, HyperOS 
 
 ---
 
+## Notification click-to-open (2026-10-03)
+
+| # | Test | Result |
+|---|---|---|
+| N1 | Android release build (POST optional 7th `url`) | **PASS** — `PixelMacSync-Android.apk` signed |
+| N2 | macOS x86_64 build (ad-hoc) | **PASS** |
+| N3 | BLE parser unit tests | **PASS** — **60 passed, 0 failed** (incl. URL 7th field) |
+| N4 | `app_mappings.json` URL value opens via `NSWorkspace.open` | **PASS** (code) |
+| N5 | App-name mapping opens via `open -a` | **PASS** (existing path) |
+| N6 | Click priority: url > mapping > picker | **PASS** (code) |
+| N7 | **Real-device** click: WeChat → Mac WeChat | **NOT TESTED** |
+| N8 | **Real-device** click: X → `x.com/notifications` | **NOT TESTED** |
+| N9 | **Real-device** click: exact post/chat deep link | **LIMITATION** — `PendingIntent` not serialisable; only URLs present in extras |
+
+---
+
 ## A. Build
 
 | # | Test | Result |

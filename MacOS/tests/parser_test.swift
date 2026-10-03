@@ -54,6 +54,12 @@ enum ParserTests {
             check(n?.package == "com.tencent.mm", "package")
             check(n?.title == "张三", "UTF-8 title")
             check(n?.body == "晚上一起吃饭吗？", "UTF-8 body")
+            check(n?.url == "", "missing url defaults empty")
+
+            let withUrl = PixelPacket.parseNotification(PixelPacket.fields(from: data("POST\(US)n9z8y7\(US)com.twitter.android\(US)tweet\(US)body\(US)X\(US)https://x.com/notifications"))!)
+            check(withUrl?.url == "https://x.com/notifications", "url 7th field")
+            check(withUrl?.appLabel == "X", "appLabel before url")
+
             check(PixelPacket.parseNotification(["POST", "id"]) == nil, "rejects short POST")
         }
 
