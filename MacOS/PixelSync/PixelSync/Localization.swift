@@ -67,10 +67,16 @@ enum L10n {
         return "PixelSync"
     }
 
-    /// Watermark shown in debug/beta popovers; empty in release.
+    /// App version (CFBundleShortVersionString), e.g. "2.3".
+    static var appVersion: String {
+        (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? ""
+    }
+
+    /// Watermark shown in debug/beta popovers; empty in release. Matches the
+    /// Android watermark format: LABEL / <version-suffix> / <build time>.
     static var buildWatermark: String {
-        if isDebugBuild { return "DEBUG\n\(buildTimestamp)" }
-        if isBetaBuild { return "BETA" }
+        if isDebugBuild { return "DEBUG\n\(appVersion)-debug\n\(buildTimestamp)" }
+        if isBetaBuild { return "BETA\n\(appVersion)-beta\n\(buildTimestamp)" }
         return ""
     }
     static var urlScheme: String { "pixelsync" }

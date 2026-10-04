@@ -333,7 +333,7 @@ fun MainScreen(
         if (BuildConfig.IS_BETA) {
             BuildWatermark("BETA", "${BuildConfig.VERSION_NAME}\n${BuildConfig.BUILD_TIMESTAMP}")
         } else if (BuildConfig.DEBUG) {
-            BuildWatermark("DEBUG", BuildConfig.BUILD_TIMESTAMP)
+            BuildWatermark("DEBUG", "${BuildConfig.VERSION_NAME}\n${BuildConfig.BUILD_TIMESTAMP}")
         }
     }
 }
