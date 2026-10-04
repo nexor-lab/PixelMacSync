@@ -34,7 +34,7 @@ About section and a small easter egg. UI, protocol and macOS side untouched.
   content and the card frame animate together (no rubber-band / residual height).
 - Light/dark supported (Material3 theme colors only).
 
-### Verification (real POCO F5 Pro)
+### Verification (real test Android phone)
 
 - Root: status **Available**.
 - Shizuku: permission granted → status **Granted**.
@@ -85,7 +85,7 @@ Enable the app in PixelSync's notification list to have it forwarded.
   inline-reply testing).
 - `POST` log line now includes `canReply=`.
 
-### Verification (real POCO F5 Pro + real Mac, BLE)
+### Verification (real test Android phone + real Mac, BLE)
 
 - Chat notification (`replyable=1`): Mac inline reply → Android `RemoteInput` →
   test app received it; `REPLY_RESULT ok`.
@@ -245,7 +245,7 @@ control), BLE-only, event-driven, no polling.
 - `/Applications/PixelSync.app` re-signed with the Apple Development cert
   (local Apple Development certificate, secure timestamp) **PASS**. The public
   release package is ad-hoc signed instead (no personal certificate).
-- **Real-device music round-trip PASS** (POCO F5 Pro / NetEase Cloud Music):
+- **Real-device music round-trip PASS** (test Android phone / NetEase Cloud Music):
   metadata (`playing - 一封家书 / 石进`), covers cached at
   `~/Pictures/MacSyncCovers/*.jpg` (~9–11 KB), and Mac-driven
   play/pause/next/prev/seek all observed on the phone via
@@ -308,7 +308,7 @@ Branch: **`macos12-port`**. All changes are on top of the untouched upstream com
 
 ## [real-device-validation] — 2026-09-30
 
-Real-device validation performed with a POCO F5 Pro (Android 15 / API 35 /
+Real-device validation performed with a test Android phone (Android 15 / API 35 /
 HyperOS 3.0). Result: notification sync, screen-off delivery, Bluetooth OFF/ON
 recovery and app-restart recovery all **PASS**; incoming-call and Mac sleep/wake
 remain **NOT TESTED**. Full evidence in TEST_REPORT.md.

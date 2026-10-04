@@ -27,10 +27,18 @@ import android.telephony.TelephonyDisplayInfo
 import android.telephony.TelephonyManager
 import android.util.Base64
 import android.util.Log
+import it.luigi.macsync.BuildConfig
+import it.luigi.macsync.CallController
+import it.luigi.macsync.ContactsRepository
+import it.luigi.macsync.Diagnostics
+import it.luigi.macsync.Dialer
 import it.luigi.macsync.HotspotController
+import it.luigi.macsync.MacRegistry
 import it.luigi.macsync.MediaSessionMonitor
+import it.luigi.macsync.SavedMac
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -41,6 +49,10 @@ import java.util.UUID
 class GattServerManager private constructor(private val context: Context) {
 
     companion object {
+        // How long a connected link may stay without completing the handshake
+        // before it is dropped (a real Mac sends HELLO right after discovery).
+        private const val HANDSHAKE_TIMEOUT_MS = 10_000L
+
         @SuppressLint("StaticFieldLeak")
         @Volatile
         private var INSTANCE: GattServerManager? = null
@@ -70,6 +82,35 @@ class GattServerManager private constructor(private val context: Context) {
     private val _connected = MutableStateFlow(false)
     val connected: StateFlow<Boolean> = _connected
 
+    // --- STATO SESSIONE (BUG-001) ---
+    // `_connected` is TRUE only after a full application session, not merely a
+    // GATT link:
+    //   BLE link -> notifications subscribed -> HELLO handshake -> session.
+    // Until then the UI shows "verifying", never "connected".
+    @Volatile private var handshakeMacId: String? = null
+    @Volatile private var notificationsSubscribed = false
+    @Volatile private var macCommandSeen = false
+    @Volatile private var sessionReadySent = false
+    @Volatile private var currentMacId: String? = null
+    @Volatile private var contactsSentThisSession = false
+    private var handshakeTimeoutJob: Job? = null
+
+    // --- MULTI-MAC (Phase 1) ---
+    private val _savedMacs = MutableStateFlow<List<SavedMac>>(emptyList())
+    val savedMacs: StateFlow<List<SavedMac>> = _savedMacs
+    private val _activeMacId = MutableStateFlow<String?>(null)
+    val activeMacId: StateFlow<String?> = _activeMacId
+    private val _userDisconnectedMacId = MutableStateFlow<String?>(null)
+    val userDisconnectedMacId: StateFlow<String?> = _userDisconnectedMacId
+    private val _connectedMacId = MutableStateFlow<String?>(null)
+    val connectedMacId: StateFlow<String?> = _connectedMacId
+
+    // Mac model / CPU (from the HELLO handshake) for the About device info.
+    private val _macModel = MutableStateFlow("")
+    val macModel: StateFlow<String> = _macModel
+    private val _macCpu = MutableStateFlow("")
+    val macCpu: StateFlow<String> = _macCpu
+
     // --- VARIABILI DI STATO ---
     private var currentBatteryLevel = 0
     private var isCharging = false
@@ -83,6 +124,12 @@ class GattServerManager private constructor(private val context: Context) {
     private var wasRinging = false
     private var lastKnownNumber: String = ""
     private val callScope = CoroutineScope(Dispatchers.IO)
+
+    // --- SIMULAZIONE CHIAMATA (solo build DEBUG, per test senza 2° telefono) ---
+    @Volatile private var simulatedCall = false
+    @Volatile private var simulatedMuted = false
+    private var simulatedNumber: String = ""
+    private var simulatedName: String = ""
 
     private val telephonyManager = context.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
     private val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
@@ -259,14 +306,26 @@ class GattServerManager private constructor(private val context: Context) {
         }
     }
 
+    /** 8th telemetry field: the phone's Bluetooth name (for HFP auto-selection). */
+    private fun bluetoothName(): String = try {
+        bluetoothManager.adapter?.name ?: android.os.Build.MODEL
+    } catch (_: Exception) {
+        android.os.Build.MODEL
+    }
+
+    private fun telemetryPayload(): String {
+        val networkStringToUse = if (isWifiConnected) wifiSSID else currentCellularNetwork
+        return "$currentBatteryLevel\u001F$isCharging\u001F$networkStringToUse\u001F$currentSignal" +
+            "\u001F$isWifiConnected\u001F$isHotspotActive\u001F${android.os.Build.MODEL}" +
+            "\u001F${bluetoothName()}"
+    }
+
     private fun notifyMacTelemetry() {
         val mac = connectedMac
         val characteristic = telemetryCharacteristic
 
         if (mac != null && characteristic != null && gattServer != null) {
-            val networkStringToUse = if (isWifiConnected) wifiSSID else currentCellularNetwork
-            val payload = "$currentBatteryLevel\u001F$isCharging\u001F$networkStringToUse\u001F$currentSignal\u001F$isWifiConnected\u001F$isHotspotActive\u001F${android.os.Build.MODEL}"
-            val data = payload.toByteArray(Charsets.UTF_8)
+            val data = telemetryPayload().toByteArray(Charsets.UTF_8)
             gattServer?.notifyCharacteristicChanged(mac, characteristic, false, data)
         }
     }
@@ -288,30 +347,98 @@ class GattServerManager private constructor(private val context: Context) {
      * Formato: CALL\u001F<event>\u001F<number>\u001F<name>
      * event ∈ { RINGING, OFFHOOK, IDLE, MISSED }
      */
-    // --- CONTROLLO HOTSPOT (root) ---
-    // Invia lo stato REALE (dal broadcast WIFI_AP_STATE_CHANGED), mai ottimistico.
+    // --- CONTATTI / RUBRICA (contatti cifrati sul Mac) ---
+
+    /** Pushes the selected contacts automatically on connect when enabled. */
+    private fun maybePushContacts() {
+        if (contactsSentThisSession) return
+        if (!ContactsRepository.autoSync(context)) return
+        if (ContactsRepository.selectedIds(context).isEmpty()) return
+        contactsSentThisSession = true
+        sendSelectedContacts()
+    }
+
+    /** Sends the user-selected contacts to the Mac (CONTACT_BEGIN/DATA/END). */
+    private fun sendSelectedContacts() {
+        callScope.launch {
+            val contacts = ContactsRepository.selectedContacts(context)
+            Diagnostics.log("contacts send n=${contacts.size}")
+            sendNotificationToMac("CONTACT_BEGIN\u001F${contacts.size}")
+            for (c in contacts) {
+                // Truncate the name to keep the packet within the BLE budget.
+                val name = c.name.replace("\u001F", " ").take(48)
+                sendNotificationToMac("CONTACT\u001F${c.id}\u001F$name\u001F${c.number}")
+            }
+            sendNotificationToMac("CONTACT_END")
+        }
+    }
+
+    /** Remote dial from the Mac. The number is validated; it is never logged. */
+    private fun handleDial(parts: List<String>) {
+        val number = parts.getOrNull(1).orEmpty()
+        // The system never reports outgoing numbers to us, so remember the number
+        // we dialed: the ensuing OFFHOOK/IDLE call event then carries it and the
+        // Mac does not show "Unknown number".
+        Dialer.sanitize(number)?.let { lastKnownNumber = it }
+        callScope.launch {
+            val status = Dialer.dial(context, number)
+            Diagnostics.log("dial -> $status")
+            sendNotificationToMac("DIAL_RESULT\u001F$status")
+        }
+    }
+
+    // --- CONTROLLO HOTSPOT (root/Shizuku) ---
+    // Invia lo stato REALE, mai ottimistico.
     private fun sendHotspotState() {
         val state = if (isHotspotActive) "ON" else "OFF"
         sendNotificationToMac("HOTSPOT_STATE\u001F$state")
         Log.d("MacSync", "Stato hotspot inviato: $state")
     }
 
+    /** Idempotent command result: OK / ALREADY_ON / ALREADY_OFF (never an error). */
+    private fun sendHotspotResult(result: String) {
+        sendNotificationToMac("HOTSPOT_RESULT\u001F$result")
+        Log.d("MacSync", "Risultato hotspot: $result")
+    }
+
+    /**
+     * Refreshes the real hotspot state from the system and reports it. Used for
+     * HOTSPOT_STATUS (after reconnect) so a stale cached flag can't mislead.
+     */
+    private fun refreshHotspotState() {
+        callScope.launch {
+            isHotspotActive = HotspotController.isEnabled(context)
+            sendHotspotState()
+        }
+    }
+
     private fun handleHotspotCommand(enable: Boolean) {
         callScope.launch {
             Log.d("MacSync", "Comando hotspot: ${if (enable) "ENABLE" else "DISABLE"}")
-            val ok = if (enable) HotspotController.enable(context) else HotspotController.disable(context)
-            if (!ok) {
-                sendNotificationToMac("HOTSPOT_ERROR\u001F${if (enable) "enable_failed" else "disable_failed"}")
-                return@launch
+            val outcome = if (enable) HotspotController.enable(context) else HotspotController.disable(context)
+            Diagnostics.log("hotspot ${if (enable) "ON" else "OFF"} -> $outcome")
+            when (outcome) {
+                HotspotController.Outcome.OK -> {
+                    isHotspotActive = enable
+                    notifyMacTelemetry()
+                    sendHotspotState()
+                    sendHotspotResult("OK")
+                }
+                HotspotController.Outcome.ALREADY_ON -> {
+                    isHotspotActive = true
+                    sendHotspotState()
+                    sendHotspotResult("ALREADY_ON")
+                }
+                HotspotController.Outcome.ALREADY_OFF -> {
+                    isHotspotActive = false
+                    sendHotspotState()
+                    sendHotspotResult("ALREADY_OFF")
+                }
+                HotspotController.Outcome.FAILED -> {
+                    sendNotificationToMac(
+                        "HOTSPOT_ERROR\u001F${if (enable) "enable_failed" else "disable_failed"}")
+                }
             }
-            // Attende che lo stato reale del sistema si allinei.
-            var matched = false
-            for (i in 0 until 14) {
-                if (isHotspotActive == enable) { matched = true; break }
-                delay(500)
-            }
-            if (matched) sendHotspotState()
-            else sendNotificationToMac("HOTSPOT_ERROR\u001Fstate_mismatch")
         }
     }
 
@@ -319,6 +446,68 @@ class GattServerManager private constructor(private val context: Context) {
         val payload = "CALL\u001F$event\u001F$number\u001F$name"
         Log.d("MacSync", "Invio evento chiamata: $event ($number / $name)")
         sendNotificationToMac(payload)
+    }
+
+    /**
+     * Call control command from the Mac. In a DEBUG build with a simulated call
+     * active (see [simulateCallEvent]) it advances the simulated call instead of
+     * touching real telephony; otherwise it runs the privileged `input keyevent`.
+     */
+    private fun handleCallCommand(action: String) {
+        callScope.launch {
+            Log.d("MacSync", "Comando chiamata: $action")
+            if (BuildConfig.DEBUG && simulatedCall) {
+                when (action) {
+                    "answer" -> sendCallEvent("OFFHOOK", simulatedNumber, simulatedName)
+                    "end" -> {
+                        sendCallEvent("IDLE", simulatedNumber, simulatedName)
+                        simulatedCall = false
+                    }
+                    "mute" -> {
+                        simulatedMuted = !simulatedMuted
+                        sendCallMuteState()
+                    }
+                }
+                sendCallResult(action, "ok")
+                return@launch
+            }
+            val ok = when (action) {
+                "answer" -> CallController.answer(context)
+                "end" -> CallController.end(context)
+                "mute" -> CallController.toggleMute(context)
+                else -> false
+            }
+            Diagnostics.log("call $action -> ${if (ok) "ok" else "failed"}")
+            sendCallResult(action, if (ok) "ok" else "failed")
+        }
+    }
+
+    private fun sendCallResult(action: String, status: String) {
+        sendNotificationToMac("CALL_RESULT\u001F$action\u001F$status")
+    }
+
+    private fun sendCallMuteState() {
+        sendNotificationToMac("CALL_MUTE_STATE\u001F${if (simulatedMuted) "ON" else "OFF"}")
+    }
+
+    /**
+     * DEBUG-ONLY entry point used by `CallSimReceiver` to inject a fake call so the
+     * whole Mac↔phone call flow can be tested without a second phone. No-op in
+     * release builds.
+     */
+    fun simulateCallEvent(event: String, number: String, name: String) {
+        if (!BuildConfig.DEBUG) return
+        val e = event.uppercase()
+        when (e) {
+            "RINGING" -> {
+                simulatedCall = true
+                simulatedMuted = false
+                simulatedNumber = number
+                simulatedName = name
+            }
+            "IDLE", "MISSED" -> simulatedCall = false
+        }
+        sendCallEvent(e, number, name)
     }
 
     private fun resolveContactName(number: String): String {
@@ -341,35 +530,199 @@ class GattServerManager private constructor(private val context: Context) {
         }
     }
 
+    // --- SESSIONE / HANDSHAKE (BUG-001) ---
+
+    /**
+     * Recomputes the application session from the three required conditions:
+     *   1. a connected BLE/GATT link,
+     *   2. the Mac subscribed to the notifications channel,
+     *   3. the Mac completed the HELLO handshake (identity confirmed).
+     * `_connected` is published only when all three hold; otherwise the link may
+     * still be up but the UI shows "verifying" rather than "connected".
+     */
+    private fun updateSession() {
+        val link = connectedMac != null
+        // A real session needs a Mac activity on top of the link + notification
+        // subscription: either an explicit HELLO (new macOS builds) OR a recognized
+        // application command (legacy v2.2 builds send SYNC_REQ/MUSIC_*/HOTSPOT_*
+        // but no HELLO). A bare/stray BLE link alone never qualifies.
+        val peer = handshakeMacId ?: if (macCommandSeen) "legacy" else null
+        val ready = link && notificationsSubscribed && peer != null
+        // Only an *identified* Mac is tracked in the list; a legacy client (no
+        // HELLO) can't be told apart and would duplicate the same computer, so it
+        // is never recorded as a saved Mac.
+        _connectedMacId.value = if (ready) handshakeMacId else null
+        Diagnostics.log("session link=$link notif=$notificationsSubscribed peer=$peer ready=$ready")
+        if (ready) {
+            _connected.value = true
+            _connectionState.value = context.getString(it.luigi.macsync.R.string.status_connected)
+            if (!sessionReadySent) {
+                sessionReadySent = true
+                sendNotificationToMac("SESSION_READY\u001F${android.os.Build.MODEL}\u001F$peer")
+                Log.d("MacSync", "Sessione stabilita con $peer")
+            }
+            notifyMacTelemetry()
+            maybePushContacts()
+        } else if (link) {
+            _connected.value = false
+            _connectionState.value = context.getString(it.luigi.macsync.R.string.status_handshaking)
+        } else {
+            _connected.value = false
+            _connectionState.value = context.getString(it.luigi.macsync.R.string.status_disconnected)
+        }
+    }
+
+    /** Handles the Mac's `HELLO US <macId> [US <name>]` identity announcement. */
+    private fun handleHello(device: BluetoothDevice, parts: List<String>) {
+        if (connectedMac != device) return
+        val macId = parts.getOrNull(1)?.takeIf { it.isNotBlank() } ?: MacRegistry.LEGACY_ID
+        val macName = parts.getOrNull(2)?.takeIf { it.isNotBlank() } ?: macId
+        MacRegistry.record(context, macId, macName)
+        // Mac model / CPU for the (Beta-only) device-info section.
+        val macModel = parts.getOrNull(3)?.takeIf { it.isNotBlank() }.orEmpty()
+        val macCpu = parts.getOrNull(4)?.takeIf { it.isNotBlank() }.orEmpty()
+        if (macModel.isNotEmpty() || macCpu.isNotEmpty()) {
+            _macModel.value = macModel
+            _macCpu.value = macCpu
+            context.getSharedPreferences("MacSync_Prefs", Context.MODE_PRIVATE).edit()
+                .putString("mac_model", macModel)
+                .putString("mac_cpu", macCpu)
+                .apply()
+        }
+
+        // Multi-Mac: an identified Mac takes over as active if none (or only the
+        // legacy client) is active; otherwise only the active Mac is accepted.
+        val active = MacRegistry.activeId(context)
+        if (active == null || active == MacRegistry.LEGACY_ID) {
+            MacRegistry.setActive(context, macId)
+            MacRegistry.setUserDisconnected(context, null)
+        }
+        refreshRegistryFlows()
+
+        val isUserDisconnected = MacRegistry.userDisconnectedId(context) == macId
+        if (MacRegistry.activeId(context) != macId || isUserDisconnected) {
+            val reason = if (isUserDisconnected) "user_disconnected" else "not_active"
+            Diagnostics.log("HELLO rejected ($reason) id=$macId")
+            Log.d("MacSync", "HELLO rifiutato ($reason) mac=$macId")
+            sendNotificationToMac("SESSION_REJECTED\u001F$reason")
+            callScope.launch {
+                delay(400)
+                if (connectedMac == device) gattServer?.cancelConnection(device)
+            }
+            return
+        }
+
+        currentMacId = macId
+        handshakeMacId = macId
+        handshakeTimeoutJob?.cancel()
+        handshakeTimeoutJob = null
+        Log.d("MacSync", "HELLO ricevuto (mac=$macId / $macName)")
+        Diagnostics.log("HELLO peer=$macId name=$macName")
+        updateSession()
+    }
+
+    // --- MULTI-MAC public API (used by the UI) ---
+
+    private fun refreshRegistryFlows() {
+        _savedMacs.value = MacRegistry.saved(context)
+        _activeMacId.value = MacRegistry.activeId(context)
+        _userDisconnectedMacId.value = MacRegistry.userDisconnectedId(context)
+    }
+
+    /** Makes [macId] the active Mac (clears any user-disconnect) and drops another link. */
+    fun setActiveMac(macId: String) {
+        MacRegistry.setActive(context, macId)
+        MacRegistry.setUserDisconnected(context, null)
+        refreshRegistryFlows()
+        if (currentMacId != null && currentMacId != macId) {
+            connectedMac?.let { gattServer?.cancelConnection(it) }
+        }
+    }
+
+    /** User-initiated disconnect of the active Mac; it will not auto-reconnect. */
+    fun disconnectActiveMac() {
+        val id = _connectedMacId.value ?: MacRegistry.activeId(context) ?: return
+        MacRegistry.setUserDisconnected(context, id)
+        refreshRegistryFlows()
+        connectedMac?.let { gattServer?.cancelConnection(it) }
+    }
+
+    /** Forgets a saved Mac (and disconnects it if linked). */
+    fun forgetMac(macId: String) {
+        MacRegistry.remove(context, macId)
+        refreshRegistryFlows()
+        if (currentMacId == macId) {
+            connectedMac?.let { gattServer?.cancelConnection(it) }
+        }
+    }
+
+    /**
+     * A link that never completes the handshake (e.g. a random BLE client) must
+     * never be presented as "connected". After the timeout we cancel it and let
+     * the regular reconnection path retry.
+     */
+    private fun startHandshakeTimeout(device: BluetoothDevice) {
+        handshakeTimeoutJob?.cancel()
+        handshakeTimeoutJob = callScope.launch {
+            delay(HANDSHAKE_TIMEOUT_MS)
+            if (connectedMac == device && !_connected.value) {
+                Log.w("MacSync", "Handshake timeout: nessuna sessione, annullo il link.")
+                Diagnostics.log("handshake timeout -> cancel link")
+                gattServer?.cancelConnection(device)
+            }
+        }
+    }
+
     private val gattServerCallback = object : BluetoothGattServerCallback() {
         override fun onConnectionStateChange(device: BluetoothDevice, status: Int, newState: Int) {
             super.onConnectionStateChange(device, status, newState)
             if (newState == BluetoothProfile.STATE_CONNECTED) {
+                // The BLE/GATT link is up, but no application session exists yet.
+                // Reset any previous session state and wait for the handshake.
                 connectedMac = device
-                _connected.value = true
-                _connectionState.value = context.getString(it.luigi.macsync.R.string.status_connected)
-                notifyMacTelemetry()
+                currentMacId = null
+                handshakeMacId = null
+                notificationsSubscribed = false
+                macCommandSeen = false
+                sessionReadySent = false
+                contactsSentThisSession = false
+                updateSession()
+                startHandshakeTimeout(device)
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+                handshakeTimeoutJob?.cancel()
+                handshakeTimeoutJob = null
                 connectedMac = null
-                _connected.value = false
-                _connectionState.value = context.getString(it.luigi.macsync.R.string.status_disconnected)
+                currentMacId = null
+                handshakeMacId = null
+                notificationsSubscribed = false
+                macCommandSeen = false
+                sessionReadySent = false
+                updateSession()
             }
         }
 
         override fun onCharacteristicReadRequest(device: BluetoothDevice, requestId: Int, offset: Int, characteristic: BluetoothGattCharacteristic) {
             super.onCharacteristicReadRequest(device, requestId, offset, characteristic)
             if (characteristic.uuid == TELEMETRY_UUID) {
-                val networkStringToUse = if (isWifiConnected) wifiSSID else currentCellularNetwork
-                val payload = "$currentBatteryLevel\u001F$isCharging\u001F$networkStringToUse\u001F$currentSignal\u001F$isWifiConnected\u001F$isHotspotActive\u001F${android.os.Build.MODEL}"
-                val data = payload.toByteArray(Charsets.UTF_8)
+                val data = telemetryPayload().toByteArray(Charsets.UTF_8)
                 gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, data)
             }
         }
 
         override fun onDescriptorWriteRequest(device: BluetoothDevice, requestId: Int, descriptor: BluetoothGattDescriptor, preparedWrite: Boolean, responseNeeded: Boolean, offset: Int, value: ByteArray) {
             super.onDescriptorWriteRequest(device, requestId, descriptor, preparedWrite, responseNeeded, offset, value)
-            if (descriptor.uuid == CCC_DESCRIPTOR_UUID && responseNeeded) {
-                gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
+            if (descriptor.uuid == CCC_DESCRIPTOR_UUID) {
+                // Track whether the Mac subscribed to the notifications channel;
+                // a session is only valid once it can actually receive replies.
+                if (descriptor.characteristic?.uuid == NOTIFICATIONS_UUID) {
+                    notificationsSubscribed =
+                        value.contentEquals(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE) ||
+                        value.contentEquals(BluetoothGattDescriptor.ENABLE_INDICATION_VALUE)
+                    updateSession()
+                }
+                if (responseNeeded) {
+                    gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
+                }
             }
         }
 
@@ -389,14 +742,42 @@ class GattServerManager private constructor(private val context: Context) {
                 val fullCommand = String(value, Charsets.UTF_8)
                 Log.d("MacSync", "Ricevuto pacchetto comandi dal Mac: $fullCommand")
 
+                // A write on the command channel proves a real Mac peer. HELLO
+                // carries its own identity and is dispatched below; any other
+                // command marks a legacy peer (no HELLO) for the session gate.
                 val parts = fullCommand.split("\u001F")
                 val commandType = parts[0]
+                // Log only the command type (never payloads: no numbers/bodies).
+                Diagnostics.log("cmd $commandType")
+
+                // Legacy macOS clients (no HELLO) still establish a session once
+                // they send a command; HELLO is handled by its own branch below.
+                if (commandType != "HELLO") {
+                    macCommandSeen = true
+                    updateSession()
+                }
 
                 when (commandType) {
+                    // Session handshake (BUG-001): the Mac identifies itself; the
+                    // session is confirmed back with SESSION_READY once the link,
+                    // notification subscription and identity are all present.
+                    "HELLO" -> handleHello(device, parts)
+                    // Call control (Mac -> phone). In DEBUG builds with a simulation
+                    // running these drive the simulated call instead of telephony.
+                    "CALL_ANSWER" -> handleCallCommand("answer")
+                    "CALL_END", "CALL_REJECT" -> handleCallCommand("end")
+                    "CALL_MUTE" -> handleCallCommand("mute")
+                    // Contacts sync (Mac asks; Android replies with selected contacts).
+                    "CONTACT_SYNC" -> {
+                        contactsSentThisSession = true
+                        sendSelectedContacts()
+                    }
+                    // Remote dial (Mac -> phone).
+                    "DIAL" -> handleDial(parts)
                     // Root-controlled real system hotspot (HyperOS/Android 15).
                     "HOTSPOT_ON", "HOTSPOT_ENABLE" -> handleHotspotCommand(true)
                     "HOTSPOT_OFF", "HOTSPOT_DISABLE" -> handleHotspotCommand(false)
-                    "HOTSPOT_STATUS" -> sendHotspotState()
+                    "HOTSPOT_STATUS" -> refreshHotspotState()
                     "KILL" -> {
                         if (parts.size >= 2) {
                             val notifIdToKill = parts[1]
@@ -463,6 +844,10 @@ class GattServerManager private constructor(private val context: Context) {
         if (isServerRunning) return
         isServerRunning = true
 
+        refreshRegistryFlows()
+        val p = context.getSharedPreferences("MacSync_Prefs", Context.MODE_PRIVATE)
+        _macModel.value = p.getString("mac_model", "").orEmpty()
+        _macCpu.value = p.getString("mac_cpu", "").orEmpty()
         gattServer = bluetoothManager.openGattServer(context, gattServerCallback)
         setupService()
 

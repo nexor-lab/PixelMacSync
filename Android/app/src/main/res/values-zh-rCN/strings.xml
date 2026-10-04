@@ -12,10 +12,31 @@
     <string name="battery_opt_title">电池优化已开启</string>
     <string name="battery_opt_subtitle">将 MacSync 设为“无限制”以在后台运行</string>
 
+    <!-- 联系人与拨号 -->
+    <string name="contacts_title">联系人与拨号</string>
+    <string name="contacts_none">未选择</string>
+    <string name="contacts_selected_count">已选 %1$d 个</string>
+    <string name="contacts_manage">管理联系人</string>
+    <string name="contacts_remote_dial">远程拨号</string>
+    <string name="contacts_auto_sync">首次连接自动同步</string>
+    <string name="contacts_direct_dial">直接拨出（root/Shizuku）</string>
+    <string name="contacts_direct_dial_sub">不打开拨号盘，直接拨出（需授权 root/Shizuku）</string>
+    <string name="contacts_select_title">选择联系人</string>
+    <string name="contacts_empty">没有联系人（或未授权）</string>
+
+    <!-- 多 Mac -->
+    <string name="macs_title">Mac 设备</string>
+    <string name="macs_empty">还没有 Mac 连接过</string>
+    <string name="mac_active">当前</string>
+    <string name="mac_connect">连接</string>
+    <string name="mac_disconnect">断开</string>
+    <string name="mac_forget">删除</string>
+
     <!-- 连接状态 -->
     <string name="status_connected">已连接</string>
     <string name="status_disconnected">未连接</string>
     <string name="status_waiting">等待连接…</string>
+    <string name="status_handshaking">正在验证…</string>
 
     <!-- 应用选择 -->
     <string name="app_notifications_title">通知应用</string>
@@ -58,6 +79,13 @@
 
     <!-- 关于 -->
     <string name="about_title">关于</string>
+    <string name="about_intro_title">软件简介</string>
+    <string name="about_intro">PixelMacSync 通过蓝牙低功耗（BLE）把手机与 Mac 相连：通知、来电、热点、应用图标、音乐与拨号；无需 Wi-Fi、云端或数据线。</string>
+    <string name="about_crypto_title">联系人加密</string>
+    <string name="about_crypto">联系人仅在你勾选后才传输；Mac 端以 AES-GCM 加密保存，密钥只存于本机（不进钥匙串、不同步 iCloud），明文仅存在于内存。</string>
+    <string name="about_device_title">设备信息（仅 Beta）</string>
+    <string name="about_device_android">安卓设备：%1$s · Android %2$s（API %3$d）</string>
+    <string name="about_device_mac">Mac：%1$s · %2$s</string>
     <string name="about_desc">MacSync 通过 BLE 把手机镜像到 Mac：通知、来电、热点、应用图标与媒体控制——无云端、无需 Wi‑Fi。</string>
     <string name="about_version">版本 %1$s</string>
     <string name="about_repo">GitHub 仓库</string>

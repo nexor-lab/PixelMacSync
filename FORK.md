@@ -9,7 +9,7 @@
 互联网 / 云 / TCP**，全部数据只在 BLE 链路上、按事件触发传输（无轮询）。
 
 本仓库是上游项目的一个 **Fork**，目标是把原本面向较新 macOS 的工程移植到
-**macOS 12.7.6 (Monterey) / Intel x86_64**（MacBookPro12,1），并在此之上新增了若干功能
+**macOS 12.7.6 (Monterey) / Intel x86_64**（2015 Intel Mac），并在此之上新增了若干功能
 （见第 4、5 节），其中最新的是 **音乐控件**。
 
 **本仓库**：`https://github.com/nexor-lab/PixelMacSync`
@@ -74,7 +74,7 @@
 ## 6. 平台与兼容
 
 - macOS：**12.7.6 (Monterey) / Intel x86_64** 实测通过；构建脚本支持 `ARCH=arm64|universal`。
-- Android：**POCO F5 Pro / Android 15 (API 35) / HyperOS** 实测通过；`minSdk 35`、`targetSdk 36`。
+- Android：**test Android phone / Android 15 (API 35) / HyperOS** 实测通过；`minSdk 35`、`targetSdk 36`。
 - 通知监听器（`NotificationListenerService`）是核心授权入口；部分 OEM 需允许“自启动/后台”。
 
 ## 7. 构建与安装

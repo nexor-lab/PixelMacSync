@@ -22,3 +22,28 @@ MacOS/*.dmg
 *.idsig
 *.dmg
 *.xcuserstate
+
+# --- Local OpenCode workspace (LOCAL ONLY, never commit) ---
+# NOTE: beta/, demo/, release/, .opencode/ live OUTSIDE this repo (in the
+# workspace root) and therefore cannot be tracked by Git. The patterns below
+# are only a safety net if such directories ever appear at the repo ROOT, so
+# they are anchored ("/beta/") and never match e.g. Android/app/src/beta/.
+/.opencode/
+/beta/
+/demo/
+/release/
+/local-workspace/
+
+# Local logs / test data
+*.log
+test-data/
+local-test-data/
+
+# Secrets (never commit)
+.env
+.env.*
+*.pem
+*.p12
+*.key
+*.keystore
+*.dSYM.zip

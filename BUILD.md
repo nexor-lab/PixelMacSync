@@ -1,5 +1,36 @@
 # BUILD.md — building PixelMacSync
 
+## Build variants (Android)
+
+| Variant | Package | Name | Watermark | Diagnostics | Signing |
+|---|---|---|---|---|---|
+| `debug` | `it.luigi.macsync.debug` | MacSync 调试版 / Debug | `DEBUG <build time>` | **yes** (on-device `files/diagnostics.log`) | debug key |
+| `beta` | `it.luigi.macsync` | MacSync Beta | `BETA <version>` | **no** | debug key (dev); re-sign for publish |
+| `release` | `it.luigi.macsync` | MacSync | none | **no** | release key |
+
+```sh
+./gradlew :app:assembleDebug     # local debugging only
+./gradlew :app:assembleBeta      # rename of the feature set for GitHub Beta
+./gradlew :app:assembleRelease   # production
+```
+
+- The **debug** variant is the only one that stores runtime/diagnostic state on the
+  device (private `files/diagnostics.log`, readable with
+  `adb shell run-as it.luigi.macsync.debug cat files/diagnostics.log`). It is
+  installed by `DebugApp` (debug source set only) and is **absent from beta/release**.
+- **Beta** is the same feature set as debug, only renamed + Beta watermark; it is the
+  artifact published to GitHub. Producing it does **not** carry over debug diagnostics.
+
+## Build variants (macOS)
+
+| Variant | Display name | Info.plist |
+|---|---|---|
+| `./build_macos.sh` | PixelSync | `PixelSyncDebug=false`, `PixelSyncBeta=false` |
+| `DEBUG_BUILD=1 ./build_macos.sh` | PixelSync Debug | `PixelSyncDebug=true` |
+| `BETA_BUILD=1 ./build_macos.sh` | PixelSync Beta | `PixelSyncBeta=true` |
+
+The popover shows a `DEBUG <build time>` / `BETA` watermark accordingly; release shows none.
+
 ## macOS (PixelSync.app) — macOS 12.7, Intel x86_64
 
 Requirements: **Command Line Tools** (full Xcode not required).

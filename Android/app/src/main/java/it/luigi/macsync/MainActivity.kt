@@ -36,6 +36,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
@@ -92,11 +93,15 @@ private fun isIgnoringBatteryOptimizations(context: Context): Boolean {
 @Composable
 fun AppNavigation(gattServerManager: GattServerManager) {
     var showBottomSheet by remember { mutableStateOf(false) }
+    var showContactsSheet by remember { mutableStateOf(false) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val contactsSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
-    MainScreen(gattServerManager = gattServerManager) {
-        showBottomSheet = true
-    }
+    MainScreen(
+        gattServerManager = gattServerManager,
+        onOpenNotificationsClick = { showBottomSheet = true },
+        onOpenContactsClick = { showContactsSheet = true }
+    )
 
     if (showBottomSheet) {
         ModalBottomSheet(
@@ -109,10 +114,26 @@ fun AppNavigation(gattServerManager: GattServerManager) {
             AppSelectionScreen()
         }
     }
+
+    if (showContactsSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showContactsSheet = false },
+            sheetState = contactsSheetState,
+            containerColor = MaterialTheme.colorScheme.background,
+            dragHandle = { BottomSheetDefaults.DragHandle() },
+            contentWindowInsets = { WindowInsets.statusBars }
+        ) {
+            ContactSelectionSheet()
+        }
+    }
 }
 
 @Composable
-fun MainScreen(gattServerManager: GattServerManager, onOpenNotificationsClick: () -> Unit) {
+fun MainScreen(
+    gattServerManager: GattServerManager,
+    onOpenNotificationsClick: () -> Unit,
+    onOpenContactsClick: () -> Unit
+) {
     var permissionsGranted by remember { mutableStateOf(false) }
 
     val statusText by gattServerManager.connectionState.collectAsState()
@@ -150,6 +171,7 @@ fun MainScreen(gattServerManager: GattServerManager, onOpenNotificationsClick: (
                 Manifest.permission.BLUETOOTH_CONNECT,
                 Manifest.permission.BLUETOOTH_ADVERTISE,
                 Manifest.permission.READ_PHONE_STATE,
+                Manifest.permission.READ_CALL_LOG,
                 Manifest.permission.READ_CONTACTS,
                 Manifest.permission.POST_NOTIFICATIONS,
                 Manifest.permission.ACCESS_COARSE_LOCATION,
@@ -161,6 +183,7 @@ fun MainScreen(gattServerManager: GattServerManager, onOpenNotificationsClick: (
 
     val eggMessage = stringResource(R.string.egg_message)
 
+    Box(modifier = Modifier.fillMaxSize()) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -171,7 +194,7 @@ fun MainScreen(gattServerManager: GattServerManager, onOpenNotificationsClick: (
         Spacer(modifier = Modifier.height(54.dp))
 
         Text(
-            text = "MacSync",
+            text = stringResource(R.string.app_name),
             style = MaterialTheme.typography.headlineMedium.copy(
                 fontWeight = FontWeight.Bold,
                 letterSpacing = (-0.5).sp
@@ -213,7 +236,7 @@ fun MainScreen(gattServerManager: GattServerManager, onOpenNotificationsClick: (
             horizontalArrangement = Arrangement.Center
         ) {
             Text(
-                text = if (isConnected) stringResource(R.string.status_connected) else stringResource(R.string.status_disconnected),
+                text = statusText,
                 style = MaterialTheme.typography.bodyLarge,
                 color = if (isConnected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                 fontWeight = FontWeight.Medium
@@ -239,6 +262,11 @@ fun MainScreen(gattServerManager: GattServerManager, onOpenNotificationsClick: (
         }
 
         Spacer(modifier = Modifier.height(48.dp))
+
+        // --- MULTI-MAC: Mac devices (before Settings) ---
+        MacDevicesCard(gattServerManager)
+
+        Spacer(modifier = Modifier.height(28.dp))
 
         // --- SEZIONE IMPOSTAZIONI ---
         Column(
@@ -291,11 +319,320 @@ fun MainScreen(gattServerManager: GattServerManager, onOpenNotificationsClick: (
 
             Spacer(modifier = Modifier.height(8.dp))
             AuthMethodCard(context)
+
+            Spacer(modifier = Modifier.height(8.dp))
+            ContactsCard(context, onOpenContactsClick)
         }
 
-        Spacer(modifier = Modifier.height(28.dp))
-        AboutCard(context)
+        Spacer(modifier = Modifier.height(24.dp))
+        AboutCard(context, gattServerManager)
         Spacer(modifier = Modifier.height(32.dp))
+    }
+        // Beta inherits `debug`, so BuildConfig.DEBUG is also true for beta:
+        // check IS_BETA first so the watermark is BETA, not DEBUG.
+        if (BuildConfig.IS_BETA) {
+            BuildWatermark("BETA", "${BuildConfig.VERSION_NAME}\n${BuildConfig.BUILD_TIMESTAMP}")
+        } else if (BuildConfig.DEBUG) {
+            BuildWatermark("DEBUG", BuildConfig.BUILD_TIMESTAMP)
+        }
+    }
+}
+
+/**
+ * A fixed, low-opacity build watermark: "DEBUG <build time>" in debug builds and
+ * "BETA <version>" in beta builds. Release builds show none. Not clickable.
+ */
+@Composable
+fun BuildWatermark(label: String, sub: String) {
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = "$label\n$sub",
+            color = MaterialTheme.colorScheme.error.copy(alpha = 0.16f),
+            fontSize = 44.sp,
+            fontWeight = FontWeight.Black,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            lineHeight = 50.sp,
+            modifier = Modifier.rotate(-30f)
+        )
+    }
+}
+
+@Composable
+fun MacDevicesCard(gattServerManager: GattServerManager) {
+    val macs by gattServerManager.savedMacs.collectAsState()
+    val active by gattServerManager.activeMacId.collectAsState()
+    val connectedId by gattServerManager.connectedMacId.collectAsState()
+
+    // Fold only when more than one Mac is saved; a single Mac is always shown.
+    // The header uses the same size as the "通知" / "授权方法" cards.
+    val collapsible = macs.size > 1
+    var expanded by rememberSaveable { mutableStateOf(true) }
+    val showList = macs.isNotEmpty() && (!collapsible || expanded)
+
+    val subtitle = when {
+        macs.isEmpty() -> stringResource(R.string.macs_empty)
+        else -> macs.firstOrNull { it.id == active }?.name ?: macs.first().name
+    }
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+    ) {
+        Column {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .then(if (collapsible) Modifier.clickable { expanded = !expanded } else Modifier)
+                    .padding(horizontal = 18.dp, vertical = 16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.LaptopMac,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(26.dp)
+                )
+                Spacer(modifier = Modifier.width(18.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = stringResource(R.string.macs_title),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = subtitle,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1
+                    )
+                }
+                if (collapsible) {
+                    Icon(
+                        imageVector = if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+                        contentDescription = stringResource(if (expanded) R.string.cd_collapse else R.string.cd_expand),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
+            }
+
+            if (showList) {
+                Column(modifier = Modifier.padding(start = 18.dp, end = 12.dp, bottom = 8.dp)) {
+                    macs.forEachIndexed { index, mac ->
+                        if (index > 0) {
+                            HorizontalDivider(
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.15f)
+                            )
+                        }
+                        MacDeviceRow(
+                            mac = mac,
+                            isConnected = connectedId == mac.id,
+                            onConnect = { gattServerManager.setActiveMac(mac.id) },
+                            onDisconnect = { gattServerManager.disconnectActiveMac() },
+                            onForget = { gattServerManager.forgetMac(mac.id) }
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MacDeviceRow(
+    mac: SavedMac,
+    isConnected: Boolean,
+    onConnect: () -> Unit,
+    onDisconnect: () -> Unit,
+    onForget: () -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = mac.name,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            if (isConnected) {
+                Text(
+                    text = stringResource(R.string.mac_active),
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+        }
+        // Show "断开" only while actually connected; otherwise offer "连接"
+        // (this also lets the user re-connect after a manual disconnect).
+        if (isConnected) {
+            TextButton(onClick = onDisconnect) { Text(stringResource(R.string.mac_disconnect)) }
+        } else {
+            TextButton(onClick = onConnect) { Text(stringResource(R.string.mac_connect)) }
+        }
+        IconButton(onClick = onForget) {
+            Icon(
+                imageVector = Icons.Rounded.Delete,
+                contentDescription = stringResource(R.string.mac_forget),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@Composable
+fun ContactsCard(context: Context, onManage: () -> Unit) {
+    var expanded by rememberSaveable { mutableStateOf(false) }
+    var remoteDial by remember { mutableStateOf(ContactsRepository.remoteDialEnabled(context)) }
+    var autoSync by remember { mutableStateOf(ContactsRepository.autoSync(context)) }
+    var directDial by remember { mutableStateOf(ContactsRepository.directDial(context)) }
+    val selectedCount = remember { ContactsRepository.selectedIds(context).size }
+    val subtitle = if (selectedCount > 0)
+        stringResource(R.string.contacts_selected_count, selectedCount)
+    else stringResource(R.string.contacts_none)
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+    ) {
+        Column {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { expanded = !expanded }
+                    .padding(horizontal = 18.dp, vertical = 16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Contacts,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(26.dp)
+                )
+                Spacer(modifier = Modifier.width(18.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = stringResource(R.string.contacts_title),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = subtitle,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Icon(
+                    imageVector = if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+                    contentDescription = stringResource(if (expanded) R.string.cd_collapse else R.string.cd_expand),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
+
+            AnimatedVisibility(
+                visible = expanded,
+                enter = expandVertically(animationSpec = tween(220)) + fadeIn(animationSpec = tween(220)),
+                exit = shrinkVertically(animationSpec = tween(220)) + fadeOut(animationSpec = tween(160))
+            ) {
+                Column(modifier = Modifier.padding(start = 18.dp, end = 18.dp, bottom = 12.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = stringResource(R.string.contacts_remote_dial),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Switch(
+                            checked = remoteDial,
+                            onCheckedChange = {
+                                remoteDial = it
+                                ContactsRepository.setRemoteDialEnabled(context, it)
+                            }
+                        )
+                    }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onManage() }
+                            .padding(vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = stringResource(R.string.contacts_manage),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = subtitle,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Icon(
+                            imageVector = Icons.Rounded.ChevronRight,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = stringResource(R.string.contacts_auto_sync),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Switch(
+                            checked = autoSync,
+                            onCheckedChange = {
+                                autoSync = it
+                                ContactsRepository.setAutoSync(context, it)
+                            }
+                        )
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = stringResource(R.string.contacts_direct_dial),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = stringResource(R.string.contacts_direct_dial_sub),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = directDial,
+                            onCheckedChange = {
+                                directDial = it
+                                ContactsRepository.setDirectDial(context, it)
+                            }
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -551,7 +888,10 @@ private fun AuthOptionRow(
 
 /** "About" card: short description, version and a link to the GitHub repo. */
 @Composable
-fun AboutCard(context: Context) {
+fun AboutCard(context: Context, gattServerManager: GattServerManager) {
+    var expanded by rememberSaveable { mutableStateOf(false) }
+    val macModel by gattServerManager.macModel.collectAsState()
+    val macCpu by gattServerManager.macCpu.collectAsState()
     val version = remember {
         try {
             context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: ""
@@ -566,8 +906,14 @@ fun AboutCard(context: Context) {
         shape = RoundedCornerShape(20.dp),
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
     ) {
-        Column(modifier = Modifier.padding(18.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+        Column {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { expanded = !expanded }
+                    .padding(horizontal = 18.dp, vertical = 16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 Icon(
                     imageVector = Icons.Rounded.Info,
                     contentDescription = null,
@@ -575,45 +921,110 @@ fun AboutCard(context: Context) {
                     modifier = Modifier.size(26.dp)
                 )
                 Spacer(modifier = Modifier.width(18.dp))
-                Text(
-                    text = stringResource(R.string.about_title),
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurface
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = stringResource(R.string.about_title),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = stringResource(R.string.about_version, version),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Icon(
+                    imageVector = if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+                    contentDescription = stringResource(if (expanded) R.string.cd_collapse else R.string.cd_expand),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(24.dp)
                 )
             }
-            Spacer(modifier = Modifier.height(10.dp))
-            Text(
-                text = stringResource(R.string.about_desc),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(modifier = Modifier.height(6.dp))
-            Text(
-                text = stringResource(R.string.about_version, version),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(modifier = Modifier.height(4.dp))
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .clickable { openUrl(context, repoUrl) }
-                    .padding(vertical = 4.dp)
+
+            AnimatedVisibility(
+                visible = expanded,
+                enter = expandVertically(animationSpec = tween(220)) + fadeIn(animationSpec = tween(220)),
+                exit = shrinkVertically(animationSpec = tween(220)) + fadeOut(animationSpec = tween(160))
             ) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Rounded.OpenInNew,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(18.dp)
-                )
-                Spacer(modifier = Modifier.width(6.dp))
-                Text(
-                    text = stringResource(R.string.about_repo) + " · nexor-lab/PixelMacSync",
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Medium,
-                    color = MaterialTheme.colorScheme.primary
-                )
+                Column(modifier = Modifier.padding(start = 18.dp, end = 18.dp, bottom = 18.dp)) {
+                    Text(
+                        text = stringResource(R.string.about_desc),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .clickable { openUrl(context, repoUrl) }
+                            .padding(vertical = 4.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Rounded.OpenInNew,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = stringResource(R.string.about_repo) + " · nexor-lab/PixelMacSync",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+                    HorizontalDivider(color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.15f))
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Text(
+                        text = stringResource(R.string.about_crypto_title),
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = stringResource(R.string.about_crypto),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    if (BuildConfig.IS_BETA) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        HorizontalDivider(color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.15f))
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = stringResource(R.string.about_device_title),
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = stringResource(
+                                R.string.about_device_android,
+                                "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}",
+                                android.os.Build.VERSION.RELEASE,
+                                android.os.Build.VERSION.SDK_INT
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = stringResource(
+                                R.string.about_device_mac,
+                                macModel.ifBlank { "—" },
+                                macCpu.ifBlank { "—" }
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
             }
         }
     }

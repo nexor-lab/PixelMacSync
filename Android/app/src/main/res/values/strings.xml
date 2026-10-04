@@ -12,10 +12,31 @@
     <string name="battery_opt_title">Battery optimization is on</string>
     <string name="battery_opt_subtitle">Set MacSync to “Unrestricted” for background operation</string>
 
+    <!-- Contacts / remote dialing -->
+    <string name="contacts_title">Contacts &amp; dialing</string>
+    <string name="contacts_none">None selected</string>
+    <string name="contacts_selected_count">%1$d selected</string>
+    <string name="contacts_manage">Manage contacts</string>
+    <string name="contacts_remote_dial">Remote dialing</string>
+    <string name="contacts_auto_sync">Auto-sync on connect</string>
+    <string name="contacts_direct_dial">Direct call (root/Shizuku)</string>
+    <string name="contacts_direct_dial_sub">Place the call directly, without opening the dialer</string>
+    <string name="contacts_select_title">Select contacts</string>
+    <string name="contacts_empty">No contacts (or permission not granted)</string>
+
+    <!-- Multi-Mac -->
+    <string name="macs_title">Macs</string>
+    <string name="macs_empty">No Mac has connected yet</string>
+    <string name="mac_active">Active</string>
+    <string name="mac_connect">Connect</string>
+    <string name="mac_disconnect">Disconnect</string>
+    <string name="mac_forget">Forget</string>
+
     <!-- Connection status -->
     <string name="status_connected">Connected</string>
     <string name="status_disconnected">Disconnected</string>
     <string name="status_waiting">Waiting for connection…</string>
+    <string name="status_handshaking">Verifying…</string>
 
     <!-- App selection sheet -->
     <string name="app_notifications_title">Notification apps</string>
@@ -58,6 +79,13 @@
 
     <!-- About -->
     <string name="about_title">About</string>
+    <string name="about_intro_title">About this app</string>
+    <string name="about_intro">PixelMacSync links your phone and Mac over Bluetooth Low Energy: notifications, calls, hotspot, app icons, music and dialing — no Wi-Fi, cloud or cable.</string>
+    <string name="about_crypto_title">Contact encryption</string>
+    <string name="about_crypto">Contacts are only sent when you select them; the Mac stores them AES-GCM encrypted with a key kept on that Mac (never in the Keychain, not synced to iCloud). Plaintext lives only in memory.</string>
+    <string name="about_device_title">Device info (Beta only)</string>
+    <string name="about_device_android">Android device: %1$s · Android %2$s (API %3$d)</string>
+    <string name="about_device_mac">Mac: %1$s · %2$s</string>
     <string name="about_desc">MacSync mirrors your phone to the Mac over BLE: notifications, calls, hotspot, app icons and media controls — no cloud, no Wi-Fi.</string>
     <string name="about_version">Version %1$s</string>
     <string name="about_repo">GitHub repository</string>

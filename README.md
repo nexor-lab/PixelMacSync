@@ -13,7 +13,7 @@
 | 组件 | 支持范围 |
 | --- | --- |
 | **macOS** | **macOS 12.7 Monterey 及以上**（Intel x86_64 实测；`ARCH=arm64` / `universal` 亦可构建） |
-| **Android** | **Android 15（API 35）及以上**，`compileSdk/targetSdk 36`（POCO F5 Pro / HyperOS 实测） |
+| **Android** | **Android 15（API 35）及以上**，`compileSdk/targetSdk 36`（test Android phone / HyperOS 实测） |
 | **Root** | 需要（SukiSU / Magisk）以**真实**开关热点；**不再需要 MacroDroid** |
 | **连接** | 仅 BLE 4.2+，不使用 Wi‑Fi / 局域网 / 云 / TCP |
 | **对比上游** | 上游要求 macOS 13+ / Android 16+ 并依赖 MacroDroid，本 Fork 已下移适配并移除该依赖 |
@@ -65,7 +65,7 @@ L’obiettivo è offrire sincronizzazione di notifiche, telemetria e controllo r
 
 | Componente     | Requisito minimo (fork)                        |
 | -------------- | ---------------------------------------------- |
-| **Android** | Android 15+ (API 35, target 36) — testato su POCO F5 Pro / HyperOS |
+| **Android** | Android 15+ (API 35, target 36) — testato su test Android phone / HyperOS |
 | **macOS** | macOS 12.7 Monterey+ (Intel x86_64; `ARCH=arm64`/`universal` disponibili) |
 | **Root** | Richiesto (SukiSU/Magisk) per controllare davvero l'Hotspot — **MacroDroid non più necessario** |
 | **Bluetooth** | BLE 4.2+ su entrambi i dispositivi             |
@@ -234,7 +234,7 @@ The goal is to offer notification synchronization, telemetry, and remote control
 
 | Component      | Minimum Requirement (fork)                    |
 | -------------- | --------------------------------------------- |
-| **Android** | Android 15+ (API 35, target 36) — tested on POCO F5 Pro / HyperOS |
+| **Android** | Android 15+ (API 35, target 36) — tested on test Android phone / HyperOS |
 | **macOS** | macOS 12.7 Monterey+ (Intel x86_64; `ARCH=arm64`/`universal` also buildable) |
 | **Root** | Required (SukiSU/Magisk) for real Hotspot control — **MacroDroid no longer needed** |
 | **Bluetooth** | BLE 4.2+ on both devices                      |

@@ -25,8 +25,8 @@ enum L10n {
     // MARK: - Connection state
 
     enum State {
-        case disconnected, scanning, connecting, cacheConnecting, connected,
-             bluetoothOff, waking, restarting
+        case disconnected, scanning, connecting, cacheConnecting, handshaking, connected,
+             rejected, bluetoothOff, waking, restarting
     }
 
     static func state(_ s: State) -> String {
@@ -35,7 +35,9 @@ enum L10n {
         case .scanning:        return t("Scanning…", "正在搜索…")
         case .connecting:      return t("Connecting…", "正在连接…")
         case .cacheConnecting: return t("Connecting (cache)…", "正在连接（缓存）…")
+        case .handshaking:     return t("Verifying…", "正在验证…")
         case .connected:       return t("Connected", "已连接")
+        case .rejected:        return t("Not the active Mac", "非当前 Mac 设备")
         case .bluetoothOff:    return t("Bluetooth OFF", "蓝牙已关闭")
         case .waking:          return t("Waking…", "正在唤醒…")
         case .restarting:      return t("Restarting…", "正在重启…")
@@ -44,7 +46,33 @@ enum L10n {
 
     // MARK: - Menu bar / app
 
-    static var appName: String { "PixelSync" }
+    /// True only for `DEBUG_BUILD=1` bundles (see build_macos.sh); release is false.
+    static var isDebugBuild: Bool {
+        (Bundle.main.object(forInfoDictionaryKey: "PixelSyncDebug") as? String) == "true"
+    }
+
+    /// True only for `BETA_BUILD=1` bundles; debug and release are false.
+    static var isBetaBuild: Bool {
+        (Bundle.main.object(forInfoDictionaryKey: "PixelSyncBeta") as? String) == "true"
+    }
+
+    /// Fixed build timestamp stamped into Info.plist by build_macos.sh.
+    static var buildTimestamp: String {
+        (Bundle.main.object(forInfoDictionaryKey: "PixelSyncBuildTimestamp") as? String) ?? ""
+    }
+
+    static var appName: String {
+        if isDebugBuild { return "PixelSync Debug" }
+        if isBetaBuild { return "PixelSync Beta" }
+        return "PixelSync"
+    }
+
+    /// Watermark shown in debug/beta popovers; empty in release.
+    static var buildWatermark: String {
+        if isDebugBuild { return "DEBUG\n\(buildTimestamp)" }
+        if isBetaBuild { return "BETA" }
+        return ""
+    }
     static var urlScheme: String { "pixelsync" }
     static var quit: String { t("Quit PixelSync", "退出 PixelSync") }
     static var remoteHotspot: String { t("Remote hotspot", "远程热点") }
@@ -80,6 +108,54 @@ enum L10n {
     static var musicPause: String { t("Pause", "暂停") }
     static var musicPrevious: String { t("Previous", "上一首") }
     static var musicNext: String { t("Next", "下一首") }
+
+    // MARK: - Call control
+
+    static var callIncoming: String { t("Incoming call", "来电") }
+    static var callCalling: String { t("Calling…", "正在呼叫") }
+    static var callActive: String { t("Call in progress", "通话中") }
+    static var callAnswer: String { t("Answer", "接听") }
+    static var callReject: String { t("Reject", "拒绝") }
+    static var callHangUp: String { t("Hang up", "挂断") }
+    static var callMute: String { t("Mute", "静音") }
+    static var callUnmute: String { t("Unmute", "取消静音") }
+    static var callUnavailable: String { t("Connect a phone to control calls", "连接手机后可控制通话") }
+    static var callFailedTitle: String { t("Call action failed", "通话操作失败") }
+    static func callFailure(_ action: String) -> String {
+        switch action {
+        case "answer": return t("Could not answer the call.", "无法接听来电。")
+        case "end":    return t("Could not end the call.", "无法挂断通话。")
+        case "mute":   return t("Could not change mute.", "无法切换静音。")
+        default:       return t("Could not perform the call action.", "无法执行通话操作。")
+        }
+    }
+
+    // MARK: - Dialing
+
+    static var dial: String { t("Dial", "拨号") }
+    static var dialPlaceholder: String { t("Number or name", "号码或姓名") }
+    static var dialAction: String { t("Call", "拨号") }
+    static var callMethodLabel: String { t("Call via", "通话方式") }
+    static var callMethodPhone: String { t("Phone", "手机") }
+    static var callMethodMac: String { t("This Mac", "Mac 本机") }
+    static var callMethodMacUnavailable: String {
+        t("Call audio is routed to this Mac over Bluetooth (HFP); pair the phone first.",
+          "通话音频经由蓝牙（HFP）在 Mac 本机播放；请先与手机配对。")
+    }
+    static var handsFreeConnect: String { t("Connect", "连接") }
+    static var handsFreeSelectDevice: String { t("Select device to connect", "选择连接设备") }
+    static var handsFreeHint: String {
+        t("Pair the phone in System Settings → Bluetooth first.",
+          "请先在“系统设置 → 蓝牙”中与手机完成配对。")
+    }
+    static func contactsSynced(_ n: Int) -> String { t("\(n) contacts", "\(n) 个联系人") }
+    static var dialFailedTitle: String { t("Call not placed", "拨号未成功") }
+    static func dialFailure(_ status: String) -> String {
+        switch status {
+        case "invalid": return t("Invalid phone number.", "手机号无效。")
+        default:        return t("Could not place the call.", "无法拨出电话。")
+        }
+    }
 
     // MARK: - Login item
 

@@ -1,8 +1,8 @@
 # TEST_REPORT.md — PixelMacSync
 
 Date: 2026-09-30
-Host: MacBookPro12,1 / macOS 12.7.6 / Intel x86_64 / CLT 14.2 (Swift 5.7.2)
-Device: **POCO F5 Pro (23013PC75G / `mondrian`)**, Android 15 / API 35, HyperOS OS3.0, Bluetooth ON, bootloader `green`.
+Host: 2015 Intel Mac / macOS 12.7.6 / Intel x86_64 / CLT 14.2 (Swift 5.7.2)
+Device: **Android test phone**, Android 15 / API 35, HyperOS OS3.0, Bluetooth ON, bootloader unlocked.
 
 > Legend: **PASS** (executed, observed) · **FAIL** · **BLOCKED** · **NOT TESTED**.
 > Nothing below is marked PASS from inspection alone.
@@ -23,7 +23,7 @@ Independent test on MacBook Pro 14" (Apple M4, 16 GB, macOS 26.3 / build 25D125)
 | M4-6 | Gatekeeper (`spctl`) | **LIMITATION** — rejected (not notarized; right-click open) |
 | M4-7 | Menu-bar `NSStatusItem` (no Dock icon) | **PASS** |
 | M4-8 | Notification permission | **PASS** — `didGrant: 1` |
-| M4-9 | BLE: notification received from POCO F5 Pro | **PASS** — `POST ricevuto ... com.twitter.android` |
+| M4-9 | BLE: notification received from test Android phone | **PASS** — `POST ricevuto ... com.twitter.android` |
 | M4-10 | Mac→Android `pixelsync://reply` round-trip | **PASS** — `REPLY_RESULT ... ok` |
 | M4-11 | Banner click / inline reply UI / media | **NOT TESTED** — no screen-recording TCC (GUI scripting) |
 | M4-12 | Remote hotspot control | **LIMITATION** — needs Root/Shizuku (`enable_failed` without) |
@@ -121,10 +121,10 @@ privilege, and version-string bump.
 ## B. Device baseline (real)
 
 ```
-adb devices -l  -> <device-serial> device product:mondrian_global model:23013PC75G
-ro.product.model          = 23013PC75G        (POCO F5 Pro)
-ro.product.device         = mondrian
-ro.product.manufacturer   = Xiaomi / brand POCO
+adb devices -l  -> <device-serial> device
+ro.product.model          = <phone model>      (test Android phone)
+ro.product.device         = <device codename>
+ro.product.manufacturer   = Xiaomi
 ro.build.version.release  = 15
 ro.build.version.sdk      = 35
 ro.product.cpu.abilist    = arm64-v8a,...      (no arm64 emulation issue)
@@ -173,7 +173,7 @@ MacSync: POST ricevuto id=nd7852ef4 pkg=test.notifier title=测试联系人
 ## E. Call sync (real) — **NOT TESTED**
 
 Incoming-call states (`CALL_STATE_RINGING` / `MISSED`) require a **second phone**
-to call the POCO; none available. Outgoing call was **not** placed (real-world
+to call the phone; none available. Outgoing call was **not** placed (real-world
 side effect, not authorised). The call packet parser is covered by A3 (RINGING/
 OFFHOOK/IDLE/MISSED all pass). The Android call listener is registered and
 compiles; **not** exercised on a real call.

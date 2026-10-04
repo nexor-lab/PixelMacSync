@@ -28,24 +28,52 @@ object HotspotController {
     private const val KEY_SSID = "hotspot_ssid"
     private const val KEY_PASS = "hotspot_pass"
 
-    /** Enables the real SoftAP. Returns true only if the command reported success. */
-    fun enable(context: Context): Boolean {
-        val (ssid, pass) = savedProfile(context)
-        val cmd = "cmd wifi start-softap \"$ssid\" wpa2 \"$pass\""
-        val out = PrivilegeManager.exec(context, cmd)
-        val ok = out.contains("enabled successfully", true) ||
-                 out.contains("SAP is enabled", true)
-        if (!ok) Log.w(TAG, "start-softap failed: ${out.take(160)}")
-        return ok
+    /**
+     * Outcome of a hotspot command. Idempotent cases ([ALREADY_ON]/[ALREADY_OFF])
+     * are successes, not errors (BUG-002). `FAILED` means the real state did not
+     * reach the requested value.
+     */
+    enum class Outcome { OK, ALREADY_ON, ALREADY_OFF, FAILED }
+
+    // A live tether interface (e.g. "wlan2 - TetheredState") means the AP is up.
+    // This is the real system state, not the command's (unreliable) stdout: when
+    // the AP is already on, `start-softap` prints both "SAP is enabled
+    // successfully" and "Soft AP failed to start".
+    private val TETHER_ACTIVE = Regex("""wlan[0-9]+ - [A-Za-z]*Tether""")
+
+    /** True if a softap/tether interface is currently active (privileged query). */
+    fun isEnabled(context: Context): Boolean {
+        val out = PrivilegeManager.exec(context, "dumpsys tethering")
+        return TETHER_ACTIVE.containsMatchIn(out)
     }
 
-    /** Disables the SoftAP. */
-    fun disable(context: Context): Boolean {
+    /** Enables the real SoftAP; idempotent. */
+    fun enable(context: Context): Outcome {
+        if (isEnabled(context)) return Outcome.ALREADY_ON
+        val (ssid, pass) = savedProfile(context)
+        val out = PrivilegeManager.exec(context, "cmd wifi start-softap \"$ssid\" wpa2 \"$pass\"")
+        if (awaitState(context, wantOn = true)) return Outcome.OK
+        Log.w(TAG, "start-softap did not reach ON: ${out.take(160)}")
+        return Outcome.FAILED
+    }
+
+    /** Disables the SoftAP; idempotent. */
+    fun disable(context: Context): Outcome {
+        if (!isEnabled(context)) return Outcome.ALREADY_OFF
         val out = PrivilegeManager.exec(context, "cmd wifi stop-softap")
-        val ok = out.contains("stopped successfully", true) ||
-                 out.contains("Soft AP stopped", true)
-        if (!ok) Log.w(TAG, "stop-softap failed: ${out.take(160)}")
-        return ok
+        if (awaitState(context, wantOn = false)) return Outcome.OK
+        Log.w(TAG, "stop-softap did not reach OFF: ${out.take(160)}")
+        return Outcome.FAILED
+    }
+
+    /** Polls the real state until it matches [wantOn] or the deadline passes. */
+    private fun awaitState(context: Context, wantOn: Boolean, timeoutMs: Long = 8_000): Boolean {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            if (isEnabled(context) == wantOn) return true
+            Thread.sleep(500)
+        }
+        return isEnabled(context) == wantOn
     }
 
     /**

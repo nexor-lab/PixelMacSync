@@ -4,7 +4,7 @@
 # Xcode Command Line Tools (no full Xcode required).
 #
 # Usage:
-#   ./build_macos.sh                 # x86_64 (default, MacBookPro12,1)
+#   ./build_macos.sh                 # x86_64 (default, 2015 Intel Mac)
 #   ARCH=arm64 ./build_macos.sh      # Apple Silicon
 #   ARCH=universal ./build_macos.sh  # fat binary
 #
@@ -19,7 +19,17 @@ BUNDLE_ID="it.luigi.pixelsyncmac"
 VERSION="2.2"
 BUILD_NUMBER="3"
 MIN_MACOS="12.0"
-ARCH="${ARCH:-x86_64}"
+ARCH="${ARCH:-universal}"
+DEBUG_BUILD="${DEBUG_BUILD:-0}"
+BETA_BUILD="${BETA_BUILD:-0}"
+BUILD_STAMP="$(date '+%Y-%m-%d %H:%M')"
+if [ "$DEBUG_BUILD" = "1" ]; then
+  DEBUG_FLAG="true";  BETA_FLAG="false"; DISPLAY_NAME="$APP_NAME Debug"
+elif [ "$BETA_BUILD" = "1" ]; then
+  DEBUG_FLAG="false"; BETA_FLAG="true";  DISPLAY_NAME="$APP_NAME Beta"
+else
+  DEBUG_FLAG="false"; BETA_FLAG="false"; DISPLAY_NAME="$APP_NAME"
+fi
 
 SDK="$(xcrun --show-sdk-path)"
 APP="$OUT_DIR/$APP_NAME.app"
@@ -28,6 +38,7 @@ RES_DIR="$APP/Contents/Resources"
 
 echo "==> SDK:    $SDK"
 echo "==> Arch:   $ARCH"
+echo "==> Debug:  $DEBUG_FLAG  Beta: $BETA_FLAG (display name: $DISPLAY_NAME)"
 echo "==> Output: $APP"
 
 rm -rf "$APP"
@@ -37,7 +48,7 @@ mkdir -p "$MACOS_DIR" "$RES_DIR"
 # 1. Compile the Swift sources directly into the app bundle executable.
 #    -parse-as-library is required because of the @main attribute.
 # ---------------------------------------------------------------------------
-SOURCES=("$SRC_DIR/Protocol.swift" "$SRC_DIR/Localization.swift" "$SRC_DIR/LoginItem.swift" "$SRC_DIR/BLEManager.swift" "$SRC_DIR/ContentView.swift" "$SRC_DIR/PixelSyncApp.swift")
+SOURCES=("$SRC_DIR/Protocol.swift" "$SRC_DIR/Localization.swift" "$SRC_DIR/LoginItem.swift" "$SRC_DIR/Platform.swift" "$SRC_DIR/KeyVault.swift" "$SRC_DIR/ContactsStore.swift" "$SRC_DIR/HandsFreeCall.swift" "$SRC_DIR/BLEManager.swift" "$SRC_DIR/ContentView.swift" "$SRC_DIR/PixelSyncApp.swift")
 
 compile_arch() {
   local arch="$1"
@@ -49,6 +60,8 @@ compile_arch() {
     -whole-module-optimization \
     -target "${arch}-apple-macos${MIN_MACOS}" \
     -sdk "$SDK" \
+    -framework CryptoKit \
+    -framework IOBluetooth \
     -o "$out" \
     "${SOURCES[@]}"
 }
@@ -73,7 +86,13 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 	<key>CFBundleName</key>
 	<string>$APP_NAME</string>
 	<key>CFBundleDisplayName</key>
-	<string>$APP_NAME</string>
+	<string>$DISPLAY_NAME</string>
+	<key>PixelSyncDebug</key>
+	<string>$DEBUG_FLAG</string>
+	<key>PixelSyncBeta</key>
+	<string>$BETA_FLAG</string>
+	<key>PixelSyncBuildTimestamp</key>
+	<string>$BUILD_STAMP</string>
 	<key>CFBundleIdentifier</key>
 	<string>$BUNDLE_ID</string>
 	<key>CFBundleExecutable</key>

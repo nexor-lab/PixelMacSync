@@ -29,7 +29,7 @@ enum ParserTests {
     static func main() {
         print("== Telemetry ==")
         do {
-            let fields = PixelPacket.fields(from: data("87\(US)true\(US)MyWiFi\(US)3\(US)true\(US)false\(US)Poco F5 Pro"))!
+            let fields = PixelPacket.fields(from: data("87\(US)true\(US)MyWiFi\(US)3\(US)true\(US)false\(US)Test Phone"))!
             let t = PixelPacket.parseTelemetry(fields)
             check(t != nil, "parses valid telemetry")
             check(t?.battery == "87%", "battery formatting")
@@ -38,7 +38,7 @@ enum ParserTests {
             check(t?.signal == 3, "signal int")
             check(t?.isWifi == true, "isWifi true")
             check(t?.isHotspot == false, "isHotspot false")
-            check(t?.deviceName == "Poco F5 Pro", "device name")
+            check(t?.deviceName == "Test Phone", "device name")
 
             check(PixelPacket.parseTelemetry(["1", "true"]) == nil, "rejects short telemetry")
             let bad = PixelPacket.fields(from: data("5\(US)false\(US)--\(US)x\(US)false\(US)false\(US)Phone"))!
@@ -90,6 +90,26 @@ enum ParserTests {
             check(PixelPacket.parseReplyResult(PixelPacket.fields(from: data("POST\(US)x\(US)y\(US)z\(US)w"))!) == nil, "POST is not a reply result")
         }
 
+        print("== Session handshake ==")
+        do {
+            let ready = PixelPacket.parseSessionReady(PixelPacket.fields(from: data("SESSION_READY\(US)Test Phone\(US)TestMac-ab12cd34"))!)
+            check(ready != nil, "parses SESSION_READY")
+            check(ready?.phoneName == "Test Phone", "session phone name")
+            check(ready?.macId == "TestMac-ab12cd34", "session mac id")
+
+            let noMac = PixelPacket.parseSessionReady(PixelPacket.fields(from: data("SESSION_READY\(US)Phone"))!)
+            check(noMac?.macId == "", "missing session mac id defaults empty")
+
+            check(PixelPacket.parseSessionReady(["SESSION_READY"]) == nil, "rejects short SESSION_READY")
+            check(PixelPacket.parseSessionReady(PixelPacket.fields(from: data("HELLO\(US)Mac"))!) == nil, "HELLO is not session ready")
+            check(PixelPacket.parseSessionReady(PixelPacket.fields(from: data("REPLY_RESULT\(US)n1\(US)ok"))!) == nil, "reply result is not session ready")
+
+            check(PixelPacket.parseSessionRejected(PixelPacket.fields(from: data("SESSION_REJECTED\(US)not_active"))!) == "not_active", "session rejected reason")
+            check(PixelPacket.parseSessionRejected(PixelPacket.fields(from: data("SESSION_REJECTED\(US)user_disconnected"))!) == "user_disconnected", "session rejected user_disconnected")
+            check(PixelPacket.parseSessionRejected(["SESSION_REJECTED"]) == nil, "rejects short session rejected")
+            check(PixelPacket.parseSessionRejected(PixelPacket.fields(from: data("SESSION_READY\(US)P"))!) == nil, "ready is not rejected")
+        }
+
         print("== Call events ==")
         do {
             let ringing = PixelPacket.parseCall(PixelPacket.fields(from: data("CALL\(US)RINGING\(US)13800001234\(US)张三"))!)
@@ -109,6 +129,21 @@ enum ParserTests {
 
             check(PixelPacket.parseCall(PixelPacket.fields(from: data("CALL\(US)BOGUS\(US)1\(US)x"))!) == nil, "rejects unknown call event")
             check(PixelPacket.parseCall(["CALL", "RINGING"]) == nil, "rejects short call packet")
+        }
+
+        print("== Call control replies ==")
+        do {
+            let ans = PixelPacket.parseCallResult(PixelPacket.fields(from: data("CALL_RESULT\(US)answer\(US)ok"))!)
+            check(ans?.action == "answer", "call result action")
+            check(ans?.status == "ok", "call result ok")
+            check(ans?.isOK == true, "call result isOK")
+            check(PixelPacket.parseCallResult(PixelPacket.fields(from: data("CALL_RESULT\(US)end\(US)failed"))!)?.isOK == false, "call result failed")
+            check(PixelPacket.parseCallResult(["CALL_RESULT", "answer"]) == nil, "rejects short call result")
+            check(PixelPacket.parseCallResult(PixelPacket.fields(from: data("CALL\(US)RINGING\(US)1\(US)x"))!) == nil, "CALL is not a result")
+
+            check(PixelPacket.parseCallMuteState(PixelPacket.fields(from: data("CALL_MUTE_STATE\(US)ON"))!) == true, "mute ON")
+            check(PixelPacket.parseCallMuteState(PixelPacket.fields(from: data("CALL_MUTE_STATE\(US)OFF"))!) == false, "mute OFF")
+            check(PixelPacket.parseCallMuteState(["CALL_MUTE_STATE"]) == nil, "rejects short mute state")
         }
 
         print("== Music metadata ==")
@@ -162,6 +197,50 @@ enum ParserTests {
 
             check(PixelPacket.parseArt(["ART_DATA", "k"]) == nil, "rejects short art data")
             check(PixelPacket.parseArt(["ICON_BEGIN", "x"]) == nil, "ICON is not art")
+        }
+
+        print("== Hotspot replies ==")
+        do {
+            let on = PixelPacket.parseHotspot(PixelPacket.fields(from: data("HOTSPOT_STATE\(US)ON"))!)
+            check(on?.kind == .state, "hotspot state kind")
+            check(on?.value == "ON", "hotspot state value")
+            check(PixelPacket.parseHotspot(PixelPacket.fields(from: data("HOTSPOT_STATE\(US)OFF"))!)?.value == "OFF", "hotspot state OFF")
+
+            let alreadyOn = PixelPacket.parseHotspot(PixelPacket.fields(from: data("HOTSPOT_RESULT\(US)ALREADY_ON"))!)
+            check(alreadyOn?.kind == .result, "hotspot result kind")
+            check(alreadyOn?.value == "ALREADY_ON", "hotspot ALREADY_ON")
+            check(PixelPacket.parseHotspot(PixelPacket.fields(from: data("HOTSPOT_RESULT\(US)ALREADY_OFF"))!)?.value == "ALREADY_OFF", "hotspot ALREADY_OFF")
+            check(PixelPacket.parseHotspot(PixelPacket.fields(from: data("HOTSPOT_RESULT\(US)OK"))!)?.kind == .result, "hotspot result OK")
+
+            let err = PixelPacket.parseHotspot(PixelPacket.fields(from: data("HOTSPOT_ERROR\(US)enable_failed"))!)
+            check(err?.kind == .error, "hotspot error kind")
+            check(err?.value == "enable_failed", "hotspot error value")
+
+            check(PixelPacket.parseHotspot(["HOTSPOT_STATE"]) == nil, "rejects short hotspot")
+            check(PixelPacket.parseHotspot(PixelPacket.fields(from: data("POST\(US)x\(US)y\(US)z\(US)w"))!) == nil, "POST is not hotspot")
+        }
+
+        print("== Contacts + dial ==")
+        do {
+            check(PixelPacket.parseContactsBegin(PixelPacket.fields(from: data("CONTACT_BEGIN\(US)2"))!) == 2, "contacts begin count")
+            check(PixelPacket.parseContactsBegin(["CONTACT_BEGIN"]) == nil, "rejects short contacts begin")
+
+            let c = PixelPacket.parseContact(PixelPacket.fields(from: data("CONTACT\(US)id1\(US)张三\(US)13800001234"))!)
+            check(c?.id == "id1", "contact id")
+            check(c?.name == "张三", "contact name UTF-8")
+            check(c?.number == "13800001234", "contact number")
+            check(PixelPacket.parseContact(["CONTACT", "id1"]) == nil, "rejects short contact")
+
+            check(PixelPacket.isContactsEnd(["CONTACT_END"]), "contacts end")
+            check(!PixelPacket.isContactsEnd(["CONTACT"]), "not contacts end")
+
+            check(PixelPacket.parseContactRemove(PixelPacket.fields(from: data("CONTACT_DEL\(US)id1"))!) == "id1", "contact remove id")
+            check(PixelPacket.parseContactRemove(["CONTACT_DEL"]) == nil, "rejects short contact remove")
+
+            check(PixelPacket.parseDialResult(PixelPacket.fields(from: data("DIAL_RESULT\(US)ok"))!) == "ok", "dial result ok")
+            check(PixelPacket.parseDialResult(PixelPacket.fields(from: data("DIAL_RESULT\(US)invalid"))!) == "invalid", "dial result invalid")
+            check(PixelPacket.parseDialResult(["DIAL_RESULT"]) == nil, "rejects short dial result")
+            check(PixelPacket.parseContact(PixelPacket.fields(from: data("DIAL_RESULT\(US)ok"))!) == nil, "dial result is not contact")
         }
 
         print("== Robustness ==")

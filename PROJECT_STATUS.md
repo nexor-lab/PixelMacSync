@@ -117,7 +117,7 @@ the existing `NotificationListenerService` identity (no new permission).
 | Hotspot State Sync (real, no optimistic UI) | **PASS** |
 | Credentials (no log/BLE/report/hardcode) | **PASS** |
 | NAT/internet sharing via shell surface | **LIMITATION** (HOTSPOT.md) |
-| Stable hotspot SSID (reuses system "POCO F5 Pro") | **PASS** |
+| Stable hotspot SSID (reuses the phone's saved SSID) | **PASS** |
 | Password reveal for one-time macOS save | **PASS** (Android app shows it; never logged/BLE) |
 | macOS Login Auto Start | **PASS** — **enabled by default** (app self-registers the LaunchAgent at first launch; no manual step) |
 | Menu-bar-only startup | **PASS** |
@@ -198,7 +198,7 @@ notification** was synced over BLE (`POST ricevuto ... pkg=com.tencent.mm`).
 
 ## Device / environment
 
-- POCO F5 Pro `23013PC75G` (`mondrian`), Android 15 / API 35, HyperOS OS3.0.
+- Android test phone, Android 15 / API 35, HyperOS OS3.0.
 - SukiSU Ultra root; `su` works (`u:r:ksu:s0`); ADB root enabled.
 - **Note:** ADB USB authorization is lost after each reboot and must be
   re-confirmed on the phone (environment behavior).

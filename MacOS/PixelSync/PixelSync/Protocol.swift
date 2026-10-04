@@ -8,6 +8,14 @@
 //
 import Foundation
 
+/// A contact synced from the phone (defined here so the parser tests stay
+/// dependency-free; the encrypted store lives in ContactsStore.swift).
+struct MacContact: Codable, Equatable {
+    let id: String
+    var name: String
+    var number: String
+}
+
 enum PixelPacket {
 
     /// Split a raw UTF-8 characteristic value into `US`-separated fields.
@@ -25,7 +33,8 @@ enum PixelPacket {
         let signal: Int
         let isWifi: Bool
         let isHotspot: Bool
-        let deviceName: String
+        let deviceName: String   // phone model
+        let btName: String       // phone Bluetooth name (8th field; "" on older payloads)
     }
 
     static func parseTelemetry(_ fields: [String]) -> Telemetry? {
@@ -37,7 +46,8 @@ enum PixelPacket {
             signal: Int(fields[3]) ?? 0,
             isWifi: fields[4] == "true",
             isHotspot: fields[5] == "true",
-            deviceName: fields[6]
+            deviceName: fields[6],
+            btName: fields.count >= 8 ? fields[7] : ""
         )
     }
 
@@ -93,6 +103,28 @@ enum PixelPacket {
                            status: ReplyResult.Status(rawValue: fields[2]) ?? .error)
     }
 
+    // MARK: - Session handshake (Android -> Mac)
+
+    /// Confirmation that the full application session is established. The Mac
+    /// only shows "Connected" after receiving this (see BLEManager).
+    struct SessionReady: Equatable {
+        let phoneName: String
+        let macId: String
+    }
+
+    static func parseSessionReady(_ fields: [String]) -> SessionReady? {
+        guard fields.count >= 2, fields[0] == "SESSION_READY" else { return nil }
+        let macId = fields.count >= 3 ? fields[2] : ""
+        return SessionReady(phoneName: fields[1], macId: macId)
+    }
+
+    /// The phone refused this Mac as the session peer (Multi-Mac): it is not the
+    /// active Mac, or the user disconnected it. Returns the reason code.
+    static func parseSessionRejected(_ fields: [String]) -> String? {
+        guard fields.count >= 2, fields[0] == "SESSION_REJECTED" else { return nil }
+        return fields[1]
+    }
+
     // MARK: - Call
 
     struct Call: Equatable {
@@ -115,12 +147,61 @@ enum PixelPacket {
         return Call(event: event, number: number, name: name)
     }
 
+    // MARK: - Contacts sync (Android -> Mac)
+
+    static func parseContactsBegin(_ fields: [String]) -> Int? {
+        guard fields.count >= 2, fields[0] == "CONTACT_BEGIN" else { return nil }
+        return Int(fields[1])
+    }
+
+    static func parseContact(_ fields: [String]) -> MacContact? {
+        guard fields.count >= 4, fields[0] == "CONTACT" else { return nil }
+        return MacContact(id: fields[1], name: fields[2], number: fields[3])
+    }
+
+    static func isContactsEnd(_ fields: [String]) -> Bool {
+        fields.first == "CONTACT_END"
+    }
+
+    static func parseContactRemove(_ fields: [String]) -> String? {
+        guard fields.count >= 2, fields[0] == "CONTACT_DEL" else { return nil }
+        return fields[1]
+    }
+
+    /// Outcome of a `DIAL` command: ok | failed | invalid.
+    static func parseDialResult(_ fields: [String]) -> String? {
+        guard fields.count >= 2, fields[0] == "DIAL_RESULT" else { return nil }
+        return fields[1]
+    }
+
+    // MARK: - Call control replies (Android -> Mac)
+
+    /// Outcome of a `CALL_ANSWER` / `CALL_END` / `CALL_MUTE` command.
+    struct CallResult: Equatable {
+        let action: String   // answer | end | mute
+        let status: String   // ok | failed
+        var isOK: Bool { status == "ok" }
+    }
+
+    static func parseCallResult(_ fields: [String]) -> CallResult? {
+        guard fields.count >= 3, fields[0] == "CALL_RESULT" else { return nil }
+        return CallResult(action: fields[1], status: fields[2])
+    }
+
+    /// Simulated/real microphone mute state.
+    static func parseCallMuteState(_ fields: [String]) -> Bool? {
+        guard fields.count >= 2, fields[0] == "CALL_MUTE_STATE" else { return nil }
+        return fields[1] == "ON"
+    }
+
     // MARK: - Hotspot control replies
 
     struct Hotspot {
-        enum Kind { case state, error }
+        enum Kind { case state, result, error }
         let kind: Kind
-        let value: String   // "ON"/"OFF" for state, an error code for error
+        /// "ON"/"OFF" for state; "OK"/"ALREADY_ON"/"ALREADY_OFF" for result;
+        /// an error code for error.
+        let value: String
     }
 
     // MARK: - App icon transfer
@@ -154,6 +235,7 @@ enum PixelPacket {
         guard fields.count >= 2 else { return nil }
         switch fields[0] {
         case "HOTSPOT_STATE": return Hotspot(kind: .state, value: fields[1])
+        case "HOTSPOT_RESULT": return Hotspot(kind: .result, value: fields[1])
         case "HOTSPOT_ERROR": return Hotspot(kind: .error, value: fields[1])
         default: return nil
         }

@@ -3,6 +3,7 @@ import CoreBluetooth
 import Combine
 import UserNotifications
 import AppKit
+import Darwin
 
 /// Latest music session state pushed by Android over BLE.
 struct MusicState: Equatable {
@@ -42,6 +43,24 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
     
     // 🚀 Variabile per il nome del dispositivo Android
     @Published var deviceName: String = "Telefono"
+    /// The phone's Bluetooth name (from telemetry), used to auto-select its
+    /// paired Classic device for "Mac 本机" calling.
+    @Published var phoneBtName: String = ""
+
+    // Stable identity for THIS Mac, sent in `HELLO` so Android can confirm the
+    // application session (BUG-001). Persisted so reconnects keep the same id.
+    let macId: String
+    let macName: String
+    let macModel: String
+    let macCpu: String
+
+    /// "Mac 本机" calling: the Mac as a Bluetooth hands-free unit (HFP).
+    let handsFree: HandsFreeCall
+    private var hfCancellables = Set<AnyCancellable>()
+
+    /// True after the phone rejected this Mac (Multi-Mac: not active / user
+    /// disconnected). While set, automatic rescanning is suppressed.
+    private var rejectedByPhone = false
     
     @Published var isSwitchedOn = false
     @Published var connectionState: L10n.State = .disconnected
@@ -61,6 +80,25 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
 
     // Latest media session (title/artist/album/progress/cover) from Android.
     @Published var music = MusicState()
+
+    // Call control state (Android -> Mac; Mac -> Android commands).
+    enum CallPhase: Equatable { case none, ringing, active }
+    @Published var callPhase: CallPhase = .none
+    @Published var callMuted = false
+    /// Number (or contact name) of the current call, for the popover.
+    @Published var callNumber = ""
+    /// True while an *outgoing* call is being placed (shows "Calling…").
+    @Published var callIsOutgoing = false
+
+    /// Last number we dialed, so an outgoing call can show it (the phone only
+    /// reports incoming numbers to us).
+    private var lastDialedNumber = ""
+
+    // Remote dialing + synced (encrypted) contacts.
+    enum CallMethod: String { case phone, macBluetooth }
+    @Published var callMethod: CallMethod = .phone
+    @Published var contactCount: Int = 0
+    private var contactBuffer: [MacContact] = []
 
     // Cover art reassembly buffer (CB callbacks arrive on the main queue).
     private var artBuffers: [String: [Int: String]] = [:]
@@ -83,8 +121,64 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
         return folderURL.appendingPathComponent("app_mappings.json")
     }
 
+    /// Stable per-machine id derived from the host UUID, hashed to a short hex
+    /// string (the raw hardware UUID is never transmitted). Because it is
+    /// deterministic, reinstalling or clearing preferences does NOT create a new
+    /// Mac identity — the same computer always yields the same id.
+    private static func hardwareMacId() -> String? {
+        var uuid = [UInt8](repeating: 0, count: 16)
+        var timeout = timespec(tv_sec: 1, tv_nsec: 0)
+        let rc = uuid.withUnsafeMutableBytes { raw -> Int32 in
+            guard let base = raw.baseAddress else { return -1 }
+            return gethostuuid(base.assumingMemoryBound(to: UInt8.self), &timeout)
+        }
+        guard rc == 0 else { return nil }
+        let hex = uuid.map { String(format: "%02x", $0) }.joined()
+        return "Mac-" + String(hex.prefix(12)).uppercased()
+    }
+
+    /// Reads a sysctl string value (e.g. "hw.model", "machdep.cpu.brand_string").
+    static func sysctlString(_ name: String) -> String {
+        var size = 0
+        guard sysctlbyname(name, nil, &size, nil, 0) == 0, size > 0 else { return "" }
+        var buf = [CChar](repeating: 0, count: size)
+        guard sysctlbyname(name, &buf, &size, nil, 0) == 0 else { return "" }
+        return String(cString: buf)
+    }
+
+    /// Returns the stable Mac identifier, persisting it for convenience. Falls
+    /// back to a persisted random id only if the host UUID is unavailable.
+    private static func loadOrCreateMacId() -> String {
+        let key = "pixelsync.macId"
+        let defaults = UserDefaults.standard
+        if let hw = hardwareMacId() {
+            if defaults.string(forKey: key) != hw { defaults.set(hw, forKey: key) }
+            return hw
+        }
+        if let existing = defaults.string(forKey: key), !existing.isEmpty { return existing }
+        let host = Host.current().localizedName ?? "Mac"
+        let id = "\(host)-\(UUID().uuidString.prefix(8))"
+        defaults.set(id, forKey: key)
+        return id
+    }
+
     override init() {
+        self.macId = BLEManager.loadOrCreateMacId()
+        self.macName = Host.current().localizedName ?? "Mac"
+        self.macModel = BLEManager.sysctlString("hw.model")
+        self.macCpu = BLEManager.sysctlString("machdep.cpu.brand_string")
+        self.handsFree = HandsFreeCall(
+            targetName: UserDefaults.standard.string(forKey: "hfPhoneName") ?? "")
         super.init()
+        if let raw = UserDefaults.standard.string(forKey: "callMethod"),
+           let m = CallMethod(rawValue: raw) { callMethod = m }
+        contactCount = ContactsStore.shared.contacts.count
+        // Only bring up the HFP unit when "Mac 本机" is the selected method.
+        if callMethod == .macBluetooth, !handsFree.targetName.isEmpty { handsFree.start() }
+        // Re-publish when the hands-free unit changes, so the popover updates.
+        handsFree.objectWillChange
+            .sink { [weak self] in self?.objectWillChange.send() }
+            .store(in: &hfCancellables)
         centralManager = CBCentralManager(delegate: self, queue: nil)
         
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { [weak self] granted, error in
@@ -234,7 +328,9 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
     
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
         connectionAttempts = 0
-        connectionState = .connected
+        // BUG-001: the GATT link is not an application session yet. Stay in a
+        // "verifying" state until Android confirms with SESSION_READY.
+        connectionState = .handshaking
         peripheral.discoverServices([serviceUUID])
     }
     
@@ -242,6 +338,21 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
         NSLog("MacSync: Dispositivo disconnesso. Ripristino stato e riavvio scansione.")
         
         DispatchQueue.main.async {
+            if self.rejectedByPhone {
+                // Multi-Mac: the phone refused this Mac; do NOT auto-reconnect.
+                self.connectionState = .rejected
+                self.batteryLevel = "--%"
+                self.isCharging = false
+                self.networkType = "---"
+                self.signalStrength = 0
+                self.isWifi = false
+                self.isHotspotActive = false
+                self.hotspotState = .unknown
+                self.resetMusic()
+                self.centralManager.stopScan()
+                NSLog("MacSync: Mac non attivo sul telefono; nessuna riconnessione automatica.")
+                return
+            }
             self.connectionState = .scanning
             self.batteryLevel = "--%"
             self.isCharging = false
@@ -352,7 +463,67 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
         DispatchQueue.main.async {
             self.music = MusicState()
             self.artBuffers.removeAll()
+            self.callPhase = .none
+            self.callMuted = false
+            self.callNumber = ""
+            self.callIsOutgoing = false
         }
+    }
+
+    // MARK: - Call control (Mac -> Android)
+
+    /// Answers the ringing call on the phone.
+    func callAnswer() {
+        if callMethod == .macBluetooth { handsFree.answer(); return }
+        sendCommand("CALL_ANSWER")
+    }
+    /// Ends / rejects the call on the phone.
+    func callEnd() {
+        if callMethod == .macBluetooth { handsFree.end(); return }
+        sendCommand("CALL_END")
+    }
+    /// Toggles microphone mute.
+    func callMuteToggle() {
+        if callMethod == .macBluetooth {
+            callMuted.toggle()
+            handsFree.setMuted(callMuted)
+            return
+        }
+        sendCommand("CALL_MUTE")
+    }
+
+    // MARK: - Remote dialing + contacts
+
+    /// Remote dial. With "Mac 本机" the call is placed through the Mac's HFP unit
+    /// (audio on the Mac); otherwise the phone dials and keeps the audio.
+    func dial(_ number: String) {
+        let n = number.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !n.isEmpty else { return }
+        lastDialedNumber = n
+        if callMethod == .macBluetooth { handsFree.dial(n); return }
+        sendCommand("DIAL\u{1F}\(n)")
+    }
+
+    /// Connects the Mac's hands-free unit to the given paired phone.
+    func connectHandsFree(phoneName: String) { handsFree.configure(name: phoneName) }
+
+    /// Paired Bluetooth-Classic device names (for the "Mac 本机" picker).
+    var pairedPhones: [String] { HandsFreeCall.pairedPhoneNames() }
+
+    func setCallMethod(_ method: CallMethod) {
+        callMethod = method
+        UserDefaults.standard.set(method.rawValue, forKey: "callMethod")
+        if method == .macBluetooth {
+            handsFree.autoDetect(fromBLE: phoneBtName)
+            if !handsFree.targetName.isEmpty { handsFree.start() }
+        } else {
+            handsFree.stop()
+        }
+    }
+
+    /// Contact suggestions for the dial field (number prefix / name substring).
+    func contactSuggestions(_ query: String) -> [MacContact] {
+        ContactsStore.shared.search(query)
     }
     
     func startScanningOrReconnect() {
@@ -417,6 +588,7 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
         self.pixelPeripheral = nil
         self.commandCharacteristic = nil
         self.connectionAttempts = 0
+        self.rejectedByPhone = false
         
         DispatchQueue.main.async {
             self.connectionState = .restarting
@@ -467,6 +639,19 @@ extension BLEManager: CBPeripheralDelegate {
             }
             if characteristic.uuid == commandUUID {
                 self.commandCharacteristic = characteristic
+
+                // --- HANDSHAKE DI SESSIONE (BUG-001) ---
+                // Identify this Mac; Android replies SESSION_READY only after the
+                // link, notification subscription and identity are all present.
+                let cpu = self.macCpu.isEmpty
+                    ? (Platform.isAppleSilicon ? "Apple Silicon" : "Unknown")
+                    : self.macCpu
+                let model = self.macModel.isEmpty ? "Mac" : self.macModel
+                let hello = "HELLO\u{1F}\(self.macId)\u{1F}\(self.macName)\u{1F}\(model)\u{1F}\(cpu)"
+                if let data = hello.data(using: .utf8) {
+                    peripheral.writeValue(data, for: characteristic, type: .withResponse)
+                    NSLog("MacSync: HELLO inviato (\(self.macId) / \(self.macName) / \(model) / \(cpu))")
+                }
                 
                 // --- FIX: SYNC A FREDDO (Reconnection Sync) ---
                 UNUserNotificationCenter.current().removeAllDeliveredNotifications()
@@ -483,6 +668,10 @@ extension BLEManager: CBPeripheralDelegate {
                 }
                 // Ask for the current music metadata/cover after (re)connect.
                 if let data = "MUSIC_STATUS".data(using: .utf8) {
+                    peripheral.writeValue(data, for: characteristic, type: .withResponse)
+                }
+                // Ask for the selected contacts after (re)connect.
+                if let data = "CONTACT_SYNC".data(using: .utf8) {
                     peripheral.writeValue(data, for: characteristic, type: .withResponse)
                 }
             }
@@ -503,6 +692,12 @@ extension BLEManager: CBPeripheralDelegate {
                 self.isWifi = telemetry.isWifi
                 self.isHotspotActive = telemetry.isHotspot
                 self.deviceName = telemetry.deviceName
+                self.phoneBtName = telemetry.btName
+                // Auto-select the paired Classic device matching the phone's
+                // Bluetooth name (for "Mac 本机" HFP calling).
+                if self.callMethod == .macBluetooth {
+                    self.handsFree.autoDetect(fromBLE: telemetry.btName)
+                }
                 // Real hotspot state from Android telemetry (keeps macOS in sync
                 // even if the hotspot is toggled on the phone).
                 self.hotspotState = telemetry.isHotspot ? .on : .off
@@ -511,6 +706,71 @@ extension BLEManager: CBPeripheralDelegate {
 
         if characteristic.uuid == notificationsUUID, let data = characteristic.value,
            let fields = PixelPacket.fields(from: data) {
+
+            // Multi-Mac: the phone refused this Mac (not active / user-disconnected).
+            if let reason = PixelPacket.parseSessionRejected(fields) {
+                DispatchQueue.main.async {
+                    self.rejectedByPhone = true
+                    self.connectionState = .rejected
+                    // Retry periodically so that, once the phone makes this Mac the
+                    // active one, it reconnects on its own.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 30.0) { [weak self] in
+                        guard let self = self, self.rejectedByPhone else { return }
+                        NSLog("MacSync: retry dopo rifiuto Multi-Mac.")
+                        self.rejectedByPhone = false
+                        if self.centralManager.state == .poweredOn { self.startScanningOrReconnect() }
+                    }
+                }
+                NSLog("MacSync: SESSION_REJECTED (\(reason))")
+                if let peripheral = self.pixelPeripheral {
+                    self.centralManager.cancelPeripheralConnection(peripheral)
+                }
+                return
+            }
+
+            // Conferma di sessione (BUG-001): solo ora la UI mostra "Connected".
+            if let session = PixelPacket.parseSessionReady(fields) {
+                DispatchQueue.main.async {
+                    self.connectionState = .connected
+                }
+                NSLog("MacSync: SESSION_READY ricevuto (phone=\(session.phoneName), mac=\(session.macId))")
+                return
+            }
+
+            // Sincronizzazione contatti (Android -> Mac, cifrata a riposo).
+            if let _ = PixelPacket.parseContactsBegin(fields) {
+                self.contactBuffer = []
+                return
+            }
+            if let contact = PixelPacket.parseContact(fields) {
+                self.contactBuffer.append(contact)
+                return
+            }
+            if PixelPacket.isContactsEnd(fields) {
+                let list = self.contactBuffer
+                self.contactBuffer = []
+                ContactsStore.shared.replaceAll(list)
+                DispatchQueue.main.async { self.contactCount = list.count }
+                NSLog("MacSync: contatti sincronizzati: \(list.count)")
+                return
+            }
+            if let id = PixelPacket.parseContactRemove(fields) {
+                ContactsStore.shared.remove(id: id)
+                DispatchQueue.main.async { self.contactCount = ContactsStore.shared.contacts.count }
+                return
+            }
+            if let status = PixelPacket.parseDialResult(fields) {
+                if status != "ok" {
+                    DispatchQueue.main.async {
+                        self.deliverNotification(
+                            id: "dial-status-\(Date().timeIntervalSince1970)",
+                            title: L10n.dialFailedTitle,
+                            body: L10n.dialFailure(status))
+                    }
+                }
+                NSLog("MacSync: DIAL_RESULT -> \(status)")
+                return
+            }
 
             // Trasferimento icone app (una tantum, cache su disco).
             if let iconPacket = PixelPacket.parseIcon(fields) {
@@ -566,11 +826,20 @@ extension BLEManager: CBPeripheralDelegate {
             if let hs = PixelPacket.parseHotspot(fields) {
                 DispatchQueue.main.async {
                     switch hs.kind {
-                    case .state: self.hotspotState = (hs.value == "ON") ? .on : .off
-                    case .error: self.hotspotState = .error
+                    case .state:
+                        self.hotspotState = (hs.value == "ON") ? .on : .off
+                    case .result:
+                        // Idempotent outcomes are successes, never errors (BUG-002).
+                        switch hs.value {
+                        case "ALREADY_ON":  self.hotspotState = .on
+                        case "ALREADY_OFF": self.hotspotState = .off
+                        default: break // "OK": the real state follows via HOTSPOT_STATE/telemetry
+                        }
+                    case .error:
+                        self.hotspotState = .error
                     }
                 }
-                NSLog("MacSync: Hotspot \(hs.kind == .state ? "STATE" : "ERROR") -> \(hs.value)")
+                NSLog("MacSync: Hotspot \(hs.kind) -> \(hs.value)")
                 return
             }
 
@@ -586,6 +855,27 @@ extension BLEManager: CBPeripheralDelegate {
                         )
                     }
                 }
+                return
+            }
+
+            // Esito di un comando di chiamata (answer/end/mute).
+            if let cr = PixelPacket.parseCallResult(fields) {
+                if !cr.isOK {
+                    DispatchQueue.main.async {
+                        self.deliverNotification(
+                            id: "call-status-\(cr.action)",
+                            title: L10n.callFailedTitle,
+                            body: L10n.callFailure(cr.action))
+                    }
+                }
+                NSLog("MacSync: CALL_RESULT \(cr.action) -> \(cr.status)")
+                return
+            }
+
+            // Stato mute del microfono.
+            if let muted = PixelPacket.parseCallMuteState(fields) {
+                DispatchQueue.main.async { self.callMuted = muted }
+                NSLog("MacSync: CALL_MUTE_STATE -> \(muted ? "ON" : "OFF")")
                 return
             }
 
@@ -802,22 +1092,34 @@ extension BLEManager {
         return url
     }
 
-    func handleCallEvent(event: String, number: String, name: String) {
+    func handleCallEvent(event: String, number rawNumber: String, name: String) {
+        // Prefer the real number; fall back to the number we dialed (the phone
+        // never reports outgoing numbers).
+        let number = rawNumber.isEmpty ? lastDialedNumber : rawNumber
         let center = UNUserNotificationCenter.current()
         let subtitle = name
         let body = !number.isEmpty ? number : (name.isEmpty ? loc("未知号码", "Unknown number") : name)
+
+        DispatchQueue.main.async {
+            self.callNumber = !number.isEmpty ? number : name
+            if event == "RINGING" { self.callIsOutgoing = false }
+            if event == "OFFHOOK" { self.callIsOutgoing = !self.lastDialedNumber.isEmpty }
+            NSLog("MacSync: callUI number='\(self.callNumber)' outgoing=\(self.callIsOutgoing) event=\(event)")
+        }
 
         let incomingId = "call-\(number)-incoming"
         let activeId = "call-\(number)-active"
 
         switch event {
         case "RINGING":
+            DispatchQueue.main.async { self.callPhase = .ringing; self.callMuted = false }
             postCallNotification(id: incomingId,
                                  title: loc("来电", "Incoming call"),
                                  subtitle: subtitle,
                                  body: body,
                                  sound: true)
         case "MISSED":
+            DispatchQueue.main.async { self.callPhase = .none; self.callMuted = false }
             center.removeDeliveredNotifications(withIdentifiers: [incomingId])
             postCallNotification(id: "call-\(number)-missed",
                                  title: loc("未接来电", "Missed call"),
@@ -825,6 +1127,7 @@ extension BLEManager {
                                  body: body,
                                  sound: true)
         case "OFFHOOK":
+            DispatchQueue.main.async { self.callPhase = .active }
             center.removeDeliveredNotifications(withIdentifiers: [incomingId])
             postCallNotification(id: activeId,
                                  title: loc("通话中", "Call answered"),
@@ -832,9 +1135,14 @@ extension BLEManager {
                                  body: body,
                                  sound: false)
         case "IDLE":
+            DispatchQueue.main.async { self.callPhase = .none; self.callMuted = false }
             center.removeDeliveredNotifications(withIdentifiers: [incomingId, activeId])
         default:
             break
+        }
+        if event == "IDLE" || event == "MISSED" {
+            lastDialedNumber = ""
+            DispatchQueue.main.async { self.callNumber = ""; self.callIsOutgoing = false }
         }
         NSLog("MacSync: Evento chiamata gestito -> \(event) \(body)")
     }

@@ -14,7 +14,7 @@ Mac PixelSync  --BLE-->  Android MacSync  --root-->  cmd wifi start/stop-softap 
 
 ## Why not the TetheringManager
 
-Device audit (POCO F5 Pro, Android 15, HyperOS 3, `ksud 4.2.0`):
+Device audit (test Android phone, Android 15, HyperOS 3, `ksud 4.2.0`):
 
 | Surface | Result |
 |---|---|
@@ -35,8 +35,8 @@ configuration (verified: saved SSID unchanged after start/stop).
   throws `SecurityException: App not allowed to read or update stored WiFi Ap
   config` (privileged permission), so the **passphrase cannot be read**.
 - **SSID**: the app reuses the system's saved AP SSID via root
-  (`dumpsys wifi | grep CMD_UPDATE_AP_CONFIG`), so the network name stays
-  **"POCO F5 Pro"** (stable) and matches what the phone normally broadcasts.
+  (`dumpsys wifi | grep CMD_UPDATE_AP_CONFIG`), so the network name stays the
+  phone's own saved name (stable) and matches what the phone normally broadcasts.
   This fixes the earlier "sometimes visible / sometimes not" symptom caused by
   the old fallback SSID `MacSync Hotspot`.
 - **Passphrase**: app-private, generated once, stored in `SharedPreferences`; it
@@ -50,15 +50,32 @@ configuration (verified: saved SSID unchanged after start/stop).
 
 1. Mac sends `HOTSPOT_ENABLE` / `HOTSPOT_DISABLE`.
 2. Mac UI enters `enabling` / `disabling` (not `on`/`off`).
-3. Android runs the root command.
-4. Android waits for the system **`WIFI_AP_STATE_CHANGED`** broadcast (real state)
-   to match, up to ~7 s.
-5. Android sends `HOTSPOT_STATE␟ON`/`OFF`, or `HOTSPOT_ERROR␟…`.
+3. Android reads the **real** current state (`dumpsys tethering` → active
+   `wlanX - …Tether`) and runs the privileged command only if a change is needed.
+4. Android waits (polling the real state, up to ~8 s) until it matches the request.
+5. Android sends `HOTSPOT_STATE␟ON`/`OFF` plus `HOTSPOT_RESULT␟OK|ALREADY_ON|ALREADY_OFF`,
+   or `HOTSPOT_ERROR␟…` only on a genuine failure.
 6. Mac shows the real state. A 12 s timeout on the Mac turns a missing reply into
    `error`.
 
 The real state is also pushed continuously in the telemetry field
 `isHotspotActive`, so changing the hotspot **on the phone** updates the Mac.
+
+### Idempotency (BUG-002 fix)
+
+Idempotent requests are **successes**, never errors:
+
+| Request | Real state | Android reply |
+|---|---|---|
+| ENABLE | already ON | `HOTSPOT_STATE ON` + `HOTSPOT_RESULT ALREADY_ON` |
+| DISABLE | already OFF | `HOTSPOT_STATE OFF` + `HOTSPOT_RESULT ALREADY_OFF` |
+| ENABLE | OFF → ON | `HOTSPOT_STATE ON` + `HOTSPOT_RESULT OK` |
+| DISABLE | ON → OFF | `HOTSPOT_STATE OFF` + `HOTSPOT_RESULT OK` |
+
+Why the stdout can't be trusted: when the AP is **already on**, `cmd wifi
+start-softap` prints **both** `SAP is enabled successfully` (the current state)
+**and** `Soft AP failed to start`; `stop-softap` always prints success. The real
+state therefore comes from `dumpsys tethering`, not from the command text.
 
 ## State machine (Mac)
 

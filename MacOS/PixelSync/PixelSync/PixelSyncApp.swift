@@ -121,6 +121,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             default:
                 break
             }
+        case "call":
+            switch action {
+            case "answer": bleManager.callAnswer()
+            case "end":    bleManager.callEnd()
+            case "mute":   bleManager.callMuteToggle()
+            default:       break
+            }
+        case "dial":
+            let comps = URLComponents(url: url, resolvingAgainstBaseURL: false)
+            var number = comps?.queryItems?.first(where: { $0.name == "number" })?.value ?? ""
+            if number.isEmpty, let a = url.pathComponents.dropFirst().first, a != "/" { number = a }
+            if !number.isEmpty { bleManager.dial(number) }
         case "login":
             LoginItem.setEnabled(action == "on")
         case "reply":

@@ -17,8 +17,15 @@ struct ContentView: View {
         if level <= 87 { return "battery.75" }
         return "battery.100"
     }
+
+    /// Call header text: ringing / calling (outgoing) / in call.
+    private var callTitle: String {
+        if bleManager.callPhase == .ringing { return L10n.callIncoming }
+        return bleManager.callIsOutgoing ? L10n.callCalling : L10n.callActive
+    }
     
     var body: some View {
+      ZStack {
         VStack(spacing: 16) {
             
             // --- SEZIONE 1: STATO CONNESSIONE E DISPOSITIVO ---
@@ -79,7 +86,35 @@ struct ContentView: View {
             }
             
             Divider()
-            
+
+            // --- CALL CONTROL (only while a call is ringing/active) ---
+            if bleManager.callPhase != .none {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "phone.fill")
+                            .foregroundColor(.accentColor)
+                        Text(callTitle)
+                            .font(.subheadline)
+                        Spacer()
+                        if bleManager.callPhase == .ringing {
+                            Button(L10n.callAnswer) { bleManager.callAnswer() }
+                            Button(L10n.callReject) { bleManager.callEnd() }
+                        } else {
+                            Button(bleManager.callMuted ? L10n.callUnmute : L10n.callMute) {
+                                bleManager.callMuteToggle()
+                            }
+                            Button(L10n.callHangUp) { bleManager.callEnd() }
+                        }
+                    }
+                    if !bleManager.callNumber.isEmpty {
+                        Text(bleManager.callNumber)
+                            .font(.title3).fontWeight(.semibold)
+                            .lineLimit(1)
+                    }
+                }
+                Divider()
+            }
+
             // --- SEZIONE 2: HOTSPOT REMOTO (controllo reale via BLE + Root) ---
             HStack(spacing: 8) {
                 Image(systemName: "personalhotspot")
@@ -103,9 +138,24 @@ struct ContentView: View {
             // --- SEZIONE 3: MUSICA (controllo MediaSession via BLE) ---
             MusicControlView(bleManager: bleManager)
 
+            Divider()
+
+            // --- SEZIONE 4: DIAL (remote dialing + synced contacts) ---
+            DialView(bleManager: bleManager)
+
         }
         .padding(16)
         .frame(width: 320)
+
+        if !L10n.buildWatermark.isEmpty {
+            Text(L10n.buildWatermark)
+                .font(.system(size: 26, weight: .black))
+                .foregroundColor(.red.opacity(0.16))
+                .multilineTextAlignment(.center)
+                .rotationEffect(.degrees(-30))
+                .allowsHitTesting(false)
+        }
+      }
     }
     
     func levelColor(for levelStr: String) -> Color {
@@ -279,5 +329,181 @@ struct MusicControlView: View {
             }
             .frame(width: 46, height: 46)
         }
+    }
+}
+
+// MARK: - Remote dialing
+
+struct DialView: View {
+    @ObservedObject var bleManager: BLEManager
+    @State private var number = ""
+    @State private var countryCode = "+86"
+
+    /// A short list of common country codes (the user can pick one).
+    private static let countryCodes: [(String, String)] = [
+        ("+86", "CN"), ("+852", "HK"), ("+853", "MO"), ("+886", "TW"),
+        ("+1", "US"), ("+81", "JP"), ("+82", "KR"), ("+65", "SG"),
+        ("+60", "MY"), ("+44", "UK"), ("+61", "AU"), ("+49", "DE"),
+        ("+33", "FR"), ("+7", "RU"), ("+91", "IN")
+    ]
+
+    private var suggestions: [MacContact] {
+        let q = number.trimmingCharacters(in: .whitespaces)
+        return q.isEmpty ? [] : bleManager.contactSuggestions(q)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: "phone.arrow.up.right")
+                    .foregroundColor(.accentColor)
+                Text(L10n.dial).font(.subheadline)
+                Spacer()
+                if bleManager.contactCount > 0 {
+                    Text(L10n.contactsSynced(bleManager.contactCount))
+                        .font(.caption2).foregroundColor(.secondary)
+                }
+            }
+
+            HStack(spacing: 6) {
+                // Country-code selector (split from the number field).
+                Menu {
+                    ForEach(Self.countryCodes, id: \.0) { cc in
+                        Button {
+                            countryCode = cc.0
+                        } label: {
+                            Text("\(cc.0)  \(cc.1)")
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 3) {
+                        Text(countryCode).font(.caption).monospacedDigit()
+                        Image(systemName: "chevron.down").font(.system(size: 9))
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(Color.secondary.opacity(0.12))
+                    .cornerRadius(6)
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+
+                TextField(L10n.dialPlaceholder, text: $number)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit { call() }
+                    // Free text so a name (including CJK) can be typed for
+                    // suggestions; only the digits are dialed. Capped in length.
+                    .onChange(of: number) { newValue in
+                        let limited = String(newValue.prefix(24))
+                        if limited != newValue { number = limited }
+                    }
+
+                Button(L10n.dialAction) { call() }
+                    .disabled(!bleManager.isConnected || !number.contains(where: { $0.isNumber }))
+            }
+
+            if !suggestions.isEmpty {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(suggestions, id: \.id) { c in
+                        Button {
+                            number = c.number
+                        } label: {
+                            HStack {
+                                Text(c.name.isEmpty ? c.number : c.name).lineLimit(1)
+                                Spacer()
+                                Text(c.number).foregroundColor(.secondary)
+                            }
+                            .font(.caption)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(6)
+                .background(Color.secondary.opacity(0.08))
+                .cornerRadius(6)
+            }
+
+            HStack(spacing: 8) {
+                Text(L10n.callMethodLabel).font(.caption).foregroundColor(.secondary)
+                methodChip(L10n.callMethodPhone, selected: bleManager.callMethod == .phone, enabled: true) {
+                    bleManager.setCallMethod(.phone)
+                }
+                methodChip(L10n.callMethodMac, selected: bleManager.callMethod == .macBluetooth, enabled: true) {
+                    bleManager.setCallMethod(.macBluetooth)
+                }
+            }
+
+            if bleManager.callMethod == .macBluetooth {
+                handsFreeControls()
+            } else if !bleManager.isConnected {
+                Text(L10n.musicUnavailable).font(.caption2).foregroundColor(.secondary)
+            }
+        }
+    }
+
+    /// Paired Bluetooth-Classic phones + HFP connection status ("Mac 本机").
+    private func handsFreeControls() -> some View {
+        let paired = bleManager.pairedPhones
+        return VStack(alignment: .leading, spacing: 4) {
+            if paired.isEmpty {
+                Text(L10n.handsFreeHint).font(.caption2).foregroundColor(.orange)
+            } else {
+                Text(L10n.handsFreeSelectDevice).font(.caption2).foregroundColor(.secondary)
+                HStack(spacing: 6) {
+                    Menu {
+                        ForEach(paired, id: \.self) { name in
+                            Button(name) { bleManager.connectHandsFree(phoneName: name) }
+                        }
+                    } label: {
+                        HStack(spacing: 3) {
+                            Text(bleManager.handsFree.targetName.isEmpty
+                                 ? L10n.handsFreeConnect
+                                 : bleManager.handsFree.targetName)
+                                .font(.caption).lineLimit(1)
+                            Image(systemName: "chevron.down").font(.system(size: 9))
+                        }
+                        .padding(.horizontal, 8).padding(.vertical, 4)
+                        .background(Color.secondary.opacity(0.12)).cornerRadius(6)
+                    }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
+                }
+                Text(bleManager.handsFree.status)
+                    .font(.caption2).foregroundColor(.secondary).lineLimit(1)
+            }
+        }
+    }
+
+    private func call() {
+        let hadPlus = number.trimmingCharacters(in: .whitespaces).hasPrefix("+")
+        var digits = number.filter { $0.isNumber }
+        guard !digits.isEmpty else { return }
+        digits = String(digits.prefix(15))
+        // If the user typed a leading "+", treat it as a full number; otherwise
+        // prefix the selected country code.
+        let full = hadPlus ? "+" + digits : countryCode + digits
+        bleManager.dial(full)
+    }
+
+    /// A small selectable chip. The Mac-Bluetooth option is disabled (HFP is not
+    /// available on this Mac), so it is shown greyed out.
+    @ViewBuilder
+    private func methodChip(_ title: String, selected: Bool, enabled: Bool,
+                            action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.caption)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .background(selected ? Color.accentColor.opacity(0.25) : Color.secondary.opacity(0.10))
+                .cornerRadius(8)
+        }
+        .buttonStyle(.plain)
+        .foregroundColor(enabled ? .primary : Color.secondary.opacity(0.45))
+        .disabled(!enabled)
+        .help(enabled ? "" : L10n.callMethodMacUnavailable)
     }
 }
