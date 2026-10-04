@@ -35,6 +35,7 @@ enum PixelPacket {
         let isHotspot: Bool
         let deviceName: String   // phone model
         let btName: String       // phone Bluetooth name (8th field; "" on older payloads)
+        let remoteDialEnabled: Bool  // phone-side "远程拨号" switch (9th field; default true on older payloads)
     }
 
     static func parseTelemetry(_ fields: [String]) -> Telemetry? {
@@ -47,7 +48,8 @@ enum PixelPacket {
             isWifi: fields[4] == "true",
             isHotspot: fields[5] == "true",
             deviceName: fields[6],
-            btName: fields.count >= 8 ? fields[7] : ""
+            btName: fields.count >= 8 ? fields[7] : "",
+            remoteDialEnabled: fields.count >= 9 ? fields[8] == "1" : true
         )
     }
 

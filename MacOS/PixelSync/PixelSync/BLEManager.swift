@@ -102,6 +102,8 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
     // Remote dialing + synced (encrypted) contacts.
     enum CallMethod: String { case phone, macBluetooth }
     @Published var callMethod: CallMethod = .phone
+    /// Phone-side "远程拨号" switch (from telemetry); when off, dialing is disabled.
+    @Published var remoteDialEnabled: Bool = true
     @Published var contactCount: Int = 0
     private var contactBuffer: [MacContact] = []
 
@@ -714,6 +716,7 @@ extension BLEManager: CBPeripheralDelegate {
                 self.isHotspotActive = telemetry.isHotspot
                 self.deviceName = telemetry.deviceName
                 self.phoneBtName = telemetry.btName
+                self.remoteDialEnabled = telemetry.remoteDialEnabled
                 // Auto-select the paired Classic device matching the phone's
                 // Bluetooth name (for "Mac 本机" HFP calling).
                 if self.callMethod == .macBluetooth {

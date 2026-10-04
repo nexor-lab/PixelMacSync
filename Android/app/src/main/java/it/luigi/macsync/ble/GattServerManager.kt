@@ -315,9 +315,18 @@ class GattServerManager private constructor(private val context: Context) {
 
     private fun telemetryPayload(): String {
         val networkStringToUse = if (isWifiConnected) wifiSSID else currentCellularNetwork
+        // 9th field: the phone-side "remote dialing" switch, so the Mac can
+        // disable its dial UI when the user has turned it off.
+        val remoteDial = if (ContactsRepository.remoteDialEnabled(context)) "1" else "0"
         return "$currentBatteryLevel\u001F$isCharging\u001F$networkStringToUse\u001F$currentSignal" +
             "\u001F$isWifiConnected\u001F$isHotspotActive\u001F${android.os.Build.MODEL}" +
-            "\u001F${bluetoothName()}"
+            "\u001F${bluetoothName()}\u001F$remoteDial"
+    }
+
+    /** Force a telemetry push now (bypasses the ~1/s throttle), e.g. after a toggle. */
+    fun refreshTelemetryNow() {
+        lastTelemetrySentMs = 0L
+        notifyMacTelemetry()
     }
 
     @Volatile private var lastTelemetrySentMs = 0L
@@ -383,6 +392,13 @@ class GattServerManager private constructor(private val context: Context) {
 
     /** Remote dial from the Mac. The number is validated; it is never logged. */
     private fun handleDial(parts: List<String>) {
+        // The phone-side "远程拨号" switch is authoritative: when off, the Mac
+        // cannot place calls, regardless of what it sends.
+        if (!ContactsRepository.remoteDialEnabled(context)) {
+            Diagnostics.log("dial -> disabled")
+            sendNotificationToMac("DIAL_RESULT\u001Fdisabled")
+            return
+        }
         val number = parts.getOrNull(1).orEmpty()
         // The system never reports outgoing numbers to us, so remember the number
         // we dialed: the ensuing OFFHOOK/IDLE call event then carries it and the

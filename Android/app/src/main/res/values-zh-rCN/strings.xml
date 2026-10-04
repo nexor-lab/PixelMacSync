@@ -20,7 +20,7 @@
     <string name="contacts_remote_dial">远程拨号</string>
     <string name="contacts_auto_sync">首次连接自动同步</string>
     <string name="contacts_direct_dial">直接拨出（root/Shizuku）</string>
-    <string name="contacts_direct_dial_sub">不打开拨号盘，直接拨出（需授权 root/Shizuku）</string>
+    <string name="contacts_direct_dial_sub">默认开启；有 root/Shizuku 时直接拨号，不打开拨号盘</string>
     <string name="contacts_select_title">选择联系人</string>
     <string name="contacts_empty">没有联系人（或未授权）</string>
 

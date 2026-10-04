@@ -6,14 +6,13 @@ import android.net.Uri
 import android.util.Log
 
 /**
- * Remote dialing (Mac -> phone). **Never places a real call.**
+ * Remote dialing (Mac -> phone).
  *
- * The number is validated strictly, then the phone opens the **system dialer**
- * prefilled with it (`ACTION_DIAL`) — a *simulated dial*: the user still has to
- * press the call button themselves. `ACTION_CALL` is deliberately never used.
- *
- * With root/Shizuku the dialer is brought up via a privileged `am start` so it
- * works from the background; otherwise a plain `ACTION_DIAL` intent is used.
+ * The number is validated strictly. When root/Shizuku privilege is available and
+ * "direct call" is on (default), the call is placed **directly** via a privileged
+ * `am start -a ACTION_CALL` — no dialer. Otherwise the phone opens the **system
+ * dialer** prefilled (`ACTION_DIAL`) — a *simulated dial* where the user presses
+ * call. Without privilege it always falls back to the dialer.
  *
  * The dialed number is never logged.
  */
@@ -38,7 +37,8 @@ object Dialer {
         val direct = ContactsRepository.directDial(context)
         if (PrivilegeManager.isCurrentMethodReady(context)) {
             val action = if (direct) "android.intent.action.CALL" else "android.intent.action.DIAL"
-            val out = PrivilegeManager.exec(context, "am start -a $action -d tel:$n")
+            // The URI is single-quoted so shell metacharacters (+ * # &) survive.
+            val out = PrivilegeManager.exec(context, "am start -a $action -d 'tel:$n'")
             val failed = out.contains("Error", true) || out.contains("Exception", true)
             if (!failed) {
                 Log.d(TAG, if (direct) "Chiamata diretta (privilegiata)"

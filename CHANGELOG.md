@@ -1,5 +1,36 @@
 # CHANGELOG.md
 
+## [v2.3-beta.1] — 2026-10-04
+
+Beta optimization + control-plane feature set (GitHub prerelease “v2.3-beta.1（优化版）”).
+
+### Fixed
+
+- **Direct call with privilege**: with root/Shizuku available, a Mac dial now places the
+  call directly (`ACTION_CALL`, no dialer detour). The phone-side “直接拨出” switch is now
+  **on by default**; without privilege it still falls back to the dialer.
+- **Mac dialing country code**: `+86` (default) dials the number as a **local** number
+  (no international prefix); other selected country codes are prepended; a manually typed
+  leading `+` is treated as a full international number.
+- **“远程拨号” switch is now enforced**: when off, the phone rejects `DIAL` with
+  `DIAL_RESULT disabled` and no call is placed. The state is reported to the Mac (telemetry
+  9th field), which disables its dial button and shows a hint.
+
+### Added / changed
+
+- **Session handshake** (`HELLO` / `SESSION_READY`) fixes the false “Mac 已连接” state
+  (BUG-001); legacy v2.2 clients keep working via a command fallback.
+- **Idempotent hotspot control** from real system state (`ALREADY_ON` / `ALREADY_OFF`)
+  removes the spurious “Error” (BUG-002).
+- **Call control** (answer / reject / end / mute) over BLE, **remote dialing**, **encrypted
+  contacts**, **Multi-Mac Phase 1**, debug/beta/release variants, and a size optimization
+  pass (Beta APK R8-minified, 60 MB → 2.6 MB; single **Universal** macOS package).
+- **EXPERIMENTAL — “Mac 本机” call audio (HFP)**: the Mac acts as a Bluetooth hands-free
+  unit (`IOBluetoothHandsFreeDevice`). It requires Bluetooth-Classic pairing, which **can
+  break the BLE link** on the Intel/Broadcom baseline (ADR-028); SCO audio is unverified and
+  may double-play (ADR-026). The UI now labels it **“Mac 本机（实验性）”** and shows a
+  warning; the default call method remains **“手机”**.
+
 ## [android-auth-method + about] — 2026-10-03
 
 Android app: choose how privileged commands run (root or Shizuku), plus an

@@ -570,6 +570,8 @@ fun ContactsCard(context: Context, onManage: () -> Unit) {
                             onCheckedChange = {
                                 remoteDial = it
                                 ContactsRepository.setRemoteDialEnabled(context, it)
+                                // Push the new state to the Mac so its dial UI updates.
+                                GattServerManager.getInstance(context).refreshTelemetryNow()
                             }
                         )
                     }

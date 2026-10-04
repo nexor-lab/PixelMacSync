@@ -19,7 +19,8 @@ object ContactsRepository {
     private const val KEY_SELECTED = "selected_contacts"
     private const val KEY_REMOTE_DIAL = "remote_dial_enabled"
     private const val KEY_AUTO_SYNC = "contact_auto_sync"
-    private const val KEY_DIRECT_DIAL = "direct_dial_enabled"
+    // v2 key: default flipped to on, so ignore any old explicit "false".
+    private const val KEY_DIRECT_DIAL = "direct_dial_enabled_v2"
 
     fun hasPermission(context: Context): Boolean =
         context.checkSelfPermission(Manifest.permission.READ_CONTACTS) ==
@@ -80,11 +81,12 @@ object ContactsRepository {
     }
 
     /**
-     * When enabled, a Mac dial places the call **directly** via the privileged
-     * shell (`ACTION_CALL`, root/Shizuku) instead of opening the dialer. Default
-     * off (opening the dialer is the safe simulation).
+     * When enabled (default **on**), a Mac dial places the call **directly** via
+     * the privileged shell (`ACTION_CALL`, root/Shizuku) instead of opening the
+     * dialer. Without privilege it always falls back to the dialer. Turn it off to
+     * always open the system dialer prefilled (simulated dial).
      */
-    fun directDial(context: Context): Boolean = prefs(context).getBoolean(KEY_DIRECT_DIAL, false)
+    fun directDial(context: Context): Boolean = prefs(context).getBoolean(KEY_DIRECT_DIAL, true)
     fun setDirectDial(context: Context, value: Boolean) {
         prefs(context).edit().putBoolean(KEY_DIRECT_DIAL, value).apply()
     }

@@ -108,13 +108,17 @@ See `MacRegistry.kt` (phone) and `BLEManager` (Mac).
 
 ## Telemetry channel (Notify / Read)
 
-UTF-8, `US`-separated, 7 fields:
+UTF-8, `US`-separated, 9 fields:
 
 ```
-<battery%> US <isCharging:true|false> US <network|SSID> US <signal 0..4> US <isWifi:true|false> US <isHotspotActive:true|false> US <Build.MODEL>
+<battery%> US <isCharging:true|false> US <network|SSID> US <signal 0..4> US <isWifi:true|false> US <isHotspotActive:true|false> US <Build.MODEL> US <phone BT name> US <remoteDial:1|0>
 ```
 
-Example: `87\x1Ftrue\x1FMyWiFi\x1F3\x1Ftrue\x1Ffalse\x1FTest Phone`
+Example: `87\x1Ftrue\x1FMyWiFi\x1F3\x1Ftrue\x1Ffalse\x1FTest Phone\x1FPOCO F5 Pro\x1F1`
+
+The 8th field (phone Bluetooth name) is used for HFP auto-selection; the 9th
+(the phone-side “远程拨号” switch) lets the Mac disable its dial UI. Older 7/8-field
+payloads parse with an empty name and remote-dial = **true**.
 
 Mac parses it in `didUpdateValueFor` (`telemetryUUID` branch) and updates the
 menu-bar popover.
@@ -294,8 +298,11 @@ CALL US <event> US <number> US <name>
   “未知号码 / Unknown number”.
 - The contact name is resolved via `ContactsContract.PhoneLookup` **only if**
   `READ_CONTACTS` is granted; otherwise the name field is empty.
-- **No call audio / no HFP** (see ARCHITECTURE target). Event delivery **and**
-  BLE call control (below) only.
+- **Call audio over HFP is EXPERIMENTAL** (see “Mac 本机” below): the Mac can act
+  as a Bluetooth hands-free unit (`IOBluetoothHandsFreeDevice`), but SCO audio is
+  unverified, may double-play, and the required Classic pairing can break the BLE
+  link on the Intel/Broadcom baseline (ADR-026 / ADR-028). Event delivery **and**
+  BLE call control (below) are the stable paths.
 
 ### Call control (Mac → Android → telephony)
 
@@ -334,7 +341,8 @@ active (popover), and reports a failure banner if `CALL_RESULT` is `failed`.
 ### Contacts (Android → Mac, encrypted at rest on the Mac)
 
 Only the contacts the user **selects** are sent (default: none). The Mac stores
-them encrypted (AES-GCM, key in the Keychain) — never plaintext.
+them encrypted (AES-GCM, key in a local `0600` file — **not** the Keychain;
+Secure Enclave when available) — never plaintext (ADR-025 / ADR-027).
 
 ```
 CONTACT_BEGIN US <count>
@@ -352,19 +360,24 @@ CONTACT_DEL   US <id>                            (removed on the phone)
 
 ```
 DIAL        US <number>
-DIAL_RESULT US ok | failed | invalid
+DIAL_RESULT US ok | failed | invalid | disabled
 ```
 
-- **No real call is ever placed.** The number is validated on Android
-  (`^[+*#0-9]{1,20}$`) to prevent shell injection, then the phone opens the
-  **system dialer** prefilled (`ACTION_DIAL`) — a *simulated dial*; the user still
-  presses call. With root/Shizuku it is brought up via a privileged `am start`
-  (background-safe). `ACTION_CALL` is deliberately **never** used.
+- The number is validated on Android (`^[+*#0-9]{1,20}$`) to prevent shell
+  injection. When root/Shizuku is available, the call is placed **directly** via a
+  privileged `am start -a ACTION_CALL` (no dialer) — the **“直接拨出（root/Shizuku）”**
+  switch is **on by default**. Turn it off, or have no privilege, and the phone
+  instead opens the **system dialer** prefilled (`ACTION_DIAL`) — a *simulated dial*
+  where the user presses call (ADR-025).
+- The phone-side **“远程拨号”** switch is authoritative: when off, `DIAL` is
+  rejected with `DIAL_RESULT US disabled` and no call/dialer is opened.
 - Contacts stay on the phone; the Mac's dial field suggests matches by number
   prefix / name from its own encrypted store.
-- **Call audio**: "phone call" is fully supported. "Mac Bluetooth call" (HFP
-  audio) is **not available** on this Mac (no public HFP-HF path) and is shown
-  greyed in the UI.
+- **Call audio**: "phone call" (audio on the phone) is fully supported.
+  "**Mac 本机（实验性）**" (HFP audio on the Mac) is **EXPERIMENTAL**: it requires
+  Bluetooth-Classic pairing and can break the BLE link on the Intel/Broadcom
+  baseline (ADR-026 / ADR-028). The UI labels it experimental and shows a warning;
+  default remains “手机”.
 
 ## Music-control extension (NEW in this port)
 

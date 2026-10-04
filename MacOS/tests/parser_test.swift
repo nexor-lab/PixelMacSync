@@ -43,6 +43,13 @@ enum ParserTests {
             check(PixelPacket.parseTelemetry(["1", "true"]) == nil, "rejects short telemetry")
             let bad = PixelPacket.fields(from: data("5\(US)false\(US)--\(US)x\(US)false\(US)false\(US)Phone"))!
             check(PixelPacket.parseTelemetry(bad)?.signal == 0, "non-numeric signal defaults to 0")
+
+            // 9th field: phone-side remote-dial switch. Absent -> true (older clients); "0" -> false.
+            check(t?.remoteDialEnabled == true, "remote dial defaults true on 8-field payload")
+            let remoteOff = PixelPacket.fields(from: data("5\(US)false\(US)--\(US)1\(US)false\(US)false\(US)Phone\(US)BT\(US)0"))!
+            check(PixelPacket.parseTelemetry(remoteOff)?.remoteDialEnabled == false, "remote dial 0 -> false")
+            let remoteOn = PixelPacket.fields(from: data("5\(US)false\(US)--\(US)1\(US)false\(US)false\(US)Phone\(US)BT\(US)1"))!
+            check(PixelPacket.parseTelemetry(remoteOn)?.remoteDialEnabled == true, "remote dial 1 -> true")
         }
 
         print("== Notification POST ==")

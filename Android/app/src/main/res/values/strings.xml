@@ -20,7 +20,7 @@
     <string name="contacts_remote_dial">Remote dialing</string>
     <string name="contacts_auto_sync">Auto-sync on connect</string>
     <string name="contacts_direct_dial">Direct call (root/Shizuku)</string>
-    <string name="contacts_direct_dial_sub">Place the call directly, without opening the dialer</string>
+    <string name="contacts_direct_dial_sub">On by default; with root/Shizuku, dial directly without opening the dialer</string>
     <string name="contacts_select_title">Select contacts</string>
     <string name="contacts_empty">No contacts (or permission not granted)</string>
 

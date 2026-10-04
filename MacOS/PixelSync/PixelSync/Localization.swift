@@ -143,10 +143,14 @@ enum L10n {
     static var dialAction: String { t("Call", "拨号") }
     static var callMethodLabel: String { t("Call via", "通话方式") }
     static var callMethodPhone: String { t("Phone", "手机") }
-    static var callMethodMac: String { t("This Mac", "Mac 本机") }
+    static var callMethodMac: String { t("This Mac (Experimental)", "Mac 本机（实验性）") }
     static var callMethodMacUnavailable: String {
         t("Call audio is routed to this Mac over Bluetooth (HFP); pair the phone first.",
           "通话音频经由蓝牙（HFP）在 Mac 本机播放；请先与手机配对。")
+    }
+    static var callMethodMacWarning: String {
+        t("Experimental: requires Bluetooth-Classic pairing and may interrupt the BLE link. Call audio is unverified. Use “Phone” by default.",
+          "实验性：需经典蓝牙配对，可能中断 BLE 连接；通话音频未验证。默认请用“手机”。")
     }
     static var handsFreeConnect: String { t("Connect", "连接") }
     static var handsFreeSelectDevice: String { t("Select device to connect", "选择连接设备") }
@@ -155,11 +159,16 @@ enum L10n {
           "请先在“系统设置 → 蓝牙”中与手机完成配对。")
     }
     static func contactsSynced(_ n: Int) -> String { t("\(n) contacts", "\(n) 个联系人") }
+    static var dialDisabledHint: String {
+        t("Remote dialing is off on the phone (Contacts → Remote dialing).",
+          "手机端已关闭“远程拨号”（联系人 → 远程拨号）。")
+    }
     static var dialFailedTitle: String { t("Call not placed", "拨号未成功") }
     static func dialFailure(_ status: String) -> String {
         switch status {
-        case "invalid": return t("Invalid phone number.", "手机号无效。")
-        default:        return t("Could not place the call.", "无法拨出电话。")
+        case "invalid":  return t("Invalid phone number.", "手机号无效。")
+        case "disabled": return t("Remote dialing is disabled on the phone.", "手机端已关闭远程拨号。")
+        default:         return t("Could not place the call.", "无法拨出电话。")
         }
     }
 

@@ -404,7 +404,13 @@ struct DialView: View {
                     }
 
                 Button(L10n.dialAction) { call() }
-                    .disabled(!bleManager.isConnected || !number.contains(where: { $0.isNumber }))
+                    .disabled(!bleManager.isConnected || !bleManager.remoteDialEnabled
+                              || !number.contains(where: { $0.isNumber }))
+            }
+
+            if !bleManager.remoteDialEnabled {
+                Text(L10n.dialDisabledHint)
+                    .font(.caption2).foregroundColor(.orange)
             }
 
             if !suggestions.isEmpty {
@@ -440,6 +446,9 @@ struct DialView: View {
             }
 
             if bleManager.callMethod == .macBluetooth {
+                Text(L10n.callMethodMacWarning)
+                    .font(.caption2).foregroundColor(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
                 handsFreeControls()
             } else if !bleManager.isConnected {
                 Text(L10n.musicUnavailable).font(.caption2).foregroundColor(.secondary)
@@ -487,14 +496,21 @@ struct DialView: View {
         var digits = number.filter { $0.isNumber }
         guard !digits.isEmpty else { return }
         digits = String(digits.prefix(15))
-        // If the user typed a leading "+", treat it as a full number; otherwise
-        // prefix the selected country code.
-        let full = hadPlus ? "+" + digits : countryCode + digits
+        // A leading "+" means the user typed a full international number.
+        // The default +86 (China) is dialed as a local number (no international
+        // prefix); any other selected country code is prepended.
+        let full: String
+        if hadPlus {
+            full = "+" + digits
+        } else if countryCode == "+86" {
+            full = digits
+        } else {
+            full = countryCode + digits
+        }
         bleManager.dial(full)
     }
 
-    /// A small selectable chip. The Mac-Bluetooth option is disabled (HFP is not
-    /// available on this Mac), so it is shown greyed out.
+    /// A small selectable chip used for the call-method selector.
     @ViewBuilder
     private func methodChip(_ title: String, selected: Bool, enabled: Bool,
                             action: @escaping () -> Void) -> some View {
