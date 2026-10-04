@@ -112,6 +112,7 @@ struct ContentView: View {
                             .lineLimit(1)
                     }
                 }
+                .transition(.move(edge: .top).combined(with: .opacity))
                 Divider()
             }
 
@@ -146,6 +147,9 @@ struct ContentView: View {
         }
         .padding(16)
         .frame(width: 320)
+        .animation(.easeInOut(duration: 0.25), value: bleManager.callPhase)
+        .animation(.easeInOut(duration: 0.25), value: bleManager.isConnected)
+        .animation(.easeInOut(duration: 0.20), value: bleManager.hotspotState)
 
         if !L10n.buildWatermark.isEmpty {
             Text(L10n.buildWatermark)
@@ -441,6 +445,7 @@ struct DialView: View {
                 Text(L10n.musicUnavailable).font(.caption2).foregroundColor(.secondary)
             }
         }
+        .animation(.easeInOut(duration: 0.15), value: suggestions.count)
     }
 
     /// Paired Bluetooth-Classic phones + HFP connection status ("Mac 本机").

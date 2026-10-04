@@ -51,9 +51,6 @@
     <string name="fgs_channel_desc">Keeps the BLE connection to the Mac alive</string>
     <string name="fgs_title">MacSync running</string>
     <string name="fgs_text">Listening in background…</string>
-    <string name="hotspot_profile_title">Hotspot to save on Mac</string>
-    <string name="hotspot_ssid_label">SSID</string>
-    <string name="hotspot_password_label">Password</string>
 
     <!-- Authorization method -->
     <string name="auth_method_title">Authorization method</string>
@@ -65,9 +62,7 @@
     <string name="auth_shizuku_desc">Privileged commands without root</string>
     <string name="auth_status_available">Available</string>
     <string name="auth_status_unavailable">Unavailable</string>
-    <string name="auth_shizuku_installed">Installed</string>
     <string name="auth_shizuku_not_installed">Not installed</string>
-    <string name="auth_shizuku_running">Running</string>
     <string name="auth_shizuku_not_running">Not running</string>
     <string name="auth_shizuku_granted">Permission granted</string>
     <string name="auth_shizuku_denied">Permission not granted</string>
@@ -79,8 +74,6 @@
 
     <!-- About -->
     <string name="about_title">About</string>
-    <string name="about_intro_title">About this app</string>
-    <string name="about_intro">PixelMacSync links your phone and Mac over Bluetooth Low Energy: notifications, calls, hotspot, app icons, music and dialing — no Wi-Fi, cloud or cable.</string>
     <string name="about_crypto_title">Contact encryption</string>
     <string name="about_crypto">Contacts are only sent when you select them; the Mac stores them AES-GCM encrypted with a key kept on that Mac (never in the Keychain, not synced to iCloud). Plaintext lives only in memory.</string>
     <string name="about_device_title">Device info (Beta only)</string>

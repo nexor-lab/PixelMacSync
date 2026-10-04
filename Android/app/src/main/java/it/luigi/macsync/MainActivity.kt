@@ -14,7 +14,10 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -235,12 +238,19 @@ fun MainScreen(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Center
         ) {
-            Text(
-                text = statusText,
-                style = MaterialTheme.typography.bodyLarge,
-                color = if (isConnected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                fontWeight = FontWeight.Medium
+            val statusColor by animateColorAsState(
+                targetValue = if (isConnected) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.onSurfaceVariant,
+                label = "statusColor"
             )
+            AnimatedContent(targetState = statusText, label = "status") { text ->
+                Text(
+                    text = text,
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = statusColor,
+                    fontWeight = FontWeight.Medium
+                )
+            }
 
             Spacer(modifier = Modifier.width(8.dp))
 
@@ -382,7 +392,7 @@ fun MacDevicesCard(gattServerManager: GattServerManager) {
         shape = RoundedCornerShape(20.dp),
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
     ) {
-        Column {
+        Column(modifier = Modifier.animateContentSize()) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()

@@ -56,7 +56,10 @@ android {
         // on-device diagnostics: the only diagnostics sink lives in /src/debug,
         // which is not part of this variant.
         create("beta") {
-            initWith(getByName("debug"))
+            // Minified + resource-shrunk like release (much smaller APK), but
+            // debug-signed so it installs easily. Beta branding via src/beta,
+            // IS_BETA=true. No debug diagnostics (src/debug is debug-only).
+            initWith(getByName("release"))
             applicationIdSuffix = ""
             versionNameSuffix = "-beta"
             buildConfigField("boolean", "IS_BETA", "true")

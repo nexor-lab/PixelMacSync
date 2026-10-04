@@ -51,9 +51,6 @@
     <string name="fgs_channel_desc">保持与 Mac 的 BLE 连接</string>
     <string name="fgs_title">MacSync 运行中</string>
     <string name="fgs_text">后台监听中…</string>
-    <string name="hotspot_profile_title">需在 Mac 保存的热点</string>
-    <string name="hotspot_ssid_label">网络名称</string>
-    <string name="hotspot_password_label">密码</string>
 
     <!-- 授权方法 -->
     <string name="auth_method_title">授权方法</string>
@@ -65,9 +62,7 @@
     <string name="auth_shizuku_desc">无需 root 的特权执行方式</string>
     <string name="auth_status_available">可用</string>
     <string name="auth_status_unavailable">不可用</string>
-    <string name="auth_shizuku_installed">已安装</string>
     <string name="auth_shizuku_not_installed">未安装</string>
-    <string name="auth_shizuku_running">运行中</string>
     <string name="auth_shizuku_not_running">未运行</string>
     <string name="auth_shizuku_granted">已授权</string>
     <string name="auth_shizuku_denied">未授权</string>
@@ -79,8 +74,6 @@
 
     <!-- 关于 -->
     <string name="about_title">关于</string>
-    <string name="about_intro_title">软件简介</string>
-    <string name="about_intro">PixelMacSync 通过蓝牙低功耗（BLE）把手机与 Mac 相连：通知、来电、热点、应用图标、音乐与拨号；无需 Wi-Fi、云端或数据线。</string>
     <string name="about_crypto_title">联系人加密</string>
     <string name="about_crypto">联系人仅在你勾选后才传输；Mac 端以 AES-GCM 加密保存，密钥只存于本机（不进钥匙串、不同步 iCloud），明文仅存在于内存。</string>
     <string name="about_device_title">设备信息（仅 Beta）</string>
