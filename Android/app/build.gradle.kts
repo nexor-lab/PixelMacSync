@@ -63,6 +63,9 @@ android {
             applicationIdSuffix = ""
             versionNameSuffix = "-beta"
             buildConfigField("boolean", "IS_BETA", "true")
+            // release sets BUILD_TIMESTAMP to ""; give beta its own build time so
+            // the watermark shows it (release also inherits this buildType).
+            buildConfigField("String", "BUILD_TIMESTAMP", "\"$debugBuildStamp\"")
             signingConfig = signingConfigs.getByName("debug")
         }
     }
