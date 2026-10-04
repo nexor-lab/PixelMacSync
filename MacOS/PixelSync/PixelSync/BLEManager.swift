@@ -34,6 +34,11 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
     var commandCharacteristic: CBCharacteristic?
     
     var connectionAttempts = 0
+    /// Exponential reconnect backoff (seconds). On a flaky Intel/Broadcom radio,
+    /// hammering connect/scan makes it worse; back off instead.
+    private var reconnectBackoff: Double = 0
+    /// Cooldown so the heavy CBCentralManager re-creation can't happen too often.
+    private var lastForceRestart = Date.distantPast
     
     // --- DIZIONARIO DINAMICO DELLE APP ---
     var appMap: [String: String] = [:]
@@ -302,12 +307,7 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
         connectionState = .connecting
         
         connectionAttempts += 1
-        if connectionAttempts > 3 {
-            NSLog("MacSync: Loop di connessione rilevato! Eseguo Hard Reset interno...")
-            forceRestartBluetooth()
-            return
-        }
-        
+        // No aggressive hard reset on a few failures — back off instead (Intel/Broadcom).
         centralManager.connect(peripheral, options: nil)
         
         DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) { [weak self] in
@@ -328,6 +328,7 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
     
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
         connectionAttempts = 0
+        resetBackoff()
         // BUG-001: the GATT link is not an application session yet. Stay in a
         // "verifying" state until Android confirms with SESSION_READY.
         connectionState = .handshaking
@@ -365,7 +366,7 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
             
             self.centralManager.stopScan()
             
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + self.nextBackoff()) {
                 if self.centralManager.state == .poweredOn {
                     self.startScanningOrReconnect()
                 }
@@ -375,8 +376,13 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
     
     func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
         NSLog("MacSync: Connessione fallita dal sistema.")
+        // Do NOT tear down/re-create the central here: on this Broadcom radio rapid
+        // churn is worse. Just back off and rescan.
+        pixelPeripheral?.delegate = nil
+        pixelPeripheral = nil
         DispatchQueue.main.async {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+            self.connectionState = .scanning
+            DispatchQueue.main.asyncAfter(deadline: .now() + self.nextBackoff()) {
                 if self.centralManager.state == .poweredOn {
                     self.startScanningOrReconnect()
                 }
@@ -543,23 +549,15 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
             self.pixelPeripheral = peripheral
             self.pixelPeripheral?.delegate = self
             connectionState = .cacheConnecting
-            
             connectionAttempts += 1
-            if connectionAttempts > 3 {
-                forceRestartBluetooth()
-                return
-            }
-            
             centralManager.connect(peripheral, options: nil)
-            
             DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) { [weak self] in
                 guard let self = self else { return }
                 if self.pixelPeripheral?.identifier == peripheral.identifier && peripheral.state != .connected {
                     self.centralManager.cancelPeripheralConnection(peripheral)
                     self.connectionState = .scanning
-                    
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                        self.forceRestartBluetooth()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + self.nextBackoff()) {
+                        if self.centralManager.state == .poweredOn { self.startScanningOrReconnect() }
                     }
                 }
             }
@@ -572,13 +570,36 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
             DispatchQueue.main.asyncAfter(deadline: .now() + 20.0) { [weak self] in
                 guard let self = self else { return }
                 if self.connectionState == .scanning && self.pixelPeripheral == nil {
-                    self.forceRestartBluetooth()
+                    // Automatic path → respect the cooldown; don't churn the radio.
+                    self.forceRestartBluetooth(force: false)
                 }
             }
         }
     }
 
-    func forceRestartBluetooth() {
+    // MARK: - Reconnect tuning (per architecture)
+    // Apple Silicon radios coexist with Classic + LE and connect quickly, so use
+    // fast/aggressive retries. The older Intel/Broadcom baseline needs slower
+    // backoff and a long cooldown to avoid link churn.
+
+    private var backoffBase: Double { Platform.isAppleSilicon ? 0.5 : 1 }
+    private var backoffMax: Double { Platform.isAppleSilicon ? 8 : 30 }
+    private var restartCooldown: Double { Platform.isAppleSilicon ? 10 : 60 }
+
+    private func nextBackoff() -> Double {
+        reconnectBackoff = reconnectBackoff == 0 ? backoffBase : min(backoffMax, reconnectBackoff * 2)
+        return reconnectBackoff
+    }
+    private func resetBackoff() { reconnectBackoff = 0 }
+
+    /// Re-creates CBCentralManager. `force=false` is used by the automatic paths
+    /// (cooldown reserved); user actions / wake pass `force=true`.
+    func forceRestartBluetooth(force: Bool = true) {
+        let now = Date()
+        if !force && now.timeIntervalSince(lastForceRestart) < restartCooldown { return }
+        lastForceRestart = now
+        resetBackoff()
+
         if let peripheral = pixelPeripheral {
             centralManager.cancelPeripheralConnection(peripheral)
             peripheral.delegate = nil

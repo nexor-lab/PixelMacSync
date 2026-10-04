@@ -29,7 +29,14 @@
 | `DEBUG_BUILD=1 ./build_macos.sh` | PixelSync Debug | `PixelSyncDebug=true` |
 | `BETA_BUILD=1 ./build_macos.sh` | PixelSync Beta | `PixelSyncBeta=true` |
 
-The popover shows a `DEBUG <build time>` / `BETA` watermark accordingly; release shows none.
+The popover shows a `DEBUG <build time>` / `BETA <version> <build time>` watermark; release shows none.
+
+**Single Universal package.** `build_macos.sh` defaults to `ARCH=universal`, so the shipped
+`.app` / `.dmg` contains **both** `x86_64` and `arm64` in one bundle — the same installer runs
+on Intel and Apple Silicon (through M4). At runtime each Mac loads its own slice; some behavior
+is architecture-conditional (e.g. BLE reconnect backoff, and the contacts key vault:
+Secure Enclave on Apple Silicon vs a local file on the older Intel baseline). **No separate
+Intel/Mac packages.**
 
 ## macOS (PixelSync.app) — macOS 12.7, Intel x86_64
 

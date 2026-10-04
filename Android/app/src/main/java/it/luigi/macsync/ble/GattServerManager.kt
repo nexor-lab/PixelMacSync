@@ -320,7 +320,15 @@ class GattServerManager private constructor(private val context: Context) {
             "\u001F${bluetoothName()}"
     }
 
+    @Volatile private var lastTelemetrySentMs = 0L
+
     private fun notifyMacTelemetry() {
+        // Coalesce high-frequency updates (battery/wifi/signal) to ~1/s: a flaky
+        // Intel/Broadcom link benefits from fewer notification packets.
+        val now = System.currentTimeMillis()
+        if (now - lastTelemetrySentMs < 1000) return
+        lastTelemetrySentMs = now
+
         val mac = connectedMac
         val characteristic = telemetryCharacteristic
 
