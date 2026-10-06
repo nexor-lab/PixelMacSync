@@ -85,6 +85,7 @@ final class UnlockManager {
         awayLockWork?.cancel()
         awayLockWork = nil
         guard remoteWake, hasTrustedDevice else { return }
+        if ScreenControl.isLidClosed() { return }
         if LockStateMonitor.isScreenLocked() {
             ScreenControl.wakeDisplay()
             triggerUnlock(reason: "reconnect")
@@ -225,6 +226,15 @@ final class UnlockManager {
     /// Start the unlock flow when the screen locks. Silent no-op when no phone
     /// is paired (so we never spam a misleading Mac notification).
     func triggerUnlock(reason: String) {
+        // Only when the lid is open AND the screen is actually locked.
+        if ScreenControl.isLidClosed() {
+            NSLog("PixelSync: unlock skipped (\(reason)) — lid closed")
+            return
+        }
+        if !LockStateMonitor.isScreenLocked() {
+            NSLog("PixelSync: unlock skipped (\(reason)) — screen not locked")
+            return
+        }
         guard let device = deviceStore.devices.first(where: { $0.enabled }) else {
             NSLog("PixelSync: unlock skipped (\(reason)) — no trusted phone")
             return

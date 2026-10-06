@@ -8,10 +8,23 @@
 //
 
 import Foundation
+import IOKit
 import IOKit.pwr_mgt
 import Darwin
 
 enum ScreenControl {
+
+    /// True while the MacBook lid is closed (clamshell). Reads IOPMrootDomain's
+    /// AppleClamshellState; desktop Macs (no lid) always report false.
+    static func isLidClosed() -> Bool {
+        let service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("IOPMrootDomain"))
+        guard service != 0 else { return false }
+        defer { IOObjectRelease(service) }
+        guard let prop = IORegistryEntryCreateCFProperty(
+            service, "AppleClamshellState" as CFString, kCFAllocatorDefault, 0)?
+            .takeRetainedValue() else { return false }
+        return (prop as? Bool) ?? false
+    }
 
     /// Lock the screen immediately (same effect as Ctrl+Cmd+Q).
     static func lockScreen() {

@@ -254,6 +254,8 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
         unlockManager.sendCommand = { [weak self] cmd in self?.sendCommand(cmd) }
         lockMonitor.onLocked = { [weak self] in
             guard let self = self else { return }
+            // Clamshell sleep / dark wake: do not hold the display or notify.
+            guard !ScreenControl.isLidClosed() else { return }
             // Keep the screen on while the plugin waits for the phone grant.
             self.unlockManager.holdDisplayAwake()
             self.unlockManager.triggerUnlock(reason: "lock")
@@ -357,9 +359,27 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
             self.resetMusic()
         }
 
-        // Diamo 4 secondi al Mac per riattivare i driver hardware
-        DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) {
-            self.forceRestartBluetooth()
+        // Fast path: after a short sleep the OS usually still has the peripheral
+        // cached, so try an immediate reconnect before paying for a full engine
+        // restart (which is what made the phone notification appear "a few
+        // seconds" late after opening the lid).
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            if self.centralManager.state == .poweredOn {
+                self.startScanningOrReconnect()
+            } else {
+                self.forceRestartBluetooth()
+            }
+        }
+        // Fallback watchdog: if still not connected after ~3 s, restart cleanly.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.2) {
+            if !self.isConnected, self.centralManager.state == .poweredOn {
+                self.forceRestartBluetooth()
+            }
+        }
+        // If the link survived the sleep, still fire the (lid+locked) unlock flow
+        // shortly after waking, so the phone is notified promptly.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+            if self.isConnected { self.unlockManager.handleLinkRestored() }
         }
     }
 
