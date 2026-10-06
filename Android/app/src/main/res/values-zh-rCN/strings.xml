@@ -76,6 +76,8 @@
     <string name="about_title">关于</string>
     <string name="about_crypto_title">联系人加密</string>
     <string name="about_crypto">联系人仅在你勾选后才传输；Mac 端以 AES-GCM 加密保存，密钥只存于本机（不进钥匙串、不同步 iCloud），明文仅存在于内存。</string>
+    <string name="about_unlock_title">远程解锁安全策略</string>
+    <string name="about_unlock">解锁仅通过蓝牙（BLE）传输，无云端、无网络。手机以受指纹保护的 Android Keystore ECDSA P-256 私钥，对一次性 32 字节随机挑战做 SHA-256 签名；Mac 用配对时保存的公钥验签，再经 macOS PAM 授权解锁。全程不存储、不传输、不输入 Mac 密码。</string>
     <string name="about_device_title">设备信息（仅 Beta）</string>
     <string name="about_device_android">安卓设备：%1$s · Android %2$s（API %3$d）</string>
     <string name="about_device_mac">Mac：%1$s · %2$s</string>
@@ -83,4 +85,36 @@
     <string name="about_version">版本 %1$s</string>
     <string name="about_repo">GitHub 仓库</string>
     <string name="egg_message">🥚 BLE-only · 无云端 · 感谢使用 PixelMacSync！</string>
+
+    <!-- Mac 生物识别解锁 -->
+    <string name="unlock_channel_name">Mac 解锁</string>
+    <string name="unlock_channel_desc">解锁 Mac 的请求</string>
+    <string name="unlock_notif_title">解锁 Mac</string>
+    <string name="unlock_notif_text">%1$s 请求解锁 — 点击验证</string>
+    <string name="unlock_prompt_title">解锁 Mac</string>
+    <string name="unlock_prompt_subtitle">验证以解锁 %1$s</string>
+    <string name="unlock_prompt_cancel">取消</string>
+    <string name="unlock_macs_title">Mac 授权</string>
+    <string name="unlock_macs_empty">尚未配对 Mac</string>
+    <string name="unlock_test_biometric">测试生物识别</string>
+    <string name="unlock_revoke">撤销授权</string>
+    <string name="pair_channel_name">Mac 配对</string>
+    <string name="pair_channel_desc">配对请求</string>
+    <string name="pair_notif_title">与 %1$s 配对</string>
+    <string name="pair_notif_text">Mac 请求绑定 — 点击用指纹验证</string>
+    <string name="mac_unlock_bind">绑定指纹解锁</string>
+    <string name="mac_unlock_bound">已绑定指纹解锁</string>
+    <string name="mac_unlock_trigger">唤醒远程解锁</string>
+    <string name="mac_delete">删除</string>
+    <string name="mac_unlock_unbind">解绑</string>
+    <string name="pair_auth_title">验证身份以完成绑定</string>
+    <string name="unbind_auth_title">验证身份以解绑</string>
+    <string name="unbind_confirm_title">确认解绑？</string>
+    <string name="unbind_confirm_text">解绑后 %1$s 将无法用本机指纹解锁，需要重新绑定。</string>
+    <string name="unlock_policy_title">远程解锁安全策略</string>
+    <string name="unlock_policy_subtitle">设备远离自动锁定 · 远程唤醒</string>
+    <string name="unlock_away_lock_title">设备远离自动锁定</string>
+    <string name="unlock_away_lock_sub">手机离开后自动锁定 Mac 屏幕</string>
+    <string name="unlock_remote_wake_title">远程唤醒</string>
+    <string name="unlock_remote_wake_sub">关闭后隐藏绑定/解锁相关操作（保留断开与删除）</string>
 </resources>

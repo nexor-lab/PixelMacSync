@@ -106,4 +106,6 @@ dependencies {
     // Shizuku: privileged shell (hotspot, ecc.) senza root
     implementation("dev.rikka.shizuku:api:13.1.5")
     implementation("dev.rikka.shizuku:provider:13.1.5")
+    // Native biometric prompt (fingerprint / face) for Mac unlock
+    implementation("androidx.biometric:biometric:1.1.0")
 }

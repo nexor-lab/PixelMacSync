@@ -36,6 +36,9 @@ import it.luigi.macsync.HotspotController
 import it.luigi.macsync.MacRegistry
 import it.luigi.macsync.MediaSessionMonitor
 import it.luigi.macsync.SavedMac
+import it.luigi.macsync.unlock.PairingController
+import it.luigi.macsync.unlock.TrustedMacStore
+import it.luigi.macsync.unlock.UnlockController
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -584,6 +587,8 @@ class GattServerManager private constructor(private val context: Context) {
                 sessionReadySent = true
                 sendNotificationToMac("SESSION_READY\u001F${android.os.Build.MODEL}\u001F$peer")
                 Log.d("MacSync", "Sessione stabilita con $peer")
+                // Push the current remote-unlock policy to the Mac.
+                UnlockController.sendPolicy(context)
             }
             notifyMacTelemetry()
             maybePushContacts()
@@ -853,6 +858,16 @@ class GattServerManager private constructor(private val context: Context) {
                             }
                         }
                     }
+                    // --- MAC BIOMETRIC UNLOCK / PAIRING (see UNLOCK_DESIGN.md) ---
+                    // PAIR_BEGIN US 1 US <mac_id> US <mac_pub_b64> US <nonce_m_b64>
+                    "PAIR_BEGIN" -> PairingController.onBegin(context, parts)
+                    "PAIR_DONE" -> PairingController.onDone(context, parts.getOrNull(2) ?: "")
+                    "PAIR_CANCEL" -> PairingController.cancel(context)
+                    // UNLOCK_REQUEST US 1 US <session_id_b64> US <challenge_b64> US <expires_at_ms> US <mac_sig_b64>
+                    "UNLOCK_REQUEST" -> handleUnlockRequest(parts)
+                    "UNLOCK_CANCEL" -> UnlockController.cancel()
+                    // The Mac revoked this phone (or vice versa).
+                    "TRUST_REVOKED" -> parts.getOrNull(1)?.let { TrustedMacStore.setTrusted(context, it, false) }
                 }
 
                 if (responseNeeded) {
@@ -901,6 +916,16 @@ class GattServerManager private constructor(private val context: Context) {
                 Log.e("MacSync", "Impossibile registrare phoneStateReceiver: ${e.message}")
             }
         }
+    }
+
+    private fun handleUnlockRequest(parts: List<String>) {
+        val version = parts.getOrNull(1)?.toIntOrNull() ?: return
+        val sessionId = parts.getOrNull(2) ?: return
+        val challenge = parts.getOrNull(3) ?: return
+        val expiresAt = parts.getOrNull(4)?.toLongOrNull() ?: return
+        val macSig = parts.getOrNull(5) ?: return
+        val macId = currentMacId ?: handshakeMacId ?: MacRegistry.LEGACY_ID
+        UnlockController.onUnlockRequest(context, version, sessionId, macId, challenge, expiresAt, macSig)
     }
 
     private fun setupService() {

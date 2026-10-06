@@ -1,5 +1,39 @@
 # CHANGELOG.md
 
+## [Unreleased] — Phone biometric unlock of the Mac (2026-10-06)
+
+Lock the Mac and unlock it with the phone's fingerprint/face — passwordless, no password
+stored/typed, no keyboard simulation.
+
+### Added
+
+- **Phone unlock**: lock screen → Android notification → tap → **native BiometricPrompt** →
+  the phone signs a one-time random challenge with a fingerprint-gated **Android Keystore**
+  **ECDSA P-256 / SHA-256** key → BLE → Mac verifies against the paired public key → the Mac
+  authorizes the unlock through native **macOS PAM**. Verified end-to-end on macOS 12.7
+  (Intel): phone fingerprint → auto-unlock, no password.
+- **Pairing/binding** from the Android "connected devices" list (phone-initiated): Mac
+  authorizes with the **login password** (system dialog, never read/stored) and the phone
+  authorizes with a **fingerprint**. Unbind requires a fingerprint + confirmation (red).
+- **Spoof resistance**: a rogue BLE device cannot forge the signature without the phone's
+  private key (never exported); challenges are 32-byte random, single-use, expiring; devices
+  are revocable from both ends.
+- **Auto-lock when away**: lock the Mac when the phone moves away (BLE link lost for a grace
+  period). **Remote wake**: on reconnect, wake the display and allow fingerprint unlock.
+- **Remote unlock security policy** (Android Settings): `auto-lock when away` and
+  `remote wake` switches. Turning *remote wake* off hides the bind/unbind/wake controls in the
+  device list (keeping disconnect/remove).
+- **About**: a new "Remote unlock security" section describing the transport (BLE-only) and
+  the security method.
+
+### Notes
+
+- Lock-screen authorization uses **PAM** (`/etc/pam.d/screensaver`) with a small hardened,
+  signed **universal** (x86_64 + arm64) module; the older SecurityAgent Authorization-plugin
+  path is not used by the lock screen on this macOS.
+- No Mac password is ever stored, transmitted, or typed; the password path is unchanged.
+
+
 ## [v2.3-beta.1] — 2026-10-04
 
 Beta optimization + control-plane feature set (GitHub prerelease “v2.3-beta.1（优化版）”).

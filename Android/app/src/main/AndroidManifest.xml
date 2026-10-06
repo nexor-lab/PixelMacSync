@@ -37,6 +37,9 @@
          this permission before letting an app change the stream volume. -->
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
 
+    <!-- Native biometric authentication (fingerprint / face) for Mac unlock. -->
+    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+
     <application
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
@@ -66,6 +69,35 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Biometric unlock prompt. Started directly by the unlock
+             notification PendingIntent; invisible besides the system prompt. -->
+        <activity
+            android:name=".unlock.UnlockActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:taskAffinity=""
+            android:theme="@style/Theme.MacSync.Unlock" />
+
+        <!-- SAS confirmation for pairing with a Mac. -->
+        <activity
+            android:name=".unlock.PairingActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:theme="@style/Theme.MacSync" />
+
+        <!-- Biometric gate for unbinding a Mac. -->
+        <activity
+            android:name=".unlock.UnbindActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@style/Theme.MacSync.Unlock" />
 
         <service
             android:name=".ble.MacSyncNotificationListener"

@@ -48,7 +48,7 @@ mkdir -p "$MACOS_DIR" "$RES_DIR"
 # 1. Compile the Swift sources directly into the app bundle executable.
 #    -parse-as-library is required because of the @main attribute.
 # ---------------------------------------------------------------------------
-SOURCES=("$SRC_DIR/Protocol.swift" "$SRC_DIR/Localization.swift" "$SRC_DIR/LoginItem.swift" "$SRC_DIR/Platform.swift" "$SRC_DIR/KeyVault.swift" "$SRC_DIR/ContactsStore.swift" "$SRC_DIR/HandsFreeCall.swift" "$SRC_DIR/BLEManager.swift" "$SRC_DIR/ContentView.swift" "$SRC_DIR/PixelSyncApp.swift")
+SOURCES=("$SRC_DIR/Protocol.swift" "$SRC_DIR/Localization.swift" "$SRC_DIR/LoginItem.swift" "$SRC_DIR/Platform.swift" "$SRC_DIR/KeyVault.swift" "$SRC_DIR/ContactsStore.swift" "$SRC_DIR/HandsFreeCall.swift" "$SRC_DIR/unlock/UnlockProtocol.swift" "$SRC_DIR/unlock/SignatureVerifier.swift" "$SRC_DIR/unlock/TrustedDeviceStore.swift" "$SRC_DIR/unlock/ChallengeManager.swift" "$SRC_DIR/unlock/LockStateMonitor.swift" "$SRC_DIR/unlock/AuthorizationBridge.swift" "$SRC_DIR/unlock/ScreenControl.swift" "$SRC_DIR/unlock/UnlockManager.swift" "$SRC_DIR/BLEManager.swift" "$SRC_DIR/ContentView.swift" "$SRC_DIR/PixelSyncApp.swift")
 
 compile_arch() {
   local arch="$1"
@@ -62,6 +62,7 @@ compile_arch() {
     -sdk "$SDK" \
     -framework CryptoKit \
     -framework IOBluetooth \
+    -framework IOKit \
     -o "$out" \
     "${SOURCES[@]}"
 }

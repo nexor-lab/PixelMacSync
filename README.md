@@ -1,7 +1,7 @@
 # 🍏⇄🤖 PixelMacSync
 
 > **本 Fork 说明（中文）**：这是一个把上游 [`LK024/PixelMacSync`](https://github.com/LK024/PixelMacSync)
-> 移植到 **macOS 12.7 / Intel** 并新增 **电话事件、Root 远程热点、App 图标同步、音乐控件** 等功能的
+> 移植到 **macOS 12.7 / Intel** 并新增 **电话事件、Root 远程热点、App 图标同步、音乐控件、手机生物识别解锁 Mac** 等功能的
 > Fork。功能清单、实现方式、来源与改动、构建/安装、限制与安全说明，请见 **[`FORK.md`](FORK.md)**；
 > 协议见 [`BLE_PROTOCOL.md`](BLE_PROTOCOL.md)，变更见 [`CHANGELOG.md`](CHANGELOG.md)，
 > 测试见 [`TEST_REPORT.md`](TEST_REPORT.md)。
@@ -17,6 +17,34 @@
 | **Root** | 需要（SukiSU / Magisk）以**真实**开关热点；**不再需要 MacroDroid** |
 | **连接** | 仅 BLE 4.2+，不使用 Wi‑Fi / 局域网 / 云 / TCP |
 | **对比上游** | 上游要求 macOS 13+ / Android 16+ 并依赖 MacroDroid，本 Fork 已下移适配并移除该依赖 |
+
+## 🔓 本 Fork 新增：手机生物识别解锁 Mac
+
+> 手机指纹/面容即可是你的“钥匙”：Mac 锁屏后手机收到通知，点按并完成**原生指纹/面容**验证，
+> 手机用 **Android Keystore 私钥**对一次性随机挑战签名，Mac 验签通过后经 **macOS 原生 PAM**
+> 放行解锁。**不存储、不传输、不输入 Mac 密码**，也不模拟键盘。
+
+- **免密解锁**：仅走 BLE 蓝牙本地直连，无云端、无网络。算法为公开成熟的 **ECDSA P-256 + SHA-256**；
+  私钥受指纹保护、永不导出；挑战为 **一次性 32 字节随机数**、有有效期、用后即废，防重放。
+- **抗伪装**：其它蓝牙设备即使知道设备 ID/蓝牙地址，没有手机私钥就**签不出有效签名**，无法解锁；
+  可随时在两端撤销授权。
+- **绑定/解绑**：在安卓「已连接的设备」中**绑定指纹解锁**；绑定需 **Mac 登录密码**（系统授权框，
+  不读取不保存）+ **手机指纹**；**解绑需指纹 + 二次确认**（红色）。
+- **距离自动锁定**：手机远离 Mac（BLE 断开）一段时间后**自动锁定 Mac 屏幕**。
+- **远程唤醒**：靠近重连后**唤醒屏幕**并可用手机指纹解锁。
+- **安全策略开关**（设置 →「远程解锁安全策略」）：`设备远离自动锁定`、`远程唤醒`（关闭后隐藏绑定/
+  解锁相关操作，仅保留断开与删除）。
+- **兼容**：锁屏授权走 macOS 原生 **PAM**，模块为 **Intel + Apple Silicon 通用二进制**；密码解锁
+  路径保持不变，随时可用。
+
+> [!WARNING]
+> ⚠️ **需要一定技术能力，且并非开箱即用。** 要启用「手机生物识别解锁 Mac」等功能，需自行完成下列操作（涉及**系统级改动**，请勿在主力机上贸然操作）：
+> 1. 安装 App：Android 安装 APK；macOS 把 `PixelSync.app` 放入 `/Applications`。
+> 2. 以**管理员权限**安装 PAM 模块：`cd MacOS/pam && ./build.sh && sudo ./install.sh`（会向 `/etc/pam.d/screensaver` 添加 `auth sufficient` 一行，**保留密码回退**；可 `sudo ./uninstall.sh` 回退）。
+> 3. 在安卓端「已连接的设备」完成**绑定**：Mac 输入登录密码 + 手机指纹（密钥各自生成，不共享）。
+> 4. 手机与 Mac 保持 BLE 连接，锁屏后手机点通知 → 指纹 → 免密解锁。
+>
+> 无相关经验者请勿尝试；升级/换机需重装 PAM 并重新配对。
 
 ### PixelSync (macOS) ⇄ MacSync (Android)
 (🇬🇧 Scroll down for the English readme, READ IT!)
@@ -250,6 +278,20 @@ The goal is to offer notification synchronization, telemetry, and remote control
 * 🧹 **Bidirectional Dismiss**: A notification opened or dismissed on one side is synced to the other side, within the limits of the available APIs.
 * 🖱️ **Dynamic App Launching**: The mapping between Android package names and macOS apps/PWAs is configurable and saved in a local JSON file.
 * 🚀 **Remote Hotspot Control (root)**: Turn the phone's hotspot on and off from the Mac for real via root + system command, with real state.
+* 🔓 **Phone biometric unlock of the Mac (new)**: Lock the Mac and unlock it with the phone's fingerprint/face. The phone signs a one-time random challenge with a fingerprint-gated **Android Keystore** key (**ECDSA P-256 / SHA-256**); the Mac verifies it against the paired public key and authorizes the unlock through native macOS **PAM** — no Mac password is stored, transmitted, or typed.
+  * **Spoof-resistant**: another Bluetooth device cannot forge the signature without the phone's private key; the challenge is single-use, expiring, and revocable.
+  * **Bind/unbind** from the Android "connected devices" list: binding requires the **Mac login password** (system dialog) + **phone fingerprint**; unbinding requires a fingerprint and a confirmation.
+  * **Auto-lock when away** (phone out of range) and **remote wake** (wake + unlock on reconnect), controllable via two switches under Settings → *Remote unlock security*.
+
+> [!WARNING]
+> ⚠️ **Requires technical ability — not plug-and-play.** To enable the phone-unlock feature you must perform the setup yourself (these are **system-level changes**; do not try them on a daily driver unless you know what you are doing):
+> 1. Install the apps: Android APK; put `PixelSync.app` into `/Applications`.
+> 2. Install the PAM module **as admin**: `cd MacOS/pam && ./build.sh && sudo ./install.sh` (adds one `auth sufficient` line to `/etc/pam.d/screensaver`, **keeps the password fallback**; revert with `sudo ./uninstall.sh`).
+> 3. **Pair** from the Android "connected devices" list: Mac login password + phone fingerprint (keys are generated per device, never shared).
+> 4. Keep the phone and Mac on BLE; lock the Mac, tap the phone notification, fingerprint → passwordless unlock.
+>
+> Reinstalling/upgrading or switching machines requires reinstalling the PAM module and re-pairing.
+
 
 ---
 

@@ -18,6 +18,7 @@ Android/keystore/
 Android/*.apk
 MacOS/build/
 MacOS/*.dmg
+MacOS/pam/*.so
 *.apk
 *.idsig
 *.dmg

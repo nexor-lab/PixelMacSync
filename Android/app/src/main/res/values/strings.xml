@@ -76,6 +76,8 @@
     <string name="about_title">About</string>
     <string name="about_crypto_title">Contact encryption</string>
     <string name="about_crypto">Contacts are only sent when you select them; the Mac stores them AES-GCM encrypted with a key kept on that Mac (never in the Keychain, not synced to iCloud). Plaintext lives only in memory.</string>
+    <string name="about_unlock_title">Remote unlock security</string>
+    <string name="about_unlock">Unlock runs over BLE only — no cloud, no network. The phone proves identity with a fingerprint-gated Android Keystore ECDSA P-256 key signing a one-time 32-byte random challenge (SHA-256); the Mac verifies the signature against the paired public key, then authorizes the unlock through macOS PAM. The Mac password is never stored, transmitted, or typed.</string>
     <string name="about_device_title">Device info (Beta only)</string>
     <string name="about_device_android">Android device: %1$s · Android %2$s (API %3$d)</string>
     <string name="about_device_mac">Mac: %1$s · %2$s</string>
@@ -83,4 +85,36 @@
     <string name="about_version">Version %1$s</string>
     <string name="about_repo">GitHub repository</string>
     <string name="egg_message">🥚 BLE-only · no cloud · Thanks for using PixelMacSync!</string>
+
+    <!-- Mac biometric unlock -->
+    <string name="unlock_channel_name">Mac unlock</string>
+    <string name="unlock_channel_desc">Requests to unlock your Mac</string>
+    <string name="unlock_notif_title">Unlock Mac</string>
+    <string name="unlock_notif_text">%1$s requests unlock — tap to verify</string>
+    <string name="unlock_prompt_title">Unlock Mac</string>
+    <string name="unlock_prompt_subtitle">Verify to unlock %1$s</string>
+    <string name="unlock_prompt_cancel">Cancel</string>
+    <string name="unlock_macs_title">Mac authorization</string>
+    <string name="unlock_macs_empty">No paired Mac</string>
+    <string name="unlock_test_biometric">Test biometric</string>
+    <string name="unlock_revoke">Revoke</string>
+    <string name="pair_channel_name">Mac pairing</string>
+    <string name="pair_channel_desc">Pairing requests</string>
+    <string name="pair_notif_title">Pair with %1$s</string>
+    <string name="pair_notif_text">Mac requests binding — tap to verify with fingerprint</string>
+    <string name="mac_unlock_bind">Bind fingerprint</string>
+    <string name="mac_unlock_bound">Fingerprint unlock bound</string>
+    <string name="mac_unlock_trigger">Wake remote unlock</string>
+    <string name="mac_delete">Delete</string>
+    <string name="mac_unlock_unbind">Unbind</string>
+    <string name="pair_auth_title">Verify to complete binding</string>
+    <string name="unbind_auth_title">Verify to unbind</string>
+    <string name="unbind_confirm_title">Unbind this Mac?</string>
+    <string name="unbind_confirm_text">%1$s will no longer be able to unlock with this phone\'s fingerprint. You will need to bind again.</string>
+    <string name="unlock_policy_title">Remote unlock security</string>
+    <string name="unlock_policy_subtitle">Auto-lock when away · remote wake</string>
+    <string name="unlock_away_lock_title">Auto-lock when away</string>
+    <string name="unlock_away_lock_sub">Lock the Mac when the phone moves away</string>
+    <string name="unlock_remote_wake_title">Remote wake</string>
+    <string name="unlock_remote_wake_sub">Off hides binding/unlock controls (keeps disconnect &amp; delete)</string>
 </resources>

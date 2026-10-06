@@ -39,10 +39,11 @@ struct ContentView: View {
                         .foregroundColor(bleManager.isSwitchedOn ? .accentColor : .red)
                         .onTapGesture {
                             if bleManager.isSwitchedOn {
-                                bleManager.forceRestartBluetooth()
+                                // Manual re-handshake: resets the auto-reconnect budget.
+                                bleManager.reconnectNow(reason: "manual-antenna")
                             }
                         }
-                        .help(bleManager.isSwitchedOn ? L10n.antennaRestartTooltip : L10n.bluetoothOffTooltip)
+                        .help(bleManager.isSwitchedOn ? L10n.reconnectTooltip : L10n.bluetoothOffTooltip)
                 }
                 
                 Text(bleManager.isConnected ? bleManager.deviceName : bleManager.connectionStatus)
@@ -85,6 +86,12 @@ struct ContentView: View {
                 }
             }
             
+            if bleManager.connectionState == .needsUnpair {
+                Text(L10n.unpairHint)
+                    .font(.caption2).foregroundColor(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
             Divider()
 
             // --- CALL CONTROL (only while a call is ringing/active) ---
@@ -142,7 +149,15 @@ struct ContentView: View {
             Divider()
 
             // --- SEZIONE 4: DIAL (remote dialing + synced contacts) ---
-            DialView(bleManager: bleManager)
+            // Grouped to stay within SwiftUI's 10-view ViewBuilder limit.
+            Group {
+                DialView(bleManager: bleManager)
+
+                Divider()
+
+                // --- SEZIONE 5: PHONE BIOMETRIC UNLOCK ---
+                UnlockPanel(bleManager: bleManager)
+            }
 
         }
         .padding(16)
@@ -526,5 +541,70 @@ struct DialView: View {
         .foregroundColor(enabled ? .primary : Color.secondary.opacity(0.45))
         .disabled(!enabled)
         .help(enabled ? "" : L10n.callMethodMacUnavailable)
+    }
+}
+
+// MARK: - Phone biometric unlock settings
+
+struct UnlockPanel: View {
+    @ObservedObject var bleManager: BLEManager
+
+    init(bleManager: BLEManager) {
+        self.bleManager = bleManager
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: "faceid")
+                    .foregroundColor(bleManager.trustedPhones.isEmpty ? .secondary : .accentColor)
+                Text(L10n.trustedDevices).font(.subheadline)
+                Spacer()
+                Button(L10n.addDevice) { bleManager.unlockManager.beginPairing() }
+                    .disabled(!bleManager.isConnected)
+            }
+
+            if bleManager.trustedPhones.isEmpty {
+                Text(L10n.noTrustedDevice)
+                    .font(.caption).foregroundColor(.secondary)
+            } else {
+                ForEach(bleManager.trustedPhones, id: \.id) { device in
+                    HStack(spacing: 6) {
+                        Image(systemName: "iphone")
+                            .font(.caption).foregroundColor(.secondary)
+                        Text(device.name)
+                            .font(.caption).lineLimit(1).truncationMode(.middle)
+                        Spacer()
+                        Text(device.enabled ? L10n.deviceAuthorized : L10n.deviceRevoked)
+                            .font(.caption2)
+                            .foregroundColor(device.enabled ? .green : .secondary)
+                        Button(L10n.revoke) { bleManager.unlockManager.revoke(device.id) }
+                            .font(.caption2)
+                    }
+                }
+            }
+
+            if bleManager.unlockPairingActive {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text(L10n.pairWaitingPhone).font(.caption2).foregroundColor(.secondary)
+                }
+                .padding(.vertical, 4)
+            }
+
+            if !bleManager.trustedPhones.isEmpty {
+                Button(L10n.testUnlock) {
+                    bleManager.unlockManager.triggerUnlock(reason: "manual")
+                }
+                .font(.caption)
+            }
+
+            if !bleManager.unlockPluginInstalled {
+                Text(L10n.t("Unlock helper not installed (password still works).",
+                            "解锁组件未安装（密码仍可用）。"))
+                    .font(.caption2).foregroundColor(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
     }
 }

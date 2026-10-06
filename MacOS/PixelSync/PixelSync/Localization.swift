@@ -26,22 +26,55 @@ enum L10n {
 
     enum State {
         case disconnected, scanning, connecting, cacheConnecting, handshaking, connected,
-             rejected, bluetoothOff, waking, restarting
+             rejected, bluetoothOff, waking, restarting, autoReconnecting, needsUnpair
     }
 
     static func state(_ s: State) -> String {
         switch s {
-        case .disconnected:    return t("Disconnected", "未连接")
-        case .scanning:        return t("Scanning…", "正在搜索…")
-        case .connecting:      return t("Connecting…", "正在连接…")
-        case .cacheConnecting: return t("Connecting (cache)…", "正在连接（缓存）…")
-        case .handshaking:     return t("Verifying…", "正在验证…")
-        case .connected:       return t("Connected", "已连接")
-        case .rejected:        return t("Not the active Mac", "非当前 Mac 设备")
-        case .bluetoothOff:    return t("Bluetooth OFF", "蓝牙已关闭")
-        case .waking:          return t("Waking…", "正在唤醒…")
-        case .restarting:      return t("Restarting…", "正在重启…")
+        case .disconnected:     return t("Disconnected", "未连接")
+        case .scanning:         return t("Scanning…", "正在搜索…")
+        case .connecting:       return t("Connecting…", "正在连接…")
+        case .cacheConnecting:  return t("Connecting (cache)…", "正在连接（缓存）…")
+        case .handshaking:      return t("Verifying…", "正在验证…")
+        case .connected:        return t("Connected", "已连接")
+        case .rejected:         return t("Not the active Mac", "非当前 Mac 设备")
+        case .bluetoothOff:     return t("Bluetooth OFF", "蓝牙已关闭")
+        case .waking:           return t("Waking…", "正在唤醒…")
+        case .restarting:       return t("Restarting…", "正在重启…")
+        case .autoReconnecting: return t("Reconnecting…", "自动重连中…")
+        case .needsUnpair:      return t("Unpair Bluetooth Classic", "需取消经典蓝牙配对")
         }
+    }
+
+    // MARK: - Auto-reconnect (Mac-side interference recovery)
+
+    static var reconnectTitle: String {
+        t("PixelSync link interrupted", "PixelSync 连接中断")
+    }
+    static var reconnectBody: String {
+        t("Bluetooth interference detected — reconnecting automatically…",
+          "检测到蓝牙干扰，正在自动重连…")
+    }
+    static var recoveredTitle: String {
+        t("PixelSync reconnected", "PixelSync 已恢复")
+    }
+    static var recoveredBody: String {
+        t("The connection to the phone is restored.",
+          "与手机的连接已恢复。")
+    }
+    static var reconnectFailedTitle: String {
+        t("PixelSync reconnection failed", "PixelSync 重连失败")
+    }
+    static var reconnectFailedBody: String {
+        t("Unpair the phone in System Settings → Bluetooth, then retry.",
+          "请在“系统设置 → 蓝牙”中取消与手机的经典蓝牙配对后重试。")
+    }
+    static var unpairHint: String {
+        t("Bluetooth Classic pairing can block the BLE link (ADR-028). Unpair the phone, then reconnect.",
+          "经典蓝牙配对会阻断 BLE 连接（ADR-028）。请先取消与手机的配对，再重连。")
+    }
+    static var reconnectTooltip: String {
+        t("Reconnect now", "立即重连")
     }
 
     // MARK: - Menu bar / app
@@ -187,6 +220,35 @@ enum L10n {
         case "no_reply_action": return t("This app does not support replies.", "该应用不支持回复。")
         case "not_found":       return t("The notification is no longer active.", "该通知已不在。")
         default:                return t("Could not deliver the reply.", "无法发送回复。")
+        }
+    }
+
+    // MARK: - Phone biometric unlock
+
+    static var trustedDevices: String { t("Trusted devices", "受信任的设备") }
+    static var addDevice: String { t("Add device", "添加设备") }
+    static var noTrustedDevice: String { t("No phone paired yet.", "尚未配对手机。") }
+    static var deviceAuthorized: String { t("Authorized", "已授权") }
+    static var deviceRevoked: String { t("Revoked", "已撤销") }
+    static var revoke: String { t("Revoke", "撤销授权") }
+    static var pairCodeLabel: String { t("Confirm this code matches your phone:", "请确认与手机上显示的验证码一致：") }
+    static var pairEnterCode: String { t("Enter the 6-digit code shown on your phone:", "输入手机上显示的 6 位验证码：") }
+    static var pairCodeWrong: String { t("Code does not match. Try again.", "验证码不一致，请重试。") }
+    static var confirm: String { t("Confirm", "确认") }
+    static var testUnlock: String { t("Test unlock (send request to phone)", "测试解锁（向手机发送请求）") }
+    static var pairWaitingPhone: String { t("Waiting for the phone to confirm (fingerprint)…", "等待手机确认（指纹）…") }
+    static var allowManualLock: String { t("Unlock manual lock screen", "允许手动锁屏解锁") }
+    static var allowLidWake: String { t("Unlock after lid-wake", "允许合盖唤醒解锁") }
+    static var lastAuthJustNow: String { t("Last auth: just now", "最后认证：刚刚") }
+    static var unlockGrantedTitle: String { t("Mac unlocked", "Mac 已解锁") }
+    static var unlockFailedTitle: String { t("Unlock request failed", "解锁请求失败") }
+    static func unlockFailure(_ reason: String) -> String {
+        switch reason {
+        case "signature_invalid": return t("Invalid signature.", "签名无效。")
+        case "session_invalid":   return t("Challenge expired or already used.", "挑战已过期或已使用。")
+        case "device_revoked":    return t("This phone is no longer authorized.", "该手机已不再被授权。")
+        case "no_trusted_device": return t("No trusted phone.", "没有受信任的手机。")
+        default:                  return t("Could not unlock.", "无法解锁。")
         }
     }
 }

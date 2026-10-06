@@ -1,8 +1,10 @@
 package it.luigi.macsync
 
 import android.Manifest
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.graphics.Color as AndroidColor
 import android.net.Uri
 import android.os.Bundle
@@ -40,15 +42,22 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import it.luigi.macsync.ble.GattServerManager
+import it.luigi.macsync.unlock.PairingController
+import it.luigi.macsync.unlock.TrustedMacStore
+import it.luigi.macsync.unlock.UnbindActivity
+import it.luigi.macsync.unlock.UnlockController
+import it.luigi.macsync.unlock.UnlockSettings
 import it.luigi.macsync.ui.theme.MacSyncTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -290,6 +299,11 @@ fun MainScreen(
                 modifier = Modifier.padding(start = 4.dp, bottom = 8.dp)
             )
 
+            // 1) Remote unlock security policy
+            UnlockPolicyCard(context)
+
+            // 2) Notifications (+ its warnings)
+            Spacer(modifier = Modifier.height(8.dp))
             SettingsCardItem(
                 icon = Icons.Rounded.Notifications,
                 title = stringResource(R.string.notifications),
@@ -327,11 +341,13 @@ fun MainScreen(
                 )
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
-            AuthMethodCard(context)
-
+            // 3) Contacts & dialing
             Spacer(modifier = Modifier.height(8.dp))
             ContactsCard(context, onOpenContactsClick)
+
+            // 4) Authorization method
+            Spacer(modifier = Modifier.height(8.dp))
+            AuthMethodCard(context)
         }
 
         Spacer(modifier = Modifier.height(24.dp))
@@ -375,6 +391,21 @@ fun MacDevicesCard(gattServerManager: GattServerManager) {
     val macs by gattServerManager.savedMacs.collectAsState()
     val active by gattServerManager.activeMacId.collectAsState()
     val connectedId by gattServerManager.connectedMacId.collectAsState()
+
+    // Refresh the "fingerprint unlock bound" state after pairing/unbinding.
+    val context = LocalContext.current
+    var trustVersion by remember { mutableIntStateOf(0) }
+    DisposableEffect(Unit) {
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(c: Context?, intent: Intent?) { trustVersion++ }
+        }
+        context.registerReceiver(
+            receiver, IntentFilter(PairingController.ACTION_TRUST_CHANGED),
+            Context.RECEIVER_NOT_EXPORTED,
+        )
+        onDispose { context.unregisterReceiver(receiver) }
+    }
+    val showUnlock = remember(trustVersion) { UnlockSettings.remoteWake(context) }
 
     // Fold only when more than one Mac is saved; a single Mac is always shown.
     // The header uses the same size as the "通知" / "授权方法" cards.
@@ -442,9 +473,23 @@ fun MacDevicesCard(gattServerManager: GattServerManager) {
                         MacDeviceRow(
                             mac = mac,
                             isConnected = connectedId == mac.id,
+                            isBound = remember(trustVersion, mac.id) {
+                                TrustedMacStore.isTrusted(context, mac.id)
+                            },
+                            showUnlock = showUnlock,
                             onConnect = { gattServerManager.setActiveMac(mac.id) },
                             onDisconnect = { gattServerManager.disconnectActiveMac() },
-                            onForget = { gattServerManager.forgetMac(mac.id) }
+                            onForget = { gattServerManager.forgetMac(mac.id) },
+                            onBind = { PairingController.requestPairing(context, mac.id) },
+                            onUnbind = {
+                                context.startActivity(
+                                    Intent(context, UnbindActivity::class.java).apply {
+                                        putExtra(UnbindActivity.EXTRA_MAC_ID, mac.id)
+                                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    }
+                                )
+                            },
+                            onTriggerUnlock = { if (connectedId == mac.id) UnlockController.requestUnlock(context, mac.id) }
                         )
                     }
                 }
@@ -457,10 +502,17 @@ fun MacDevicesCard(gattServerManager: GattServerManager) {
 private fun MacDeviceRow(
     mac: SavedMac,
     isConnected: Boolean,
+    isBound: Boolean,
+    showUnlock: Boolean,
     onConnect: () -> Unit,
     onDisconnect: () -> Unit,
-    onForget: () -> Unit
+    onForget: () -> Unit,
+    onBind: () -> Unit,
+    onUnbind: () -> Unit,
+    onTriggerUnlock: () -> Unit
 ) {
+    var confirmUnbind by remember { mutableStateOf(false) }
+
     Row(
         modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -479,20 +531,210 @@ private fun MacDeviceRow(
                     color = MaterialTheme.colorScheme.primary
                 )
             }
+            if (isBound && showUnlock) {
+                Text(
+                    text = stringResource(R.string.mac_unlock_bound),
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
         }
-        // Show "断开" only while actually connected; otherwise offer "连接"
-        // (this also lets the user re-connect after a manual disconnect).
-        if (isConnected) {
-            TextButton(onClick = onDisconnect) { Text(stringResource(R.string.mac_disconnect)) }
-        } else {
-            TextButton(onClick = onConnect) { Text(stringResource(R.string.mac_connect)) }
+        // Right-aligned 2x2 action grid; columns aligned, text left-aligned.
+        Column(modifier = Modifier.width(180.dp), horizontalAlignment = Alignment.End) {
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                MacActionButton(
+                    text = stringResource(if (isConnected) R.string.mac_disconnect else R.string.mac_connect),
+                    modifier = Modifier.width(58.dp),
+                    onClick = { if (isConnected) onDisconnect() else onConnect() },
+                )
+                MacActionButton(
+                    text = stringResource(R.string.mac_delete),
+                    modifier = Modifier.width(104.dp),
+                    onClick = onForget,
+                )
+            }
+            if (showUnlock) {
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    if (isBound) {
+                        MacActionButton(
+                            text = stringResource(R.string.mac_unlock_unbind),
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.width(58.dp),
+                            onClick = { confirmUnbind = true },
+                        )
+                    } else if (isConnected) {
+                        MacActionButton(
+                            text = stringResource(R.string.mac_unlock_bind),
+                            modifier = Modifier.width(58.dp),
+                            onClick = onBind,
+                        )
+                    } else {
+                        Spacer(Modifier.width(58.dp))
+                    }
+                    if (isBound) {
+                        MacActionButton(
+                            text = stringResource(R.string.mac_unlock_trigger),
+                            enabled = isConnected,
+                            modifier = Modifier.width(104.dp),
+                            onClick = onTriggerUnlock,
+                        )
+                    } else {
+                        Spacer(Modifier.width(104.dp))
+                    }
+                }
+            }
         }
-        IconButton(onClick = onForget) {
-            Icon(
-                imageVector = Icons.Rounded.Delete,
-                contentDescription = stringResource(R.string.mac_forget),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+    }
+
+    if (confirmUnbind) {
+        AlertDialog(
+            onDismissRequest = { confirmUnbind = false },
+            title = { Text(stringResource(R.string.unbind_confirm_title)) },
+            text = { Text(stringResource(R.string.unbind_confirm_text, mac.name)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmUnbind = false
+                    onUnbind()
+                }) {
+                    Text(
+                        text = stringResource(R.string.mac_unlock_unbind),
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmUnbind = false }) {
+                    Text(stringResource(R.string.unlock_prompt_cancel))
+                }
+            },
+        )
+    }
+}
+
+@Composable
+private fun MacActionButton(
+    text: String,
+    modifier: Modifier = Modifier,
+    color: Color = Color.Unspecified,
+    enabled: Boolean = true,
+    onClick: () -> Unit,
+) {
+    TextButton(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = modifier,
+        contentPadding = PaddingValues(horizontal = 2.dp, vertical = 4.dp),
+    ) {
+        Text(
+            text = text,
+            color = color,
+            fontSize = 13.sp,
+            maxLines = 1,
+            textAlign = TextAlign.Start,
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
+}
+
+@Composable
+fun UnlockPolicyCard(context: Context) {
+    var expanded by rememberSaveable { mutableStateOf(false) }
+    var awayLock by remember { mutableStateOf(UnlockSettings.awayAutoLock(context)) }
+    var remoteWake by remember { mutableStateOf(UnlockSettings.remoteWake(context)) }
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+    ) {
+        Column {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { expanded = !expanded }
+                    .padding(horizontal = 18.dp, vertical = 16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Security,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(26.dp)
+                )
+                Spacer(modifier = Modifier.width(18.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = stringResource(R.string.unlock_policy_title),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = stringResource(R.string.unlock_policy_subtitle),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Icon(
+                    imageVector = if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+                    contentDescription = stringResource(if (expanded) R.string.cd_collapse else R.string.cd_expand),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
+
+            AnimatedVisibility(
+                visible = expanded,
+                enter = expandVertically(animationSpec = tween(220)) + fadeIn(animationSpec = tween(220)),
+                exit = shrinkVertically(animationSpec = tween(220)) + fadeOut(animationSpec = tween(160))
+            ) {
+                Column(modifier = Modifier.padding(start = 18.dp, end = 18.dp, bottom = 12.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = stringResource(R.string.unlock_away_lock_title),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = stringResource(R.string.unlock_away_lock_sub),
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(checked = awayLock, onCheckedChange = {
+                            awayLock = it
+                            UnlockSettings.setAwayAutoLock(context, it)
+                            UnlockController.sendPolicy(context)
+                        })
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = stringResource(R.string.unlock_remote_wake_title),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = stringResource(R.string.unlock_remote_wake_sub),
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(checked = remoteWake, onCheckedChange = {
+                            remoteWake = it
+                            UnlockSettings.setRemoteWake(context, it)
+                            UnlockController.sendPolicy(context)
+                        })
+                    }
+                }
+            }
         }
     }
 }
@@ -1000,6 +1242,22 @@ fun AboutCard(context: Context, gattServerManager: GattServerManager) {
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
                         text = stringResource(R.string.about_crypto),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+                    HorizontalDivider(color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.15f))
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = stringResource(R.string.about_unlock_title),
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = stringResource(R.string.about_unlock),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

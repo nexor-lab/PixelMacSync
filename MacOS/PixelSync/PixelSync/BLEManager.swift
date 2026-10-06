@@ -59,6 +59,10 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
     let macModel: String
     let macCpu: String
 
+    /// Phone biometric unlock (pairing + challenge/response). See UNLOCK_DESIGN.md.
+    let unlockManager: UnlockManager
+    let lockMonitor = LockStateMonitor()
+
     /// "Mac 本机" calling: the Mac as a Bluetooth hands-free unit (HFP).
     let handsFree: HandsFreeCall
     private var hfCancellables = Set<AnyCancellable>()
@@ -66,7 +70,35 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
     /// True after the phone rejected this Mac (Multi-Mac: not active / user
     /// disconnected). While set, automatic rescanning is suppressed.
     private var rejectedByPhone = false
-    
+
+    // --- Mac-side interference auto-reconnect (ADR-028) ---------------------
+    // On the Intel/Broadcom baseline, the Bluetooth-Classic link used by HFP can
+    // knock out the BLE link. Detect it (classic paired/active + BLE down), tell
+    // the user, and auto re-handshake a few times — then ask to unpair.
+    static let maxAutoReconnectAttempts = 3
+    private var autoReconnectAttempts = 0
+    private var reconnectEpisodeActive = false
+    private var awaitingRecovery = false
+    private var lastReconnectAt = Date.distantPast
+    private var autoReconnectWorkItem: DispatchWorkItem?
+    /// Suppresses disconnect handling while we deliberately re-create the engine.
+    private var engineRestarting = false
+
+    /// True when the phone appears in the Bluetooth-Classic paired list, which is
+    /// the HFP prerequisite and the known vector for BLE interference (ADR-028).
+    var phoneClassicPaired: Bool {
+        let paired = HandsFreeCall.pairedPhoneNames()
+        guard !paired.isEmpty else { return false }
+        // We can only claim "the phone is paired" when we can identify it by name.
+        // Otherwise (telemetry not arrived yet) stay conservative: other Classic
+        // devices (headsets, etc.) must not trigger the interference path.
+        let key = phoneBtName.isEmpty ? handsFree.targetName : phoneBtName
+        guard !key.isEmpty else { return false }
+        return paired.contains {
+            $0.localizedCaseInsensitiveContains(key) || key.localizedCaseInsensitiveContains($0)
+        }
+    }
+
     @Published var isSwitchedOn = false
     @Published var connectionState: L10n.State = .disconnected
     var connectionStatus: String { L10n.state(connectionState) }
@@ -106,6 +138,11 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
     @Published var remoteDialEnabled: Bool = true
     @Published var contactCount: Int = 0
     private var contactBuffer: [MacContact] = []
+
+    // Phone biometric unlock UI state.
+    @Published var trustedPhones: [TrustedPhone] = []
+    @Published var unlockPairingActive: Bool = false
+    @Published var unlockPluginInstalled: Bool = false
 
     // Cover art reassembly buffer (CB callbacks arrive on the main queue).
     private var artBuffers: [String: [Int: String]] = [:]
@@ -174,6 +211,8 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
         self.macName = Host.current().localizedName ?? "Mac"
         self.macModel = BLEManager.sysctlString("hw.model")
         self.macCpu = BLEManager.sysctlString("machdep.cpu.brand_string")
+        self.unlockManager = UnlockManager(
+            macId: self.macId, macName: self.macName, supportDir: BLEManager.supportDir())
         self.handsFree = HandsFreeCall(
             targetName: UserDefaults.standard.string(forKey: "hfPhoneName") ?? "")
         super.init()
@@ -185,6 +224,14 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
         // Re-publish when the hands-free unit changes, so the popover updates.
         handsFree.objectWillChange
             .sink { [weak self] in self?.objectWillChange.send() }
+            .store(in: &hfCancellables)
+        // HFP dropping while BLE is down is another interference signal (ADR-028).
+        handsFree.$connected
+            .dropFirst()
+            .sink { [weak self] connected in
+                guard let self = self, !connected, !self.isConnected else { return }
+                self.beginInterferenceReconnect(reason: "hfp-disconnected")
+            }
             .store(in: &hfCancellables)
         centralManager = CBCentralManager(delegate: self, queue: nil)
         
@@ -201,6 +248,50 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
         
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(macDidSleep), name: NSWorkspace.willSleepNotification, object: nil)
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(macDidWake), name: NSWorkspace.didWakeNotification, object: nil)
+
+        // Phone biometric unlock: send commands over the existing channel and
+        // start the flow when the screen locks (password path stays untouched).
+        unlockManager.sendCommand = { [weak self] cmd in self?.sendCommand(cmd) }
+        lockMonitor.onLocked = { [weak self] in
+            guard let self = self else { return }
+            // Keep the screen on while the plugin waits for the phone grant.
+            self.unlockManager.holdDisplayAwake()
+            self.unlockManager.triggerUnlock(reason: "lock")
+        }
+        lockMonitor.start()
+
+        unlockManager.onPairingStateChanged = { [weak self] active in
+            DispatchQueue.main.async { self?.unlockPairingActive = active }
+        }
+        unlockManager.onPaired = { [weak self] _ in
+            self?.unlockPairingActive = false
+            self?.refreshTrust()
+        }
+        unlockManager.onTrustChanged = { [weak self] in self?.refreshTrust() }
+        unlockManager.onUnlockGranted = { [weak self] in
+            self?.deliverNotification(id: "unlock-ok-\(Date().timeIntervalSince1970)",
+                                      title: L10n.unlockGrantedTitle, body: "")
+        }
+        unlockManager.onUnlockFailed = { [weak self] reason in
+            self?.deliverNotification(id: "unlock-fail-\(Date().timeIntervalSince1970)",
+                                      title: L10n.unlockFailedTitle,
+                                      body: L10n.unlockFailure(reason))
+        }
+        unlockPluginInstalled = AuthorizationBridge.shared.pluginInstalled
+        refreshTrust()
+    }
+
+    func refreshTrust() {
+        DispatchQueue.main.async {
+            self.trustedPhones = self.unlockManager.trustedDevices
+        }
+    }
+
+    /// Application Support folder shared by the unlock stores (keys + trust list).
+    static func supportDir() -> URL {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support")
+        return base.appendingPathComponent("PixelSync", isDirectory: true)
     }
 
     // --- CARICAMENTO E SALVATAGGIO CONFIGURAZIONE ---
@@ -276,6 +367,7 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
         if central.state == .poweredOn {
             isSwitchedOn = true
             connectionState = .scanning
+            engineRestarting = false
             
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 self.startScanningOrReconnect()
@@ -354,6 +446,18 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
                 self.resetMusic()
                 self.centralManager.stopScan()
                 NSLog("MacSync: Mac non attivo sul telefono; nessuna riconnessione automatica.")
+                return
+            }
+            if self.engineRestarting {
+                // Intentional engine re-creation: ignore the stale disconnect callback.
+                return
+            }
+            // Phone moved away / link lost: schedule an auto-lock (policy-gated).
+            self.unlockManager.handleLinkLost()
+            // ADR-028: a drop while Bluetooth-Classic is involved is the known
+            // interference pattern -> notify the user + accelerated re-handshake.
+            if self.phoneClassicPaired || self.handsFree.connected {
+                self.beginInterferenceReconnect(reason: "disconnect+classic")
                 return
             }
             self.connectionState = .scanning
@@ -519,6 +623,7 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
     var pairedPhones: [String] { HandsFreeCall.pairedPhoneNames() }
 
     func setCallMethod(_ method: CallMethod) {
+        let previous = callMethod
         callMethod = method
         UserDefaults.standard.set(method.rawValue, forKey: "callMethod")
         if method == .macBluetooth {
@@ -526,6 +631,11 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
             if !handsFree.targetName.isEmpty { handsFree.start() }
         } else {
             handsFree.stop()
+            // Leaving "Mac 本机": the Classic/HFP link may have knocked out BLE
+            // (ADR-028) — force a clean re-handshake if the session is down.
+            if previous == .macBluetooth && !isConnected {
+                beginInterferenceReconnect(reason: "call-method->phone")
+            }
         }
     }
 
@@ -595,12 +705,14 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
     private func resetBackoff() { reconnectBackoff = 0 }
 
     /// Re-creates CBCentralManager. `force=false` is used by the automatic paths
-    /// (cooldown reserved); user actions / wake pass `force=true`.
-    func forceRestartBluetooth(force: Bool = true) {
+    /// (cooldown reserved); user actions / wake pass `force=true`. `state` lets
+    /// the caller show a more specific status while the engine restarts.
+    func forceRestartBluetooth(force: Bool = true, state: L10n.State = .restarting) {
         let now = Date()
         if !force && now.timeIntervalSince(lastForceRestart) < restartCooldown { return }
         lastForceRestart = now
         resetBackoff()
+        engineRestarting = true
 
         if let peripheral = pixelPeripheral {
             centralManager.cancelPeripheralConnection(peripheral)
@@ -614,7 +726,7 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
         self.rejectedByPhone = false
         
         DispatchQueue.main.async {
-            self.connectionState = .restarting
+            self.connectionState = state
             self.batteryLevel = "--%"
             self.isCharging = false
             self.networkType = "---"
@@ -627,6 +739,122 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
         
         centralManager.delegate = nil
         centralManager = CBCentralManager(delegate: self, queue: nil)
+    }
+
+    // MARK: - Interference auto-reconnect (Mac-side)
+
+    /// User/URL/manual entry point: force a clean re-handshake immediately.
+    /// Resets the attempt budget so a manual action always gets a fresh try.
+    func reconnectNow(reason: String) {
+        DispatchQueue.main.async {
+            self.autoReconnectAttempts = 0
+            self.reconnectEpisodeActive = true
+            self.awaitingRecovery = false   // manual: no "recovered" banner
+            self.cancelAutoReconnectWork()
+            self.lastReconnectAt = Date()
+            NSLog("MacSync: manual reconnect (\(reason))")
+            self.forceRestartBluetooth(force: true, state: .autoReconnecting)
+        }
+    }
+
+    /// Called when a disconnect happens while Bluetooth-Classic is involved
+    /// (paired or HFP active) — the ADR-028 interference pattern.
+    func beginInterferenceReconnect(reason: String) {
+        DispatchQueue.main.async {
+            guard !self.handsFree.callActive && !self.handsFree.scoOpen else {
+                NSLog("MacSync: auto-reconnect skipped (call active)")
+                return
+            }
+            if !self.reconnectEpisodeActive {
+                self.reconnectEpisodeActive = true
+                self.autoReconnectAttempts = 0
+                self.awaitingRecovery = true
+                self.connectionState = .autoReconnecting
+                NSLog("MacSync: possible interference -> auto-reconnect (\(reason))")
+                self.postSystemNotification(id: "sys.reconnect",
+                                            title: L10n.reconnectTitle,
+                                            body: L10n.reconnectBody)
+            }
+            // Release the Classic SLC (if any) so the radio frees up for BLE.
+            if self.handsFree.connected && !self.handsFree.callActive && !self.handsFree.scoOpen {
+                self.handsFree.stop()
+            }
+            self.scheduleAutoReconnect(reason: reason)
+        }
+    }
+
+    private func scheduleAutoReconnect(reason: String) {
+        cancelAutoReconnectWork()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self = self else { return }
+            self.performAutoReconnect(reason: reason)
+        }
+        autoReconnectWorkItem = work
+        // Small delay: give the Classic link time to release before re-scanning.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: work)
+    }
+
+    private func cancelAutoReconnectWork() {
+        autoReconnectWorkItem?.cancel()
+        autoReconnectWorkItem = nil
+    }
+
+    private func performAutoReconnect(reason: String) {
+        guard !isConnected else { return }
+        cancelAutoReconnectWork()
+
+        if autoReconnectAttempts >= Self.maxAutoReconnectAttempts {
+            // Give up and tell the user the likely cause (Classic pairing).
+            if connectionState != .needsUnpair {
+                connectionState = .needsUnpair
+                postSystemNotification(id: "sys.unpair",
+                                       title: L10n.reconnectFailedTitle,
+                                       body: L10n.reconnectFailedBody)
+            }
+            reconnectEpisodeActive = false
+            awaitingRecovery = false
+            NSLog("MacSync: auto-reconnect giving up after \(autoReconnectAttempts) attempts")
+            return
+        }
+
+        // Debounce the heavy CBCentralManager re-creation (larger on Intel/Broadcom).
+        let minInterval: TimeInterval = Platform.isAppleSilicon ? 8 : 15
+        guard Date().timeIntervalSince(lastReconnectAt) >= minInterval else {
+            // Still within cooldown; try again shortly.
+            let wait = minInterval - Date().timeIntervalSince(lastReconnectAt)
+            DispatchQueue.main.asyncAfter(deadline: .now() + wait) { [weak self] in
+                self?.performAutoReconnect(reason: reason)
+            }
+            return
+        }
+
+        autoReconnectAttempts += 1
+        lastReconnectAt = Date()
+        NSLog("MacSync: auto-reconnect attempt \(autoReconnectAttempts)/\(Self.maxAutoReconnectAttempts) (\(reason))")
+        forceRestartBluetooth(force: true, state: .autoReconnecting)
+    }
+
+    /// Called when the application session comes back (`SESSION_READY`).
+    private func handleSessionRecovered() {
+        if awaitingRecovery {
+            awaitingRecovery = false
+            reconnectEpisodeActive = false
+            autoReconnectAttempts = 0
+            cancelAutoReconnectWork()
+            NSLog("MacSync: link recovered after interference")
+            postSystemNotification(id: "sys.recovered",
+                                   title: L10n.recoveredTitle,
+                                   body: L10n.recoveredBody)
+        }
+        autoReconnectAttempts = 0
+        reconnectEpisodeActive = false
+        // Reconnected: cancel any pending away-lock and, if locked, wake+unlock.
+        unlockManager.handleLinkRestored()
+    }
+
+    /// Posts a local system notification that does not depend on the BLE link.
+    func postSystemNotification(id: String, title: String, body: String) {
+        deliverNotification(id: id, title: title, body: body)
     }
 }
 
@@ -731,6 +959,9 @@ extension BLEManager: CBPeripheralDelegate {
         if characteristic.uuid == notificationsUUID, let data = characteristic.value,
            let fields = PixelPacket.fields(from: data) {
 
+            // Phone biometric unlock / pairing packets (Mac side).
+            if self.unlockManager.handlePacket(fields) { return }
+
             // Multi-Mac: the phone refused this Mac (not active / user-disconnected).
             if let reason = PixelPacket.parseSessionRejected(fields) {
                 DispatchQueue.main.async {
@@ -756,6 +987,7 @@ extension BLEManager: CBPeripheralDelegate {
             if let session = PixelPacket.parseSessionReady(fields) {
                 DispatchQueue.main.async {
                     self.connectionState = .connected
+                    self.handleSessionRecovered()
                 }
                 NSLog("MacSync: SESSION_READY ricevuto (phone=\(session.phoneName), mac=\(session.macId))")
                 return

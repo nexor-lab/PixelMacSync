@@ -90,6 +90,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     //   open "pixelsync://hotspot/on" | "pixelsync://hotspot/off" | "pixelsync://hotspot/status"
     //   open "pixelsync://music/play" | ".../pause" | ".../next" | ".../prev" | ".../seek/30000"
     //   open "pixelsync://reply?to=<notifId>&text=<text>"   (inline reply, automatable)
+    //   open "pixelsync://reconnect"                        (force a BLE re-handshake)
     // Useful for automation and for the menu-free control path.
     func application(_ application: NSApplication, open urls: [URL]) {
         for url in urls { handleCommandURL(url) }
@@ -133,6 +134,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             var number = comps?.queryItems?.first(where: { $0.name == "number" })?.value ?? ""
             if number.isEmpty, let a = url.pathComponents.dropFirst().first, a != "/" { number = a }
             if !number.isEmpty { bleManager.dial(number) }
+        case "reconnect":
+            // Force a clean BLE re-handshake (auto-reconnect budget reset).
+            bleManager.reconnectNow(reason: "url")
         case "login":
             LoginItem.setEnabled(action == "on")
         case "reply":
