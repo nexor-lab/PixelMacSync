@@ -36,9 +36,11 @@ import it.luigi.macsync.HotspotController
 import it.luigi.macsync.MacRegistry
 import it.luigi.macsync.MediaSessionMonitor
 import it.luigi.macsync.SavedMac
+import it.luigi.macsync.unlock.AndroidKeyStore
 import it.luigi.macsync.unlock.PairingController
 import it.luigi.macsync.unlock.TrustedMacStore
 import it.luigi.macsync.unlock.UnlockController
+import it.luigi.macsync.unlock.UnlockProtocol
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -46,6 +48,10 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import java.security.KeyFactory
+import java.security.SecureRandom
+import java.security.Signature
+import java.security.spec.X509EncodedKeySpec
 import java.util.UUID
 
 @SuppressLint("MissingPermission")
@@ -70,6 +76,9 @@ class GattServerManager private constructor(private val context: Context) {
     private val bluetoothManager: BluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
     private var gattServer: BluetoothGattServer? = null
     private var connectedMac: BluetoothDevice? = null
+    private var sessionGatt: BluetoothDevice? = null
+    private var authenticatedGatt: BluetoothDevice? = null
+    private var authenticatedMacId: String? = null
     private var telemetryCharacteristic: BluetoothGattCharacteristic? = null
 
     private val SERVICE_UUID = UUID.fromString("58DF214B-9942-45A5-BAF9-7B24F5D0232C")
@@ -94,6 +103,9 @@ class GattServerManager private constructor(private val context: Context) {
     @Volatile private var notificationsSubscribed = false
     @Volatile private var macCommandSeen = false
     @Volatile private var sessionReadySent = false
+    @Volatile private var sessionAuthenticated = false
+    private var sessionNonce: ByteArray? = null
+    private var sessionMacId: String? = null
     @Volatile private var currentMacId: String? = null
     @Volatile private var contactsSentThisSession = false
     private var handshakeTimeoutJob: Job? = null
@@ -304,7 +316,7 @@ class GattServerManager private constructor(private val context: Context) {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == "it.luigi.macsync.NEW_NOTIFICATION") {
                 val payload = intent.getStringExtra("payload")
-                if (payload != null) sendNotificationToMac(payload)
+                if (payload != null && sessionAuthenticated) sendNotificationToMac(payload)
             }
         }
     }
@@ -341,20 +353,26 @@ class GattServerManager private constructor(private val context: Context) {
         if (now - lastTelemetrySentMs < 1000) return
         lastTelemetrySentMs = now
 
-        val mac = connectedMac
+        if (!sessionAuthenticated) return
+        val mac = authenticatedGatt ?: return
         val characteristic = telemetryCharacteristic
 
-        if (mac != null && characteristic != null && gattServer != null) {
+        if (characteristic != null && gattServer != null) {
             val data = telemetryPayload().toByteArray(Charsets.UTF_8)
             gattServer?.notifyCharacteristicChanged(mac, characteristic, false, data)
         }
     }
 
-    fun sendNotificationToMac(payload: String) {
-        val mac = connectedMac
+    fun sendNotificationToMac(payload: String, to: BluetoothDevice? = null) {
+        // App data goes only to the Mac that completed session authentication.
+        // Session/pairing packets pass `to` explicitly.
+        val mac = if (to != null) to else {
+            if (!sessionAuthenticated) return
+            authenticatedGatt ?: return
+        }
         val characteristic = notificationsCharacteristic
 
-        if (mac != null && characteristic != null && gattServer != null) {
+        if (characteristic != null && gattServer != null) {
             val bytes = payload.toByteArray(Charsets.UTF_8)
             // Il valore viene troncato per restare entro l'MTU (max ~180 byte).
             val safePayload = if (bytes.size > 180) bytes.copyOf(180) else bytes
@@ -568,24 +586,24 @@ class GattServerManager private constructor(private val context: Context) {
      * still be up but the UI shows "verifying" rather than "connected".
      */
     private fun updateSession() {
-        val link = connectedMac != null
+        val link = connectedMac != null || authenticatedGatt != null
         // A real session needs a Mac activity on top of the link + notification
         // subscription: either an explicit HELLO (new macOS builds) OR a recognized
         // application command (legacy v2.2 builds send SYNC_REQ/MUSIC_*/HOTSPOT_*
         // but no HELLO). A bare/stray BLE link alone never qualifies.
-        val peer = handshakeMacId ?: if (macCommandSeen) "legacy" else null
-        val ready = link && notificationsSubscribed && peer != null
+        val peer = authenticatedMacId ?: handshakeMacId ?: if (macCommandSeen) "legacy" else null
+        val ready = link && notificationsSubscribed && peer != null && sessionAuthenticated
         // Only an *identified* Mac is tracked in the list; a legacy client (no
         // HELLO) can't be told apart and would duplicate the same computer, so it
         // is never recorded as a saved Mac.
-        _connectedMacId.value = if (ready) handshakeMacId else null
+        _connectedMacId.value = if (ready) (authenticatedMacId ?: handshakeMacId) else null
         Diagnostics.log("session link=$link notif=$notificationsSubscribed peer=$peer ready=$ready")
         if (ready) {
             _connected.value = true
             _connectionState.value = context.getString(it.luigi.macsync.R.string.status_connected)
             if (!sessionReadySent) {
                 sessionReadySent = true
-                sendNotificationToMac("SESSION_READY\u001F${android.os.Build.MODEL}\u001F$peer")
+                sendNotificationToMac("SESSION_READY\u001F${android.os.Build.MODEL}\u001F$peer", to = authenticatedGatt)
                 Log.d("MacSync", "Sessione stabilita con $peer")
                 // Push the current remote-unlock policy to the Mac.
                 UnlockController.sendPolicy(context)
@@ -603,7 +621,6 @@ class GattServerManager private constructor(private val context: Context) {
 
     /** Handles the Mac's `HELLO US <macId> [US <name>]` identity announcement. */
     private fun handleHello(device: BluetoothDevice, parts: List<String>) {
-        if (connectedMac != device) return
         val macId = parts.getOrNull(1)?.takeIf { it.isNotBlank() } ?: MacRegistry.LEGACY_ID
         val macName = parts.getOrNull(2)?.takeIf { it.isNotBlank() } ?: macId
         MacRegistry.record(context, macId, macName)
@@ -633,7 +650,7 @@ class GattServerManager private constructor(private val context: Context) {
             val reason = if (isUserDisconnected) "user_disconnected" else "not_active"
             Diagnostics.log("HELLO rejected ($reason) id=$macId")
             Log.d("MacSync", "HELLO rifiutato ($reason) mac=$macId")
-            sendNotificationToMac("SESSION_REJECTED\u001F$reason")
+            sendNotificationToMac("SESSION_REJECTED\u001F$reason", to = device)
             callScope.launch {
                 delay(400)
                 if (connectedMac == device) gattServer?.cancelConnection(device)
@@ -647,7 +664,7 @@ class GattServerManager private constructor(private val context: Context) {
         handshakeTimeoutJob = null
         Log.d("MacSync", "HELLO ricevuto (mac=$macId / $macName)")
         Diagnostics.log("HELLO peer=$macId name=$macName")
-        updateSession()
+        startSessionAuth(macId, macName, device)
     }
 
     // --- MULTI-MAC public API (used by the UI) ---
@@ -706,26 +723,36 @@ class GattServerManager private constructor(private val context: Context) {
         override fun onConnectionStateChange(device: BluetoothDevice, status: Int, newState: Int) {
             super.onConnectionStateChange(device, status, newState)
             if (newState == BluetoothProfile.STATE_CONNECTED) {
-                // The BLE/GATT link is up, but no application session exists yet.
-                // Reset any previous session state and wait for the handshake.
+                // A second central (e.g. another Mac) must not disturb the
+                // authenticated session; it is rejected after HELLO.
+                if (authenticatedGatt == null) {
+                    currentMacId = null
+                    handshakeMacId = null
+                    notificationsSubscribed = false
+                    macCommandSeen = false
+                    sessionReadySent = false
+                    contactsSentThisSession = false
+                }
                 connectedMac = device
-                currentMacId = null
-                handshakeMacId = null
-                notificationsSubscribed = false
-                macCommandSeen = false
-                sessionReadySent = false
-                contactsSentThisSession = false
                 updateSession()
                 startHandshakeTimeout(device)
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-                handshakeTimeoutJob?.cancel()
-                handshakeTimeoutJob = null
-                connectedMac = null
-                currentMacId = null
-                handshakeMacId = null
-                notificationsSubscribed = false
-                macCommandSeen = false
-                sessionReadySent = false
+                if (device == authenticatedGatt) {
+                    authenticatedGatt = null
+                    authenticatedMacId = null
+                    sessionAuthenticated = false
+                    sessionGatt = null
+                }
+                if (connectedMac == device) { connectedMac = authenticatedGatt }
+                if (authenticatedGatt == null) {
+                    handshakeTimeoutJob?.cancel()
+                    handshakeTimeoutJob = null
+                    currentMacId = null
+                    handshakeMacId = null
+                    notificationsSubscribed = false
+                    macCommandSeen = false
+                    sessionReadySent = false
+                }
                 updateSession()
             }
         }
@@ -860,8 +887,28 @@ class GattServerManager private constructor(private val context: Context) {
                     }
                     // --- MAC BIOMETRIC UNLOCK / PAIRING (see UNLOCK_DESIGN.md) ---
                     // PAIR_BEGIN US 1 US <mac_id> US <mac_pub_b64> US <nonce_m_b64>
+                    "SESSION_MAC_PROOF" -> handleSessionMacProof(device, parts)
                     "PAIR_BEGIN" -> PairingController.onBegin(context, parts)
                     "PAIR_DONE" -> PairingController.onDone(context, parts.getOrNull(2) ?: "")
+                    "SESSION_OK" -> {
+                        authenticatedGatt = device
+                        authenticatedMacId = sessionMacId
+                        sessionAuthenticated = true
+                        updateSession()
+                    }
+                    "SESSION_REJECTED" -> {
+                        sessionAuthenticated = false
+                        authenticatedGatt = null
+                        authenticatedMacId = null
+                        updateSession()
+                        android.os.Handler(android.os.Looper.getMainLooper()).post {
+                            android.widget.Toast.makeText(
+                                context,
+                                "会话验证失败，请在 Mac 上重新配对",
+                                android.widget.Toast.LENGTH_LONG,
+                            ).show()
+                        }
+                    }
                     "PAIR_CANCEL" -> PairingController.cancel(context)
                     // UNLOCK_REQUEST US 1 US <session_id_b64> US <challenge_b64> US <expires_at_ms> US <mac_sig_b64>
                     "UNLOCK_REQUEST" -> handleUnlockRequest(parts)
@@ -918,7 +965,27 @@ class GattServerManager private constructor(private val context: Context) {
         }
     }
 
+    fun dropSessionForUnbind() {
+        sessionAuthenticated = false
+        sessionNonce = null
+        sessionMacId = null
+        sessionReadySent = false
+        macCommandSeen = false
+        handshakeMacId = null
+        currentMacId = null
+        connectedMac?.let { gattServer?.cancelConnection(it) }
+        connectedMac = null
+        sessionGatt = null
+        authenticatedGatt = null
+        authenticatedMacId = null
+        updateSession()
+    }
+
     private fun handleUnlockRequest(parts: List<String>) {
+        if (!sessionAuthenticated) {
+            android.util.Log.w("MacSync", "unlock request ignored: session not authenticated")
+            return
+        }
         val version = parts.getOrNull(1)?.toIntOrNull() ?: return
         val sessionId = parts.getOrNull(2) ?: return
         val challenge = parts.getOrNull(3) ?: return
@@ -926,6 +993,71 @@ class GattServerManager private constructor(private val context: Context) {
         val macSig = parts.getOrNull(5) ?: return
         val macId = currentMacId ?: handshakeMacId ?: MacRegistry.LEGACY_ID
         UnlockController.onUnlockRequest(context, version, sessionId, macId, challenge, expiresAt, macSig)
+    }
+
+
+    private fun startSessionAuth(macId: String, macName: String, device: BluetoothDevice) {
+        sessionGatt = device
+        val mac = TrustedMacStore.get(context, macId)
+        if (mac == null || !mac.trusted || mac.sessionPublicKeyB64.isBlank() || mac.sessionKeyAlias.isBlank()) {
+            sessionAuthenticated = false
+            sessionNonce = null
+            sessionMacId = macId
+            sendNotificationToMac(UnlockProtocol.sessionUnpaired(android.os.Build.MODEL), to = device)
+            updateSession()
+            return
+        }
+        val nonce = ByteArray(16).also { SecureRandom().nextBytes(it) }
+        sessionNonce = nonce
+        sessionMacId = macId
+        sessionAuthenticated = false
+        sendNotificationToMac(UnlockProtocol.sessionChallenge(UnlockProtocol.b64(nonce)), to = device)
+        updateSession()
+    }
+
+    fun restartSessionAuth() {
+        val macId = sessionMacId ?: currentMacId ?: handshakeMacId ?: return
+        val device = sessionGatt ?: authenticatedGatt ?: connectedMac ?: return
+        startSessionAuth(macId, "", device)
+    }
+
+    private fun handleSessionMacProof(device: BluetoothDevice, parts: List<String>) {
+        val nonce = sessionNonce
+        val macId = sessionMacId
+        if (nonce == null || macId == null) return
+        val sigB64 = parts.getOrNull(2) ?: return
+        val nonceMacB64 = parts.getOrNull(3) ?: return
+        val mac = TrustedMacStore.get(context, macId) ?: return
+
+        val macOk = verifySession(mac.sessionPublicKeyB64, UnlockProtocol.sessionMacTranscript(nonce), sigB64)
+        android.util.Log.d("MacSync", "session: mac_proof verify=$macOk macPub=${if (mac.sessionPublicKeyB64.isBlank()) "EMPTY" else "ok"}")
+        if (!macOk) {
+            sessionAuthenticated = false
+            sendNotificationToMac("SESSION_REJECTED\u001Fbad_proof", to = device)
+            updateSession()
+            return
+        }
+        val nonceMac = try { UnlockProtocol.unb64(nonceMacB64) } catch (_: Exception) { return }
+        val sig = AndroidKeyStore.signSession(mac.sessionKeyAlias, UnlockProtocol.sessionPhoneTranscript(nonceMac))
+        android.util.Log.d("MacSync", "session: phone sign=${if (sig == null) "NULL" else "ok"} alias=${mac.sessionKeyAlias} phoneId=${TrustedMacStore.deviceId(context)}")
+        if (sig == null) {
+            sendNotificationToMac("SESSION_REJECTED\u001Fno_session_key", to = device)
+            return
+        }
+        sendNotificationToMac(UnlockProtocol.sessionPhoneProof(TrustedMacStore.deviceId(context), UnlockProtocol.b64(sig)), to = device)
+        // Wait for the Mac's SESSION_OK before showing "connected" on this side.
+        updateSession()
+    }
+
+    private fun verifySession(publicKeyB64: String, data: ByteArray, sigB64: String): Boolean {
+        return try {
+            val der = UnlockProtocol.unb64(publicKeyB64)
+            val pub = KeyFactory.getInstance("EC").generatePublic(X509EncodedKeySpec(der))
+            val sig = Signature.getInstance("SHA256withECDSA")
+            sig.initVerify(pub)
+            sig.update(data)
+            sig.verify(UnlockProtocol.unb64(sigB64))
+        } catch (_: Exception) { false }
     }
 
     private fun setupService() {

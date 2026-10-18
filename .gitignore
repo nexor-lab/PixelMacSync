@@ -48,3 +48,9 @@ local-test-data/
 *.key
 *.keystore
 *.dSYM.zip
+
+# iOS build artifacts
+iOS/build/
+iOS/build-device/
+iOS/build-sim/
+iOS/DerivedData/

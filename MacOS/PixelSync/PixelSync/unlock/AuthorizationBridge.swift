@@ -47,8 +47,12 @@ final class AuthorizationBridge {
     /// (The plugin is installed to /Library/Security/SecurityAgentPlugins by an
     /// admin step; until then the app must not promise passwordless unlock.)
     var pluginInstalled: Bool {
-        FileManager.default.fileExists(
-            atPath: "/Library/Security/SecurityAgentPlugins/PixelSyncAuthPlugin.bundle")
+        let module = "/usr/local/lib/pam/pam_pixelsync.so"
+        guard FileManager.default.fileExists(atPath: module) else { return false }
+        guard let conf = try? String(contentsOfFile: "/etc/pam.d/screensaver", encoding: .utf8) else {
+            return false
+        }
+        return conf.contains("pam_pixelsync.so")
     }
 
     /// Ask macOS to authenticate the user with their login password via the

@@ -68,6 +68,27 @@ object UnlockProtocol {
     fun transcriptResponse(transcriptRequest: ByteArray, phoneId: String): ByteArray =
         concat(transcriptRequest, lp(phoneId.toByteArray(Charsets.UTF_8)))
 
+    // --- session authentication (basic pairing / connection identity) ---
+
+    fun sessionChallenge(nonceB64: String): String =
+        listOf("SESSION_CHALLENGE", VERSION.toString(), nonceB64).joinToString(SEP)
+
+    fun sessionPhoneProof(phoneId: String, sigB64: String): String =
+        listOf("SESSION_PHONE_PROOF", VERSION.toString(), phoneId, sigB64).joinToString(SEP)
+
+    fun sessionUnpaired(phoneName: String): String =
+        listOf("SESSION_UNPAIRED", VERSION.toString(), phoneName).joinToString(SEP)
+
+    fun sessionMacTranscript(nonce: ByteArray): ByteArray {
+        val prefix = "PX-SESSION-MAC".toByteArray(Charsets.UTF_8)
+        return prefix + nonce
+    }
+
+    fun sessionPhoneTranscript(nonce: ByteArray): ByteArray {
+        val prefix = "PX-SESSION-PHONE".toByteArray(Charsets.UTF_8)
+        return prefix + nonce
+    }
+
     /** SAS for pairing: 6 decimal digits from SHA-256, identical on both sides. */
     fun pairingSas(pkMac: ByteArray, pkPhone: ByteArray, nonceMac: ByteArray, noncePhone: ByteArray): String {
         val md = java.security.MessageDigest.getInstance("SHA-256")

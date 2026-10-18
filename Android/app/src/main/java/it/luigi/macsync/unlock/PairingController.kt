@@ -24,7 +24,9 @@ object PairingController {
         val macId: String,
         val macName: String,
         val macPubB64: String,
+        val macSessionPubB64: String,
         val keyAlias: String,
+        val sessionKeyAlias: String,
         val pairingId: String,
     )
 
@@ -48,19 +50,30 @@ object PairingController {
         val macId = parts.getOrNull(2) ?: return false
         val macName = parts.getOrNull(3)?.ifBlank { macId } ?: macId
         val macPubB64 = parts.getOrNull(4) ?: return false
+        val macSessionPubB64 = parts.getOrNull(5) ?: macPubB64
 
         val alias = keyAliasFor(macId)
         if (!AndroidKeyStore.keyExists(alias)) AndroidKeyStore.createKey(alias)
         val phonePub = AndroidKeyStore.publicKeyDer(alias) ?: return false
-        val phoneId = TrustedMacStore.deviceId(context)
 
+        val sessionAlias = sessionAliasFor(macId)
+        if (!AndroidKeyStore.sessionKeyExists(sessionAlias)) AndroidKeyStore.createSessionKey(sessionAlias)
+        val phoneSessionPub = AndroidKeyStore.publicKeyDer(sessionAlias) ?: return false
+
+        val phoneId = TrustedMacStore.deviceId(context)
+        // Split to stay under the 180-byte BLE notification cap: the two P-256
+        // public keys do not fit in a single packet.
         send(context, listOf(
             "PAIR_REPLY", UnlockProtocol.VERSION.toString(),
             phoneId, UnlockProtocol.b64(phonePub),
         ))
+        send(context, listOf(
+            "PAIR_SESSION_PUB", UnlockProtocol.VERSION.toString(),
+            phoneId, UnlockProtocol.b64(phoneSessionPub),
+        ))
 
         val pairingId = UnlockProtocol.b64(ByteArray(12).also { SecureRandom().nextBytes(it) })
-        pending = Pending(macId, macName, macPubB64, alias, pairingId)
+        pending = Pending(macId, macName, macPubB64, macSessionPubB64, alias, sessionAlias, pairingId)
         PairingNotification.post(context, macName)
         return true
     }
@@ -86,12 +99,15 @@ object PairingController {
                 publicKeyB64 = p.macPubB64,
                 pairingId = p.pairingId,
                 keyAlias = p.keyAlias,
+                sessionKeyAlias = p.sessionKeyAlias,
+                sessionPublicKeyB64 = p.macSessionPubB64,
                 trusted = true,
             ),
         )
         pending = null
         PairingNotification.dismiss(context)
         notifyTrustChanged(context)
+        GattServerManager.getInstance(context).restartSessionAuth()
         return true
     }
 
@@ -111,6 +127,7 @@ object PairingController {
         TrustedMacStore.remove(context, macId)
         val phoneId = TrustedMacStore.deviceId(context)
         send(context, listOf("UNBIND", UnlockProtocol.VERSION.toString(), phoneId))
+        GattServerManager.getInstance(context).dropSessionForUnbind()
         notifyTrustChanged(context)
     }
 
@@ -119,6 +136,9 @@ object PairingController {
             Intent(ACTION_TRUST_CHANGED).setPackage(context.applicationContext.packageName)
         )
     }
+
+    private fun sessionAliasFor(macId: String): String =
+        "px_session_" + macId.replace(Regex("[^A-Za-z0-9_.-]"), "_")
 
     private fun keyAliasFor(macId: String): String =
         "px_unlock_" + macId.replace(Regex("[^A-Za-z0-9_.-]"), "_")

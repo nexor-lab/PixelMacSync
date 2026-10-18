@@ -97,9 +97,13 @@ enum UnlockProtocol {
         case pairRequest(version: Int, phoneId: String, macId: String)
         case unlockTrigger(version: Int, phoneId: String, macId: String)
         case setPolicy(version: Int, awayAutoLock: Bool, remoteWake: Bool)
-        case pairReply(version: Int, phoneId: String, phonePubB64: String)
+        case pairReply(version: Int, phoneId: String, phonePubB64: String, phoneSessionPubB64: String)
+        case pairSessionPub(version: Int, phoneId: String, sessionPubB64: String)
         case pairConfirm(version: Int, pairingId: String, macId: String)
         case pairCancel(version: Int, macId: String)
+        case sessionChallenge(version: Int, nonceB64: String)
+        case sessionPhoneProof(version: Int, phoneId: String, signatureB64: String)
+        case sessionUnpaired(version: Int, phoneName: String)
         case unbind(version: Int, phoneId: String)
         case authResponse(version: Int, sessionIdB64: String, phoneId: String, signatureB64: String)
         case trustRevoked(macId: String)
@@ -121,7 +125,20 @@ enum UnlockProtocol {
             return .setPolicy(version: v, awayAutoLock: fields[2] == "1", remoteWake: fields[3] == "1")
         case "PAIR_REPLY":
             guard fields.count >= 4, let v = int(1) else { return nil }
-            return .pairReply(version: v, phoneId: fields[2], phonePubB64: fields[3])
+            return .pairReply(version: v, phoneId: fields[2], phonePubB64: fields[3],
+                              phoneSessionPubB64: fields.count >= 5 ? fields[4] : "")
+        case "PAIR_SESSION_PUB":
+            guard fields.count >= 4, let v = int(1) else { return nil }
+            return .pairSessionPub(version: v, phoneId: fields[2], sessionPubB64: fields[3])
+        case "SESSION_CHALLENGE":
+            guard fields.count >= 3, let v = int(1) else { return nil }
+            return .sessionChallenge(version: v, nonceB64: fields[2])
+        case "SESSION_PHONE_PROOF":
+            guard fields.count >= 4, let v = int(1) else { return nil }
+            return .sessionPhoneProof(version: v, phoneId: fields[2], signatureB64: fields[3])
+        case "SESSION_UNPAIRED":
+            guard fields.count >= 2, let v = int(1) else { return nil }
+            return .sessionUnpaired(version: v, phoneName: fields.count >= 3 ? fields[2] : "")
         case "PAIR_CONFIRM":
             guard fields.count >= 4, let v = int(1) else { return nil }
             return .pairConfirm(version: v, pairingId: fields[2], macId: fields[3])
@@ -144,8 +161,28 @@ enum UnlockProtocol {
 
     // MARK: - packet building (Mac -> Android)
 
-    static func pairBegin(macId: String, macName: String, macPubB64: String) -> String {
-        ["PAIR_BEGIN", "\(version)", macId, macName, macPubB64].joined(separator: us)
+    static func pairBegin(macId: String, macName: String, macPubB64: String, macSessionPubB64: String) -> String {
+        ["PAIR_BEGIN", "\(version)", macId, macName, macPubB64, macSessionPubB64].joined(separator: us)
+    }
+
+    static func sessionMacProof(signatureB64: String, nonceB64: String) -> String {
+        ["SESSION_MAC_PROOF", "\(version)", signatureB64, nonceB64].joined(separator: us)
+    }
+
+    static func sessionOk() -> String {
+        ["SESSION_OK", "\(version)"].joined(separator: us)
+    }
+
+    static func sessionRejected(reason: String) -> String {
+        ["SESSION_REJECTED", "\(version)", reason].joined(separator: us)
+    }
+
+    static func sessionMacTranscript(_ nonce: Data) -> Data {
+        var d = Data("PX-SESSION-MAC".utf8); d.append(nonce); return d
+    }
+
+    static func sessionPhoneTranscript(_ nonce: Data) -> Data {
+        var d = Data("PX-SESSION-PHONE".utf8); d.append(nonce); return d
     }
 
     static func pairDone(pairingId: String) -> String {

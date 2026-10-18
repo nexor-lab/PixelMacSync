@@ -12,6 +12,7 @@ struct TrustedPhone: Codable, Equatable {
     var id: String            // phone device_id
     var name: String
     var publicKeyB64: String  // X.509 DER, base64
+    var sessionKeyB64: String? // phone session key (X.509 DER, base64)
     var pairingId: String
     var enabled: Bool
     var allowManualLock: Bool

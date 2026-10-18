@@ -12,6 +12,8 @@ data class TrustedMac(
     val publicKeyB64: String,
     val pairingId: String,
     val keyAlias: String,
+    val sessionKeyAlias: String = "",
+    val sessionPublicKeyB64: String = "",
     var trusted: Boolean = true,
     var allowManualLock: Boolean = true,
     var allowLidWake: Boolean = true,
@@ -55,6 +57,8 @@ object TrustedMacStore {
                     publicKeyB64 = o.optString("publicKey", ""),
                     pairingId = o.optString("pairingId", ""),
                     keyAlias = o.optString("keyAlias", ""),
+                    sessionKeyAlias = o.optString("sessionKeyAlias", ""),
+                    sessionPublicKeyB64 = o.optString("sessionPublicKeyB64", ""),
                     trusted = o.optBoolean("trusted", false),
                     allowManualLock = o.optBoolean("allowManualLock", true),
                     allowLidWake = o.optBoolean("allowLidWake", true),
@@ -92,7 +96,10 @@ object TrustedMacStore {
 
     fun remove(context: Context, macId: String) {
         val mac = get(context, macId)
-        if (mac != null) AndroidKeyStore.deleteKey(mac.keyAlias)
+        if (mac != null) {
+            AndroidKeyStore.deleteKey(mac.keyAlias)
+            if (mac.sessionKeyAlias.isNotEmpty()) AndroidKeyStore.deleteKey(mac.sessionKeyAlias)
+        }
         save(context, list(context).filterNot { it.macId == macId })
     }
 
@@ -105,6 +112,8 @@ object TrustedMacStore {
                 put("publicKey", m.publicKeyB64)
                 put("pairingId", m.pairingId)
                 put("keyAlias", m.keyAlias)
+                put("sessionKeyAlias", m.sessionKeyAlias)
+                put("sessionPublicKeyB64", m.sessionPublicKeyB64)
                 put("trusted", m.trusted)
                 put("allowManualLock", m.allowManualLock)
                 put("allowLidWake", m.allowLidWake)

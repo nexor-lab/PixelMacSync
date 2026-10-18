@@ -137,6 +137,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case "reconnect":
             // Force a clean BLE re-handshake (auto-reconnect budget reset).
             bleManager.reconnectNow(reason: "url")
+        case "connect":
+            bleManager.manualReconnect()
+        case "pair":
+            bleManager.unlockManager.beginPairing(force: true)
         case "login":
             LoginItem.setEnabled(action == "on")
         case "reply":

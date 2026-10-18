@@ -20,6 +20,7 @@ final class UnlockManager {
 
     let deviceStore: TrustedDeviceStore
     private let signingKey: MacSigningKey
+    private let sessionKey: MacSessionKey
     private let challengeManager = ChallengeManager()
     private let bridge = AuthorizationBridge.shared
 
@@ -35,10 +36,16 @@ final class UnlockManager {
     var onUnlockGranted: (() -> Void)?
     var onUnlockFailed: ((String) -> Void)?
     var onTrustChanged: (() -> Void)?
+    var onSessionAuthenticated: (() -> Void)?
+    var onSessionUnpaired: (() -> Void)?
+    var onUnbind: (() -> Void)?
+    private(set) var sessionVerified = false
+    private var pendingNonceMac: Data?
 
     private struct PairingState {
         var phoneId: String?
         var phonePubB64: String?
+        var phoneSessionPubB64: String?
         var phoneConfirmed = false
     }
     private var pairing: PairingState?
@@ -49,12 +56,23 @@ final class UnlockManager {
         try? FileManager.default.createDirectory(at: supportDir, withIntermediateDirectories: true)
         self.deviceStore = TrustedDeviceStore(folder: supportDir)
         self.signingKey = MacSigningKey(folder: supportDir)
+        self.sessionKey = MacSessionKey(folder: supportDir)
     }
 
     var trustedDevices: [TrustedPhone] { deviceStore.devices }
     var hasTrustedDevice: Bool { deviceStore.devices.contains { $0.enabled } }
     var macPublicKeyB64: String? { signingKey.publicKeyB64 }
     var isPairing: Bool { pairing != nil }
+
+    func resetSession() { sessionVerified = false; pendingNonceMac = nil }
+
+    /// Replace the hashed phone id shown in the UI with the device's friendly name.
+    func updateDeviceName(phoneId: String, name: String) {
+        guard !name.isEmpty, var d = deviceStore.get(phoneId), d.name != name else { return }
+        d.name = name
+        deviceStore.upsert(d)
+        DispatchQueue.main.async { self.onTrustChanged?() }
+    }
 
     // MARK: - Phone-side policy (auto-lock / remote wake)
     private let kAway = "pixel.unlock.awayAutoLock"
@@ -70,14 +88,26 @@ final class UnlockManager {
     }
     private var awayLockWork: DispatchWorkItem?
 
+    private let kAwayDelay = "pixel.unlock.awayLockDelay"
+    /// Seconds to wait after the BLE link is lost before locking; 0 = disabled.
+    var awayLockDelay: Double {
+        get { (UserDefaults.standard.object(forKey: kAwayDelay) as? Double) ?? 20 }
+        set { UserDefaults.standard.set(newValue, forKey: kAwayDelay) }
+    }
+
+    func setAwayLockDelay(_ seconds: Double) {
+        awayLockDelay = seconds
+    }
+
     /// BLE link lost: lock the screen after a grace period if still gone.
     func handleLinkLost() {
-        guard awayAutoLock, hasTrustedDevice else { return }
+        let delay = awayLockDelay
+        guard awayAutoLock, hasTrustedDevice, delay > 0 else { return }
         awayLockWork?.cancel()
         let work = DispatchWorkItem { ScreenControl.lockScreen() }
         awayLockWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 20, execute: work)
-        NSLog("PixelSync: link lost — will auto-lock in 20 s if not reconnected")
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+        NSLog("PixelSync: link lost — will auto-lock in \(Int(delay)) s if not reconnected")
     }
 
     /// BLE link restored: cancel a pending away-lock; if locked, wake + start unlock.
@@ -96,23 +126,23 @@ final class UnlockManager {
 
     /// `fromPhone` = true when triggered by the Android PAIR_REQUEST (so we can
     /// tell the phone if the Mac password prompt is cancelled).
-    func beginPairing(fromPhone: Bool = false) {
+    func beginPairing(fromPhone: Bool = false, force: Bool = false) {
+        if pairing != nil && !force {
+            NSLog("PixelSync: pairing already in progress")
+            return
+        }
         guard let pub = signingKey.publicKeyB64 else {
             NSLog("PixelSync: unlock signing key unavailable")
             return
         }
-        // Mac-side authorization: the macOS login password (system dialog).
-        guard AuthorizationBridge.requireLoginPassword() else {
-            NSLog("PixelSync: pairing not authorized on the Mac")
-            if fromPhone {
-                sendCommand?(UnlockProtocol.pairCancel(reason: "mac_auth_cancelled"))
-            }
-            return
-        }
+        // First-layer pairing is confirmed by the user's click on the Mac and
+        // the phone's own biometric; the Mac login password is reserved for
+        // sensitive operations (unlock/unbind).
         pairing = PairingState()
         DispatchQueue.main.async { self.onPairingStateChanged?(true) }
         sendCommand?(UnlockProtocol.pairBegin(
-            macId: macId, macName: macName, macPubB64: pub))
+            macId: macId, macName: macName,
+            macPubB64: pub, macSessionPubB64: sessionKey.publicKeyB64 ?? pub))
     }
 
     func cancelPairing() {
@@ -126,7 +156,7 @@ final class UnlockManager {
               let pub = state.phonePubB64,
               let pairingId = pairingId else { return }
         let device = TrustedPhone(
-            id: phoneId, name: phoneId, publicKeyB64: pub, pairingId: pairingId,
+            id: phoneId, name: phoneId, publicKeyB64: pub, sessionKeyB64: state.phoneSessionPubB64, pairingId: pairingId,
             enabled: true, allowManualLock: true, allowLidWake: true, createdAt: Date())
         deviceStore.upsert(device)
         pairing = nil
@@ -161,11 +191,18 @@ final class UnlockManager {
             remoteWake = wake
             NSLog("PixelSync: policy awayAutoLock=\(away) remoteWake=\(wake)")
 
-        case .pairReply(let version, let phoneId, let phonePubB64):
+        case .pairReply(let version, let phoneId, let phonePubB64, let phoneSessionPubB64):
             guard version == UnlockProtocol.version, var state = pairing else { return true }
             state.phoneId = phoneId
             state.phonePubB64 = phonePubB64
+            if !phoneSessionPubB64.isEmpty { state.phoneSessionPubB64 = phoneSessionPubB64 }
             pairing = state
+
+        case .pairSessionPub(let version, let phoneId, let sessionPubB64):
+            guard version == UnlockProtocol.version, var state = pairing, state.phoneId == nil || state.phoneId == phoneId else { return true }
+            state.phoneSessionPubB64 = sessionPubB64
+            pairing = state
+            finalizePairingIfReady()
 
         case .pairConfirm(let version, let pairingId, let confirmedMacId):
             guard version == UnlockProtocol.version, confirmedMacId == macId else { return true }
@@ -179,8 +216,64 @@ final class UnlockManager {
         case .unbind(let version, let phoneId):
             guard version == UnlockProtocol.version else { return true }
             deviceStore.remove(phoneId)
-            DispatchQueue.main.async { self.onTrustChanged?() }
+            sessionVerified = false
+            DispatchQueue.main.async {
+                self.onTrustChanged?()
+                self.onUnbind?()
+            }
             NSLog("PixelSync: phone \(phoneId) unbound by user")
+
+        case .sessionChallenge(let version, let nonceB64):
+            guard version == UnlockProtocol.version,
+                  let nonce = UnlockProtocol.unb64(nonceB64),
+                  let sig = sessionKey.sign(UnlockProtocol.sessionMacTranscript(nonce)) else { return true }
+            let nonceMac = Self.random(16)
+            pendingNonceMac = nonceMac
+            sendCommand?(UnlockProtocol.sessionMacProof(
+                signatureB64: UnlockProtocol.b64(sig), nonceB64: UnlockProtocol.b64(nonceMac)))
+
+        case .sessionPhoneProof(let version, let phoneId, let signatureB64):
+            NSLog("PixelSync: sessionPhoneProof recv phone=\(phoneId) ver=\(version) pendingNonce=\(pendingNonceMac != nil)")
+            guard version == UnlockProtocol.version, let nonceMac = pendingNonceMac else { return true }
+            pendingNonceMac = nil
+            guard let device = deviceStore.get(phoneId) else {
+                NSLog("PixelSync: session proof — device not found (\(phoneId))")
+                DispatchQueue.main.async { self.onUnlockFailed?("session_proof") }
+                return true
+            }
+            guard device.enabled else {
+                NSLog("PixelSync: session proof — device disabled")
+                DispatchQueue.main.async { self.onUnlockFailed?("session_proof") }
+                return true
+            }
+            guard let pkDER = UnlockProtocol.unb64(device.sessionKeyB64 ?? device.publicKeyB64) else {
+                NSLog("PixelSync: session proof — bad session pub (nil=\(device.sessionKeyB64 == nil))")
+                DispatchQueue.main.async { self.onUnlockFailed?("session_proof") }
+                return true
+            }
+            guard let sigDER = UnlockProtocol.unb64(signatureB64) else {
+                NSLog("PixelSync: session proof — bad signature b64")
+                DispatchQueue.main.async { self.onUnlockFailed?("session_proof") }
+                return true
+            }
+            let data = UnlockProtocol.sessionPhoneTranscript(nonceMac)
+            let ok = SignatureVerifier.verify(publicKeyDER: pkDER, data: data, signatureDER: sigDER)
+            NSLog("PixelSync: session proof phone=\(phoneId) hasSessionPub=\(device.sessionKeyB64 != nil) verify=\(ok)")
+            if ok {
+                sessionVerified = true
+                sendCommand?(UnlockProtocol.sessionOk())
+                DispatchQueue.main.async { self.onSessionAuthenticated?() }
+            } else {
+                sessionVerified = false
+                sendCommand?(UnlockProtocol.sessionRejected(reason: "bad_proof"))
+                DispatchQueue.main.async { self.onUnlockFailed?("session_proof") }
+            }
+
+        case .sessionUnpaired(let version, let phoneName):
+            guard version == UnlockProtocol.version else { return true }
+            sessionVerified = false
+            NSLog("PixelSync: phone \(phoneName) is not paired for session auth")
+            DispatchQueue.main.async { self.onSessionUnpaired?() }
 
         case .authResponse(let version, let sessionIdB64, let phoneId, let signatureB64):
             guard version == UnlockProtocol.version,
@@ -233,6 +326,12 @@ final class UnlockManager {
         }
         if !LockStateMonitor.isScreenLocked() {
             NSLog("PixelSync: unlock skipped (\(reason)) — screen not locked")
+            return
+        }
+        // Remote unlock is only allowed inside an authenticated session: the BLE
+        // link alone must never be able to ask the phone for a biometric unlock.
+        guard sessionVerified else {
+            NSLog("PixelSync: unlock skipped (\(reason)) — session not verified")
             return
         }
         guard let device = deviceStore.devices.first(where: { $0.enabled }) else {
@@ -288,5 +387,12 @@ final class UnlockManager {
     func setEnabled(_ phoneId: String, _ enabled: Bool) {
         deviceStore.setEnabled(phoneId, enabled)
         onTrustChanged?()
+    }
+
+    private static func random(_ count: Int) -> Data {
+        var bytes = [UInt8](repeating: 0, count: count)
+        let rc = SecRandomCopyBytes(kSecRandomDefault, count, &bytes)
+        if rc != errSecSuccess { bytes = (0..<count).map { _ in UInt8.random(in: 0...255) } }
+        return Data(bytes)
     }
 }

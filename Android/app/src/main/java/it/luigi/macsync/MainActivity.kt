@@ -41,6 +41,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -619,15 +620,19 @@ private fun MacActionButton(
     enabled: Boolean = true,
     onClick: () -> Unit,
 ) {
-    TextButton(
-        onClick = onClick,
-        enabled = enabled,
-        modifier = modifier,
-        contentPadding = PaddingValues(horizontal = 2.dp, vertical = 4.dp),
+    val effective = if (color == Color.Unspecified) MaterialTheme.colorScheme.onSurface else color
+    Box(
+        modifier = modifier
+            .height(34.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = 3.dp),
+        contentAlignment = Alignment.CenterStart,
     ) {
         Text(
             text = text,
-            color = color,
+            color = if (enabled) effective
+                    else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
             fontSize = 13.sp,
             maxLines = 1,
             textAlign = TextAlign.Start,

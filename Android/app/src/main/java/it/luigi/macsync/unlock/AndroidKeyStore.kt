@@ -77,6 +77,32 @@ object AndroidKeyStore {
         return signature.sign()
     }
 
+
+    // --- session key: non-biometric, used only to authenticate the BLE session ---
+    fun sessionKeyExists(alias: String): Boolean = keyExists(alias)
+
+    fun createSessionKey(alias: String) {
+        val gen = KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_EC, PROVIDER)
+        val spec = KeyGenParameterSpec.Builder(alias, KeyProperties.PURPOSE_SIGN)
+            .setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1"))
+            .setDigests(KeyProperties.DIGEST_SHA256)
+            .build()
+        gen.initialize(spec)
+        gen.generateKeyPair()
+    }
+
+    fun signSession(alias: String, data: ByteArray): ByteArray? {
+        val key = try {
+            keyStore().getEntry(alias, null) as? KeyStore.PrivateKeyEntry
+        } catch (_: Exception) { null } ?: return null
+        return try {
+            Signature.getInstance("SHA256withECDSA").apply {
+                initSign(key.privateKey)
+                update(data)
+            }.sign()
+        } catch (_: Exception) { null }
+    }
+
     fun canAuthenticateStrong(context: Context): Boolean =
         BiometricManager.from(context).canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG) ==
             BiometricManager.BIOMETRIC_SUCCESS

@@ -237,6 +237,9 @@ enum L10n {
     static var confirm: String { t("Confirm", "确认") }
     static var testUnlock: String { t("Test unlock (send request to phone)", "测试解锁（向手机发送请求）") }
     static var pairWaitingPhone: String { t("Waiting for the phone to confirm (fingerprint)…", "等待手机确认（指纹）…") }
+    static var awayLockTitle: String { t("Auto-lock after phone leaves", "手机离开后自动锁定") }
+    static var off: String { t("Off", "关闭") }
+    static func seconds(_ n: Int) -> String { isChinese ? "\(n) 秒" : "\(n) s" }
     static var allowManualLock: String { t("Unlock manual lock screen", "允许手动锁屏解锁") }
     static var allowLidWake: String { t("Unlock after lid-wake", "允许合盖唤醒解锁") }
     static var lastAuthJustNow: String { t("Last auth: just now", "最后认证：刚刚") }
