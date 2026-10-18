@@ -26,6 +26,7 @@ struct DiscoveredPhone: Identifiable, Equatable {
     let id: UUID
     var name: String
     var rssi: Int
+    var deviceId: String
 }
 
 class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNotificationCenterDelegate {
@@ -107,6 +108,8 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
 
     @Published var discoveredPhones: [DiscoveredPhone] = []
     @Published var selectedPhoneId: UUID? = UserDefaults.standard.string(forKey: "pixel.selectedPhoneId").flatMap(UUID.init(uuidString:))
+    @Published var selectedPhoneName: String? = UserDefaults.standard.string(forKey: "pixel.selectedPhoneName")
+    @Published var selectedPhoneDeviceId: String? = UserDefaults.standard.string(forKey: "pixel.selectedPhoneDeviceId")
     @Published var needingRepair = false
     private var discoveredPeripherals: [UUID: CBPeripheral] = [:]
     private var pendingPairAfterConnect = false
@@ -472,25 +475,68 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
         }
     }
 
+    private func advertisedDeviceId(_ advertisementData: [String: Any]) -> String? {
+        guard let mf = advertisementData[CBAdvertisementDataManufacturerDataKey] as? Data,
+              mf.count >= 10, mf[0] == 0xFF, mf[1] == 0xFF else { return nil }
+        return mf.subdata(in: 2..<10).map { String(format: "%02x", $0) }.joined()
+    }
+
     func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral, advertisementData: [String : Any], rssi RSSI: NSNumber) {
         guard self.pixelPeripheral == nil else { return }
         let id = peripheral.identifier
-        let name = peripheral.name ?? "PixelSync"
+        let deviceId = advertisedDeviceId(advertisementData) ?? ""
+        let trustedById = deviceId.isEmpty ? nil : trustedPhones.first(where: { $0.id.hasPrefix(deviceId) })
+        let name = peripheral.name ?? trustedById?.name ?? "PixelSync"
         let rssi = RSSI.intValue
         discoveredPeripherals[id] = peripheral
         if let idx = discoveredPhones.firstIndex(where: { $0.id == id }) {
             discoveredPhones[idx].name = name
             discoveredPhones[idx].rssi = rssi
+            discoveredPhones[idx].deviceId = deviceId
         } else {
-            discoveredPhones.append(DiscoveredPhone(id: id, name: name, rssi: rssi))
+            discoveredPhones.append(DiscoveredPhone(id: id, name: name, rssi: rssi, deviceId: deviceId))
         }
+
+        if let trusted = trustedById {
+            // Reconnect by the stable short device id, independent of the
+            // CoreBluetooth UUID / BLE address.
+            if selectedPhoneDeviceId == deviceId {
+                selectedPhoneId = id
+                selectedPhoneName = trusted.name
+                UserDefaults.standard.set(id.uuidString, forKey: "pixel.selectedPhoneId")
+                UserDefaults.standard.set(trusted.name, forKey: "pixel.selectedPhoneName")
+                connect(peripheral)
+                return
+            }
+            if selectedPhoneDeviceId == nil {
+                selectedPhoneDeviceId = deviceId
+                selectedPhoneId = id
+                selectedPhoneName = trusted.name
+                UserDefaults.standard.set(deviceId, forKey: "pixel.selectedPhoneDeviceId")
+                UserDefaults.standard.set(id.uuidString, forKey: "pixel.selectedPhoneId")
+                UserDefaults.standard.set(trusted.name, forKey: "pixel.selectedPhoneName")
+                connect(peripheral)
+                return
+            }
+            // A different trusted phone is remembered: don't steal the link.
+            return
+        }
+
+        // Legacy phones without the service data: id / name fallback.
         let lower = name.lowercased()
         let isApple = lower.contains("iphone") || lower.contains("ipad")
-        if selectedPhoneId == nil, !isApple, trustedPhones.contains(where: { $0.name == name }) {
+        let trustedByName = trustedPhones.contains(where: { $0.name == name })
+        if selectedPhoneId == id {
+            connect(peripheral)
+        } else if let lastName = selectedPhoneName, lastName == name, trustedByName {
             selectedPhoneId = id
             UserDefaults.standard.set(id.uuidString, forKey: "pixel.selectedPhoneId")
-        }
-        if selectedPhoneId == id {
+            connect(peripheral)
+        } else if selectedPhoneId == nil, !isApple, trustedByName {
+            selectedPhoneId = id
+            selectedPhoneName = name
+            UserDefaults.standard.set(id.uuidString, forKey: "pixel.selectedPhoneId")
+            UserDefaults.standard.set(name, forKey: "pixel.selectedPhoneName")
             connect(peripheral)
         }
     }
@@ -499,7 +545,13 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
     /// paired, the first pairing handshake starts automatically after HELLO.
     func selectPhone(_ phone: DiscoveredPhone) {
         selectedPhoneId = phone.id
+        selectedPhoneName = phone.name
+        if !phone.deviceId.isEmpty {
+            selectedPhoneDeviceId = phone.deviceId
+            UserDefaults.standard.set(phone.deviceId, forKey: "pixel.selectedPhoneDeviceId")
+        }
         UserDefaults.standard.set(phone.id.uuidString, forKey: "pixel.selectedPhoneId")
+        UserDefaults.standard.set(phone.name, forKey: "pixel.selectedPhoneName")
         pendingPairAfterConnect = !trustedPhones.contains(where: { $0.name == phone.name })
         if let p = discoveredPeripherals[phone.id] {
             connect(p)
@@ -797,8 +849,6 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
     
     func manualReconnect() {
         handshakeTimeout?.cancel()
-        selectedPhoneId = nil
-        UserDefaults.standard.removeObject(forKey: "pixel.selectedPhoneId")
         if let p = pixelPeripheral { centralManager.cancelPeripheralConnection(p) }
         pixelPeripheral = nil
         commandCharacteristic = nil

@@ -114,9 +114,26 @@ final class BLEPeripheralManager: NSObject, ObservableObject, CBPeripheralManage
         manager.add(service)
     }
 
+    /// Stable 64-bit prefix of this phone's device id; lets the Mac reconnect
+    /// the remembered phone even if the BLE address / CoreBluetooth UUID changes.
+    private var deviceIdData: Data {
+        let short = String(TrustedMacStore.shared.deviceId.prefix(16))
+        var data = Data()
+        var i = short.startIndex
+        while i < short.endIndex, let j = short.index(i, offsetBy: 2, limitedBy: short.endIndex) {
+            if let byte = UInt8(short[i..<j], radix: 16) { data.append(byte) }
+            i = j
+        }
+        return data
+    }
+
     private func startAdvertising() {
         manager.startAdvertising([
             CBAdvertisementDataServiceUUIDsKey: [serviceUUID],
+            // NOTE: do NOT use CBAdvertisementDataServiceDataKey with a
+            // [CBUUID: Data] dictionary on iOS 27.x: CoreBluetooth's XPC
+            // serializer calls UTF8String on the CBUUID key and aborts.
+            CBAdvertisementDataManufacturerDataKey: Data([0xFF, 0xFF]) + deviceIdData,
         ])
         advertising = true
     }
@@ -139,6 +156,7 @@ final class BLEPeripheralManager: NSObject, ObservableObject, CBPeripheralManage
             subscribed = false
             connected = false
             statusText = "Mac 已断开"
+            UnlockController.shared.sessionReset()
         }
     }
 
@@ -162,25 +180,34 @@ final class BLEPeripheralManager: NSObject, ObservableObject, CBPeripheralManage
         case "HELLO":
             let macId = parts.count >= 2 ? parts[1] : "legacy"
             let name = parts.count >= 3 ? parts[2] : macId
-            connectedMacId = macId
+            DispatchQueue.main.async { self.connectedMacId = macId }
             DispatchQueue.main.async {
                 self.macName = name
-                self.connected = true
-                self.statusText = "已连接"
+                self.statusText = "正在验证…"
             }
-            send("SESSION_READY\(UnlockProtocol.us)\(UIDevice.current.name)\(UnlockProtocol.us)\(macId)")
-            sendPolicy()
-            sendTelemetry()
+            UnlockController.shared.startSession(macId: macId, name: name)
 
         case "SYNC_REQ":
             sendTelemetry()
 
-        case "PAIR_BEGIN", "PAIR_DONE", "PAIR_CANCEL", "UNLOCK_REQUEST", "TRUST_REVOKED":
+        case "PAIR_BEGIN", "PAIR_DONE", "PAIR_CANCEL", "UNLOCK_REQUEST", "TRUST_REVOKED",
+             "SESSION_MAC_PROOF", "SESSION_OK", "SESSION_REJECTED":
             UnlockController.shared.handleInbound(parts)
 
         default:
             break   // SYNC/MUSIC/HOTSPOT/DIAL/etc. are not supported on iOS
         }
+    }
+
+    /// Called by UnlockController after the Mac confirms the session proof.
+    func sessionEstablished(macId: String) {
+        DispatchQueue.main.async {
+            self.connected = true
+            self.statusText = "已连接"
+        }
+        send(UnlockProtocol.sessionReady(phoneName: UIDevice.current.name, macId: macId))
+        sendPolicy()
+        sendTelemetry()
     }
 
     func sendPolicy() {

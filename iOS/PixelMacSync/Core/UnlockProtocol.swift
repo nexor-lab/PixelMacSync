@@ -71,6 +71,32 @@ enum UnlockProtocol {
         ["SET_POLICY", "\(version)", awayAutoLock ? "1" : "0", remoteWake ? "1" : "0"]
             .joined(separator: us)
     }
+
+    // MARK: - session auth (same wire format as Android/macOS)
+
+    static func pairSessionPub(phoneId: String, sessionPubB64: String) -> String {
+        ["PAIR_SESSION_PUB", "\(version)", phoneId, sessionPubB64].joined(separator: us)
+    }
+    static func sessionChallenge(nonceB64: String) -> String {
+        ["SESSION_CHALLENGE", "\(version)", nonceB64].joined(separator: us)
+    }
+    static func sessionPhoneProof(phoneId: String, signatureB64: String) -> String {
+        ["SESSION_PHONE_PROOF", "\(version)", phoneId, signatureB64].joined(separator: us)
+    }
+    static func sessionUnpaired(phoneName: String) -> String {
+        ["SESSION_UNPAIRED", "\(version)", phoneName].joined(separator: us)
+    }
+    static func sessionReady(phoneName: String, macId: String) -> String {
+        // The legacy SESSION_READY packet has no version field (see macOS PixelPacket).
+        ["SESSION_READY", phoneName, macId].joined(separator: us)
+    }
+    static func sessionMacTranscript(_ nonce: Data) -> Data {
+        var d = Data("PX-SESSION-MAC".utf8); d.append(nonce); return d
+    }
+    static func sessionPhoneTranscript(_ nonce: Data) -> Data {
+        var d = Data("PX-SESSION-PHONE".utf8); d.append(nonce); return d
+    }
+
     static func unbind(phoneId: String) -> String {
         ["UNBIND", "\(version)", phoneId].joined(separator: us)
     }

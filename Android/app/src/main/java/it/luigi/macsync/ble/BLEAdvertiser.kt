@@ -9,10 +9,12 @@ import android.bluetooth.le.BluetoothLeAdvertiser
 import android.content.Context
 import android.os.ParcelUuid
 import android.util.Log
+import it.luigi.macsync.unlock.TrustedMacStore
 import java.util.UUID
 
 class BLEAdvertiser(context: Context) {
 
+    private val appContext = context.applicationContext
     private val bluetoothManager: BluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
 
     // Usiamo il manager moderno per recuperare l'antenna fresca ad ogni chiamata senza warning!
@@ -33,6 +35,19 @@ class BLEAdvertiser(context: Context) {
     private val advertiseData = AdvertiseData.Builder()
         .setIncludeDeviceName(false)
         .addServiceUuid(ParcelUuid(serviceUUID))
+        .build()
+
+    // Stable 64-bit prefix of the phone device id, so the Mac can reconnect the
+    // remembered device even if its BLE address / CoreBluetooth UUID changes.
+    private val deviceIdBytes: ByteArray = run {
+        val short = TrustedMacStore.deviceId(appContext).take(16)
+        ByteArray(short.length / 2) { i ->
+            short.substring(i * 2, i * 2 + 2).toInt(16).toByte()
+        }
+    }
+
+    private val scanResponse = AdvertiseData.Builder()
+        .addManufacturerData(0xFFFF, deviceIdBytes)
         .build()
 
     private val advertiseCallback = object : AdvertiseCallback() {
@@ -56,7 +71,7 @@ class BLEAdvertiser(context: Context) {
         }
 
         Log.d("PixelSync", "Avvio advertising...")
-        currentAdvertiser.startAdvertising(advertiseSettings, advertiseData, advertiseCallback)
+        currentAdvertiser.startAdvertising(advertiseSettings, advertiseData, scanResponse, advertiseCallback)
         isAdvertising = true
     }
 

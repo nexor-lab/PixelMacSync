@@ -13,6 +13,7 @@ struct TrustedMac: Codable, Equatable {
     var macId: String
     var name: String
     var publicKeyB64: String   // Mac's P-256 public key, DER base64
+    var sessionPublicKeyB64: String? // Mac's session public key, DER base64
     var pairingId: String
     var createdAt: Date
     var lastAuthAt: Date?

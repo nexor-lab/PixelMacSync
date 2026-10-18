@@ -27,8 +27,11 @@ final class UnlockController: ObservableObject {
         let expiresAt: Int64
     }
     private var pendingUnlock: PendingUnlock?
-    private var pairing: (macId: String, macName: String, macPubB64: String)?
+    private var pairing: (macId: String, macName: String, macPubB64: String, macSessionPubB64: String)?
     private var pendingPairingId: String?
+    private var sessionAuthenticated = false
+    private var sessionMacId: String?
+    private var sessionNonce: Data?
 
     var hasPendingUnlock: Bool { pendingUnlock != nil }
 
@@ -41,7 +44,30 @@ final class UnlockController: ObservableObject {
         }
         BLEPeripheralManager.shared.send(
             UnlockProtocol.pairRequest(phoneId: TrustedMacStore.shared.deviceId, macId: macId))
-        lastMessage = "已请求绑定，请在 Mac 上输入登录密码"
+        lastMessage = "已请求绑定，请在 Mac 上确认配对"
+    }
+
+    /// Start (or restart) session authentication for the connected Mac.
+    func startSession(macId: String, name: String) {
+        sessionMacId = macId
+        sessionNonce = nil
+        sessionAuthenticated = false
+        guard let mac = TrustedMacStore.shared.get(macId), mac.sessionPublicKeyB64 != nil else {
+            // No session key yet: let the Mac start the (re)pairing flow.
+            BLEPeripheralManager.shared.send(UnlockProtocol.sessionUnpaired(phoneName: UIDevice.current.name))
+            return
+        }
+        var nonce = Data(count: 16)
+        _ = nonce.withUnsafeMutableBytes { SecRandomCopyBytes(kSecRandomDefault, 16, $0.baseAddress!) }
+        sessionNonce = nonce
+        BLEPeripheralManager.shared.send(
+            UnlockProtocol.sessionChallenge(nonceB64: UnlockProtocol.b64(nonce)))
+    }
+
+    func sessionReset() {
+        sessionAuthenticated = false
+        sessionNonce = nil
+        sessionMacId = nil
     }
 
     func confirmPairing() async {
@@ -116,11 +142,16 @@ final class UnlockController: ObservableObject {
         case "PAIR_BEGIN":
             guard parts.count >= 5, let v = Int(parts[1]), v == UnlockProtocol.version else { return }
             let macId = parts[2], macName = parts[3], macPub = parts[4]
+            let macSessionPub = parts.count >= 6 ? parts[5] : ""
             _ = SecureKey.shared.key()
-            guard let phonePub = SecureKey.shared.publicKeyB64() else { return }
-            pairing = (macId, macName, macPub)
+            guard let phonePub = SecureKey.shared.publicKeyB64(),
+                  let phoneSessionPub = SecureKey.shared.sessionPublicKeyB64() else { return }
+            pairing = (macId, macName, macPub, macSessionPub)
+            let phoneId = TrustedMacStore.shared.deviceId
             BLEPeripheralManager.shared.send(
-                UnlockProtocol.pairReply(phoneId: TrustedMacStore.shared.deviceId, phonePubB64: phonePub))
+                UnlockProtocol.pairReply(phoneId: phoneId, phonePubB64: phonePub))
+            BLEPeripheralManager.shared.send(
+                UnlockProtocol.pairSessionPub(phoneId: phoneId, sessionPubB64: phoneSessionPub))
             DispatchQueue.main.async {
                 self.pairingMacName = macName
                 self.pairingActive = true
@@ -129,10 +160,13 @@ final class UnlockController: ObservableObject {
         case "PAIR_DONE":
             guard parts.count >= 3 else { return }
             let pairingId = parts[2]
+            var pairedMac: (String, String)?
             if let p = pairing, pendingPairingId == nil || pendingPairingId == pairingId {
                 TrustedMacStore.shared.upsert(TrustedMac(
                     macId: p.macId, name: p.macName, publicKeyB64: p.macPubB64,
+                    sessionPublicKeyB64: p.macSessionPubB64.isEmpty ? nil : p.macSessionPubB64,
                     pairingId: pairingId, createdAt: Date()))
+                pairedMac = (p.macId, p.macName)
             }
             pairing = nil
             pendingPairingId = nil
@@ -140,11 +174,41 @@ final class UnlockController: ObservableObject {
                 self.pairingActive = false
                 self.lastMessage = "绑定成功"
             }
+            if let (macId, name) = pairedMac { startSession(macId: macId, name: name) }
 
         case "PAIR_CANCEL":
             pairing = nil
             pendingPairingId = nil
             DispatchQueue.main.async { self.pairingActive = false }
+
+        case "SESSION_MAC_PROOF":
+            guard parts.count >= 4, let v = Int(parts[1]), v == UnlockProtocol.version,
+                  let macId = sessionMacId, let nonce = sessionNonce,
+                  let mac = TrustedMacStore.shared.get(macId),
+                  let macSessionPub = mac.sessionPublicKeyB64,
+                  let nonceMac = UnlockProtocol.unb64(parts[3]),
+                  Self.verify(macPubB64: macSessionPub,
+                              data: UnlockProtocol.sessionMacTranscript(nonce),
+                              sigB64: parts[2]),
+                  let sig = SecureKey.shared.signSession(
+                              UnlockProtocol.sessionPhoneTranscript(nonceMac)) else {
+                postMessage("会话验证失败")
+                return
+            }
+            BLEPeripheralManager.shared.send(
+                UnlockProtocol.sessionPhoneProof(
+                    phoneId: TrustedMacStore.shared.deviceId,
+                    signatureB64: UnlockProtocol.b64(sig)))
+
+        case "SESSION_OK":
+            guard parts.count >= 2, let v = Int(parts[1]), v == UnlockProtocol.version,
+                  let macId = sessionMacId else { return }
+            sessionAuthenticated = true
+            BLEPeripheralManager.shared.sessionEstablished(macId: macId)
+
+        case "SESSION_REJECTED":
+            sessionAuthenticated = false
+            postMessage("会话验证失败，请在 Mac 上重新配对")
 
         case "UNLOCK_REQUEST":
             handleUnlockRequest(parts)
@@ -158,6 +222,7 @@ final class UnlockController: ObservableObject {
     }
 
     private func handleUnlockRequest(_ parts: [String]) {
+        guard sessionAuthenticated else { return }
         guard parts.count >= 6, let v = Int(parts[1]), v == UnlockProtocol.version else { return }
         let sessionIdB64 = parts[2], challengeB64 = parts[3], sigB64 = parts[5]
         guard let expiresAt = Int64(parts[4]),
@@ -190,6 +255,10 @@ final class UnlockController: ObservableObject {
         } catch {
             return false
         }
+    }
+
+    private func postMessage(_ text: String) {
+        DispatchQueue.main.async { self.lastMessage = text }
     }
 
     private static func nowMs() -> Int64 { Int64(Date().timeIntervalSince1970 * 1000) }

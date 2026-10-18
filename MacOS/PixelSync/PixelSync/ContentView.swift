@@ -54,8 +54,6 @@ struct ContentView: View {
                         Button(L10n.t("Pair", "配对")) { bleManager.unlockManager.beginPairing(force: true) }
                             .font(.caption2).buttonStyle(.link)
                     }
-                    Button(L10n.t("Connect", "连接")) { bleManager.manualReconnect() }
-                        .font(.caption2).buttonStyle(.link)
                 }
                 
                 Spacer()
@@ -217,6 +215,7 @@ struct MusicControlView: View {
     @State private var dragSeconds: Double = 0
     @State private var isDraggingVolume = false
     @State private var dragVolume: Double = 0
+    @State private var expanded = false
 
     private var durationSeconds: Double {
         max(1, Double(bleManager.music.durationMs) / 1000.0)
@@ -236,25 +235,9 @@ struct MusicControlView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Image(systemName: "music.note")
-                    .foregroundColor(bleManager.music.isPlaying ? .accentColor : .secondary)
-                Text(L10n.music)
-                    .font(.subheadline)
-                Spacer()
-                if !bleManager.isConnected {
-                    Text(L10n.musicUnavailable)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                } else if bleManager.music.stopped || !bleManager.music.hasTrack {
-                    Text(L10n.musicNoTrack)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-            }
-
-            if bleManager.isConnected && bleManager.music.hasTrack {
+        DisclosureGroup(isExpanded: $expanded) {
+            VStack(alignment: .leading, spacing: 8) {
+                if bleManager.isConnected && bleManager.music.hasTrack {
                 HStack(spacing: 10) {
                     coverImage
                     VStack(alignment: .leading, spacing: 2) {
@@ -352,6 +335,21 @@ struct MusicControlView: View {
                 }
             }
         }
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "music.note")
+                    .foregroundColor(bleManager.music.isPlaying ? .accentColor : .secondary)
+                Text(L10n.music).font(.subheadline)
+                Spacer()
+                if !bleManager.isConnected {
+                    Text(L10n.musicUnavailable).font(.caption).foregroundColor(.secondary)
+                } else if bleManager.music.stopped || !bleManager.music.hasTrack {
+                    Text(L10n.musicNoTrack).font(.caption).foregroundColor(.secondary)
+                }
+            }
+        }
+        .onAppear { expanded = bleManager.music.isPlaying }
+        .onChange(of: bleManager.music.isPlaying) { playing in expanded = playing }
     }
 
     @ViewBuilder
