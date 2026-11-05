@@ -96,6 +96,13 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+
+    override fun onResume() {
+        super.onResume()
+        // Retry a PAIR_BEGIN that could not create the biometric key while the
+        // phone was locked. Safe no-op when there is no pending request.
+        PairingController.retryPendingBegin(this)
+    }
 }
 
 private fun isNotificationServiceEnabled(context: Context): Boolean {

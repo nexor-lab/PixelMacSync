@@ -136,4 +136,6 @@
     <string name="pair_screen_title">Mac 配对请求</string>
     <string name="pair_screen_hint">点击“确认配对”并用指纹验证，即可与该 Mac 建立解锁密钥。</string>
     <string name="unlock_key_invalid_repair">指纹已变更，需要重新配对</string>
+    <string name="pair_unlock_required_title">解锁手机以与 %1$s 配对</string>
+    <string name="pair_unlock_required_text">锁屏状态下无法生成指纹密钥。请解锁手机并重新打开 PixelMacSync。</string>
 </resources>

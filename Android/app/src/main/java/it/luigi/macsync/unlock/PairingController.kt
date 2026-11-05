@@ -7,6 +7,7 @@ import it.luigi.macsync.ble.GattServerManager
 import java.security.SecureRandom
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import org.json.JSONArray
 import org.json.JSONObject
 
 /**
@@ -24,6 +25,7 @@ object PairingController {
     const val ACTION_TRUST_CHANGED = "it.luigi.macsync.TRUST_CHANGED"
     private const val PREFS = "MacSync_Pair"
     private const val KEY_PENDING = "pending_v1"
+    private const val KEY_PENDING_BEGIN = "pending_begin_v1"
 
     data class Pending(
         val macId: String,
@@ -91,6 +93,34 @@ object PairingController {
 
     fun current(): Pending? = pending
 
+    private fun savePendingBegin(context: Context, parts: List<String>) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putString(KEY_PENDING_BEGIN, JSONArray(parts).toString()).apply()
+    }
+
+    private fun clearPendingBegin(context: Context) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .remove(KEY_PENDING_BEGIN).apply()
+    }
+
+    /** Called after the device is unlocked / the app resumes. Android refuses to
+     *  create biometric-gated keys while locked, so the original PAIR_BEGIN is
+     *  replayed here instead of leaving the Mac/phone stuck at "verifying". */
+    @Synchronized
+    fun retryPendingBegin(context: Context): Boolean {
+        val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getString(KEY_PENDING_BEGIN, null) ?: return false
+        return try {
+            val arr = JSONArray(raw)
+            val parts = ArrayList<String>(arr.length())
+            for (i in 0 until arr.length()) parts.add(arr.getString(i))
+            onBegin(context, parts)
+        } catch (e: Exception) {
+            Log.w(TAG, "retryPendingBegin failed: ${e.message}")
+            false
+        }
+    }
+
     /** Phone-initiated pairing from the "connected devices" list. */
     fun requestPairing(context: Context, macId: String) {
         val phoneId = TrustedMacStore.deviceId(context)
@@ -109,17 +139,35 @@ object PairingController {
         val macSessionPubB64 = parts.getOrNull(5) ?: macPubB64
 
         val alias = keyAliasFor(macId)
-        // Recreate the unlock key when it is missing *or invalidated* (the
-        // latter happens after a fingerprint enrollment change).
-        if (!AndroidKeyStore.isUnlockKeyUsable(alias)) {
-            AndroidKeyStore.deleteKey(alias)
-            AndroidKeyStore.createKey(alias)
-        }
-        val phonePub = AndroidKeyStore.publicKeyDer(alias) ?: return false
-
         val sessionAlias = sessionAliasFor(macId)
-        if (!AndroidKeyStore.sessionKeyExists(sessionAlias)) AndroidKeyStore.createSessionKey(sessionAlias)
-        val phoneSessionPub = AndroidKeyStore.publicKeyDer(sessionAlias) ?: return false
+        val phonePub: ByteArray?
+        val phoneSessionPub: ByteArray?
+        try {
+            // Recreate the unlock key when it is missing *or invalidated* (the
+            // latter happens after a fingerprint enrollment change).
+            if (!AndroidKeyStore.isUnlockKeyUsable(alias)) {
+                AndroidKeyStore.deleteKey(alias)
+                AndroidKeyStore.createKey(alias)
+            }
+            phonePub = AndroidKeyStore.publicKeyDer(alias)
+            if (!AndroidKeyStore.sessionKeyExists(sessionAlias)) {
+                AndroidKeyStore.createSessionKey(sessionAlias)
+            }
+            phoneSessionPub = AndroidKeyStore.publicKeyDer(sessionAlias)
+        } catch (e: Exception) {
+            // Android refuses to generate biometric-gated keys while the device
+            // is locked. Remember the request and retry after USER_PRESENT.
+            Log.w(TAG, "pairing key generation failed (device locked?): ${e.message}")
+            savePendingBegin(context, parts)
+            PairingNotification.postUnlockRequired(context, macName)
+            return false
+        }
+        if (phonePub == null || phoneSessionPub == null) {
+            Log.w(TAG, "pairing public key unavailable")
+            savePendingBegin(context, parts)
+            PairingNotification.postUnlockRequired(context, macName)
+            return false
+        }
 
         val phoneId = TrustedMacStore.deviceId(context)
         // Split to stay under the 180-byte BLE notification cap: the two P-256
@@ -136,6 +184,8 @@ object PairingController {
         val pairingId = UnlockProtocol.b64(ByteArray(12).also { SecureRandom().nextBytes(it) })
         updatePending(Pending(macId, macName, macPubB64, macSessionPubB64, alias, sessionAlias, pairingId))
         persist(context, pending)
+        clearPendingBegin(context)
+        PairingNotification.dismissUnlockRequired(context)
         PairingNotification.post(context, macName)
         return true
     }

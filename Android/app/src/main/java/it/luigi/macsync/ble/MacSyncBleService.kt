@@ -33,6 +33,14 @@ class MacSyncBleService : Service() {
 
     private val channelId = "macsync_bg_channel"
 
+    private val userPresentReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == Intent.ACTION_USER_PRESENT) {
+                PairingController.retryPendingBegin(this@MacSyncBleService)
+            }
+        }
+    }
+
     private val bluetoothStateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == BluetoothAdapter.ACTION_STATE_CHANGED) {
@@ -65,6 +73,7 @@ class MacSyncBleService : Service() {
 
         val filter = IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED)
         registerReceiver(bluetoothStateReceiver, filter)
+        registerReceiver(userPresentReceiver, IntentFilter(Intent.ACTION_USER_PRESENT))
 
         // Restore a pairing prompt that outlived the process; clear a stale one.
         PairingController.restore(this)
@@ -72,6 +81,7 @@ class MacSyncBleService : Service() {
             ?: PairingNotification.dismiss(this)
 
         ensureBleRunning()
+        PairingController.retryPendingBegin(this)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -92,6 +102,7 @@ class MacSyncBleService : Service() {
     }
 
     override fun onDestroy() {
+        try { unregisterReceiver(userPresentReceiver) } catch (_: Exception) {}
         try { unregisterReceiver(bluetoothStateReceiver) } catch (_: Exception) {}
         gattServerManager.stopServer()
         bleAdvertiser.stopAdvertising()
