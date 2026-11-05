@@ -298,10 +298,14 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
         unlockManager.onSessionUnpaired = { [weak self] in
             guard let self = self else { return }
             self.needingRepair = self.isLinkConnected
-            if !self.unlockPairingActive && !self.autoPairedThisLink {
-                self.autoPairedThisLink = true
+            // The phone may report an unusable session key after a Keystore
+            // loss or a reinstall. Always (re)start pairing for that link; the
+            // old `autoPairedThisLink` one-shot flag left the phone stuck at
+            // "verifying" when the first auto-pairing was not completed.
+            if !self.unlockPairingActive {
+                NSLog("MacSync: phone session unpaired -> force pairing")
                 self.pendingPairAfterConnect = false
-                self.unlockManager.beginPairing()
+                self.unlockManager.beginPairing(force: true)
             }
         }
         unlockManager.onSessionAuthenticated = { [weak self] in
