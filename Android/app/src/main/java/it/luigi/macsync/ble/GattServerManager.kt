@@ -104,6 +104,8 @@ class GattServerManager private constructor(private val context: Context) {
     @Volatile private var macCommandSeen = false
     @Volatile private var sessionReadySent = false
     @Volatile private var sessionAuthenticated = false
+    /** True only between sending SESSION_PHONE_PROOF and receiving SESSION_OK. */
+    @Volatile private var awaitingSessionOk = false
     private var sessionNonce: ByteArray? = null
     private var sessionMacId: String? = null
     @Volatile private var currentMacId: String? = null
@@ -771,6 +773,14 @@ class GattServerManager private constructor(private val context: Context) {
         override fun onCharacteristicReadRequest(device: BluetoothDevice, requestId: Int, offset: Int, characteristic: BluetoothGattCharacteristic) {
             super.onCharacteristicReadRequest(device, requestId, offset, characteristic)
             if (characteristic.uuid == TELEMETRY_UUID) {
+                // Telemetry includes Wi-Fi SSID / Bluetooth name / model. Only
+                // the authenticated Mac may read it; pre-auth reads are denied.
+                if (!sessionAuthenticated || authenticatedGatt != device) {
+                    gattServer?.sendResponse(
+                        device, requestId, 0x02 /* GATT_READ_NOT_PERMITTED */, offset, null,
+                    )
+                    return
+                }
                 val data = telemetryPayload().toByteArray(Charsets.UTF_8)
                 gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, data)
             }
@@ -816,6 +826,28 @@ class GattServerManager private constructor(private val context: Context) {
                 val commandType = parts[0]
                 // Log only the command type (never payloads: no numbers/bodies).
                 Diagnostics.log("cmd $commandType")
+
+                // Only handshake/pairing packets may be processed before the
+                // application session is authenticated. Everything else (dial,
+                // hotspot, calls, media, replies, KILL, sync, unlock) must come
+                // from the authenticated Mac; otherwise any nearby BLE central
+                // could control the phone.
+                val preAuthCommands = setOf(
+                    "HELLO",
+                    "SESSION_MAC_PROOF",
+                    "SESSION_OK",
+                    "SESSION_REJECTED",
+                    "PAIR_BEGIN",
+                    "PAIR_DONE",
+                    "PAIR_CANCEL",
+                )
+                if (!sessionAuthenticated && commandType !in preAuthCommands) {
+                    Log.w("MacSync", "unauthenticated command dropped: $commandType")
+                    if (responseNeeded) {
+                        gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, null)
+                    }
+                    return
+                }
 
                 // Legacy macOS clients (no HELLO) still establish a session once
                 // they send a command; HELLO is handled by its own branch below.
@@ -902,12 +934,20 @@ class GattServerManager private constructor(private val context: Context) {
                     "PAIR_BEGIN" -> PairingController.onBegin(context, parts)
                     "PAIR_DONE" -> PairingController.onDone(context, parts.getOrNull(2) ?: "")
                     "SESSION_OK" -> {
-                        authenticatedGatt = device
-                        authenticatedMacId = sessionMacId
-                        sessionAuthenticated = true
-                        updateSession()
+                        if (!awaitingSessionOk) {
+                            // A rogue central must not be able to mark itself
+                            // authenticated by sending SESSION_OK unsolicited.
+                            Log.w("MacSync", "session: unsolicited SESSION_OK dropped")
+                        } else {
+                            awaitingSessionOk = false
+                            authenticatedGatt = device
+                            authenticatedMacId = sessionMacId
+                            sessionAuthenticated = true
+                            updateSession()
+                        }
                     }
                     "SESSION_REJECTED" -> {
+                        awaitingSessionOk = false
                         sessionAuthenticated = false
                         authenticatedGatt = null
                         authenticatedMacId = null
@@ -1009,6 +1049,7 @@ class GattServerManager private constructor(private val context: Context) {
 
     private fun startSessionAuth(macId: String, macName: String, device: BluetoothDevice) {
         sessionGatt = device
+        awaitingSessionOk = false
         val mac = TrustedMacStore.get(context, macId)
         // A stored alias is not enough: the Keystore entry can disappear after a
         // reinstall / lock-screen reset / Keystore invalidation. Treat that as
@@ -1072,6 +1113,7 @@ class GattServerManager private constructor(private val context: Context) {
             updateSession()
             return
         }
+        awaitingSessionOk = true
         sendNotificationToMac(UnlockProtocol.sessionPhoneProof(TrustedMacStore.deviceId(context), UnlockProtocol.b64(sig)), to = device)
         // Wait for the Mac's SESSION_OK before showing "connected" on this side.
         updateSession()

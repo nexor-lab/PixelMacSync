@@ -57,6 +57,16 @@ final class AuthorizationBridge {
         try? FileManager.default.removeItem(at: grantURL)
     }
 
+    /// True when the root-owned PAM trust file matches this phone's current
+    /// unlock public key. A mismatch means phone unlock will fall back to the
+    /// password until `sudo MacOS/pam/install.sh` is run again.
+    func isProvisioned(phoneId: String, publicKeyB64: String) -> Bool {
+        let path = "/usr/local/etc/pixelsync/trusted_phones/\(phoneId).pub"
+        guard let stored = try? String(contentsOfFile: path, encoding: .utf8) else { return false }
+        return stored.trimmingCharacters(in: .whitespacesAndNewlines)
+            == publicKeyB64.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     /// True if a currently-installed Authorization Plugin could unlock this Mac.
     /// (The plugin is installed to /Library/Security/SecurityAgentPlugins by an
     /// admin step; until then the app must not promise passwordless unlock.)

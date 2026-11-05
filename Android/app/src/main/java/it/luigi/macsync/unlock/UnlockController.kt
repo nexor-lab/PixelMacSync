@@ -19,6 +19,8 @@ import java.util.Base64
 object UnlockController {
 
     private const val TAG = "MacSyncUnlock"
+    /** Tolerate small wall-clock differences between phone and Mac. */
+    private const val CLOCK_SKEW_MS = 60_000L
 
     data class Pending(
         val macId: String,
@@ -89,7 +91,7 @@ object UnlockController {
             Log.w(TAG, "unlock request from untrusted mac")
             return false
         }
-        if (System.currentTimeMillis() > expiresAt) {
+        if (System.currentTimeMillis() > expiresAt + CLOCK_SKEW_MS) {
             Log.w(TAG, "unlock request expired")
             return false
         }
@@ -131,7 +133,7 @@ object UnlockController {
         val p = pending ?: return false
         val sessionId = try { UnlockProtocol.unb64(sessionIdB64) } catch (_: Exception) { return false }
         if (!sessionId.contentEquals(p.sessionId)) return false
-        if (System.currentTimeMillis() > p.expiresAt) {
+        if (System.currentTimeMillis() > p.expiresAt + CLOCK_SKEW_MS) {
             pending = null
             return false
         }

@@ -165,6 +165,7 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
 
     // Phone biometric unlock UI state.
     @Published var trustedPhones: [TrustedPhone] = []
+    private var pamTrustWarned = false
     @Published var unlockPairingActive: Bool = false
     @Published var unlockPluginInstalled: Bool = false
 
@@ -348,6 +349,26 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
         DispatchQueue.main.async {
             self.trustedPhones = self.unlockManager.trustedDevices
             if !self.trustedPhones.isEmpty { UserDefaults.standard.set(true, forKey: "pixel.hasPairedOnce") }
+
+            let missing = self.trustedPhones.filter {
+                !AuthorizationBridge.shared.isProvisioned(phoneId: $0.id, publicKeyB64: $0.publicKeyB64)
+            }
+            if missing.isEmpty {
+                self.pamTrustWarned = false
+            } else {
+                NSLog("MacSync: PAM trust key missing/stale for \(missing.map { $0.id })")
+                if !self.pamTrustWarned {
+                    self.pamTrustWarned = true
+                    self.postSystemNotification(
+                        id: "sys.pamtrust",
+                        title: L10n.t("PAM trust not synced", "PAM 信任未同步"),
+                        body: L10n.t(
+                            "Run sudo MacOS/pam/install.sh to enable phone unlock.",
+                            "请运行 sudo MacOS/pam/install.sh 以启用手机解锁。"
+                        )
+                    )
+                }
+            }
         }
     }
 
@@ -1640,6 +1661,7 @@ extension BLEManager {
             guard let file = coverURL(for: packet.key) else { return }
             do {
                 try data.write(to: file)
+                pruneCoverCache(folder: file.deletingLastPathComponent())
                 NSLog("MacSync: Copertina salvata per \(packet.key) (\(data.count) bytes) -> \(file.path)")
                 DispatchQueue.main.async {
                     // Only adopt this cover if it is the one the current track
@@ -1654,6 +1676,22 @@ extension BLEManager {
                 NSLog("MacSync: Scrittura copertina fallita: \(error)")
             }
         }
+    }
+
+    /// Keeps the cover cache bounded (old files are removed after 400 entries).
+    private func pruneCoverCache(folder: URL, keep: Int = 400) {
+        let keys: [URLResourceKey] = [.contentModificationDateKey, .fileSizeKey]
+        guard let files = try? FileManager.default.contentsOfDirectory(
+            at: folder, includingPropertiesForKeys: keys, options: [.skipsHiddenFiles]
+        ), files.count > keep else { return }
+        let dated = files.compactMap { url -> (URL, Date)? in
+            let values = try? url.resourceValues(forKeys: [.contentModificationDateKey])
+            return (url, values?.contentModificationDate ?? .distantPast)
+        }.sorted { $0.1 < $1.1 }
+        for (url, _) in dated.prefix(files.count - keep) {
+            try? FileManager.default.removeItem(at: url)
+        }
+        NSLog("MacSync: cover cache pruned to \(keep) files")
     }
 
     /// Cache location for a cover key: ~/Pictures/MacSyncCovers/<key>.jpg

@@ -18,13 +18,6 @@ import it.luigi.macsync.ble.BLEAdvertiser
 import it.luigi.macsync.ble.GattServerManager
 import it.luigi.macsync.unlock.PairingController
 import it.luigi.macsync.unlock.PairingNotification
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.flow.collect
-import kotlinx.coroutines.launch
 
 /**
  * Foreground service that owns the BLE GATT server + advertiser.
@@ -37,9 +30,6 @@ class MacSyncBleService : Service() {
 
     private lateinit var gattServerManager: GattServerManager
     private lateinit var bleAdvertiser: BLEAdvertiser
-
-    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-    private var advertisingJob: Job? = null
 
     private val channelId = "macsync_bg_channel"
 
@@ -82,15 +72,6 @@ class MacSyncBleService : Service() {
             ?: PairingNotification.dismiss(this)
 
         ensureBleRunning()
-
-        // Only advertise while there is no authenticated session. Keeping the
-        // radio advertising during an active link wastes battery and wakes the
-        // controller for no benefit; it is restarted as soon as the link drops.
-        advertisingJob = serviceScope.launch {
-            gattServerManager.connected.collect { connected ->
-                if (connected) bleAdvertiser.stopAdvertising() else bleAdvertiser.startAdvertising()
-            }
-        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -111,8 +92,6 @@ class MacSyncBleService : Service() {
     }
 
     override fun onDestroy() {
-        advertisingJob?.cancel()
-        serviceScope.cancel()
         try { unregisterReceiver(bluetoothStateReceiver) } catch (_: Exception) {}
         gattServerManager.stopServer()
         bleAdvertiser.stopAdvertising()
