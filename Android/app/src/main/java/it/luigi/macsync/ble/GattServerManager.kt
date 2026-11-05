@@ -698,6 +698,21 @@ class GattServerManager private constructor(private val context: Context) {
         }
     }
 
+    /** Manual "connect": after a user disconnect the old GATT link can be
+     *  half-open, so the Mac still believes it is connected and never scans.
+     *  Reopening the local GATT server forces a clean disconnect and lets the
+     *  Mac reconnect to the always-on advertisement. */
+    fun connectActiveMac(macId: String) {
+        MacRegistry.setActive(context, macId)
+        MacRegistry.setUserDisconnected(context, null)
+        refreshRegistryFlows()
+        if (_connected.value) return
+        Log.d("MacSync", "manual connect: restarting GATT server for $macId")
+        connectedMac?.let { gattServer?.cancelConnection(it) }
+        stopServer()
+        startServer()
+    }
+
     /** User-initiated disconnect of the active Mac; it will not auto-reconnect. */
     fun disconnectActiveMac() {
         val id = _connectedMacId.value ?: MacRegistry.activeId(context) ?: return

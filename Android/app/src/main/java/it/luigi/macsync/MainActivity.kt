@@ -528,7 +528,7 @@ fun MacDevicesCard(gattServerManager: GattServerManager) {
                             isBound = isBound,
                             unlockKeyUsable = unlockKeyUsable,
                             showUnlock = showUnlock,
-                            onConnect = { gattServerManager.setActiveMac(mac.id) },
+                            onConnect = { gattServerManager.connectActiveMac(mac.id) },
                             onDisconnect = { gattServerManager.disconnectActiveMac() },
                             onForget = { gattServerManager.forgetMac(mac.id) },
                             onBind = { PairingController.requestPairing(context, mac.id) },

@@ -302,11 +302,12 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
             // loss or a reinstall. Always (re)start pairing for that link; the
             // old `autoPairedThisLink` one-shot flag left the phone stuck at
             // "verifying" when the first auto-pairing was not completed.
-            if !self.unlockPairingActive {
-                NSLog("MacSync: phone session unpaired -> force pairing")
-                self.pendingPairAfterConnect = false
-                self.unlockManager.beginPairing(force: true)
-            }
+            // Always resend: the phone may have lost its in-memory pairing
+            // request after a process restart, and a previous PAIR_BEGIN may
+            // never have been confirmed. `force` clears any stale Mac state.
+            NSLog("MacSync: phone session unpaired -> force pairing")
+            self.pendingPairAfterConnect = false
+            self.unlockManager.beginPairing(force: true)
         }
         unlockManager.onSessionAuthenticated = { [weak self] in
             self?.handshakeTimeout?.cancel()
@@ -317,8 +318,16 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
             }
         }
         unlockManager.onPairingStateChanged = { [weak self] active in
-            if active { self?.handshakeTimeout?.cancel() }
+            if active {
+                self?.handshakeTimeout?.cancel()
+                self?.startPairingRetry()
+            } else {
+                self?.stopPairingRetry()
+            }
             DispatchQueue.main.async { self?.unlockPairingActive = active }
+        }
+        unlockManager.onPairReplySeen = { [weak self] in
+            self?.stopPairingRetry()
         }
         unlockManager.onPaired = { [weak self] device in
             self?.unlockPairingActive = false
@@ -709,6 +718,7 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
     
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
         handshakeTimeout?.cancel()
+        stopPairingRetry()
         autoPairedThisLink = false
         if pixelPeripheral?.identifier == peripheral.identifier {
             peripheral.delegate = nil
@@ -1050,6 +1060,32 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
     private var discoveryLogCount = 0
     private var lastDiscoveryUiUpdate: [UUID: Date] = [:]
     private var connectFailureStreak = 0
+    private var pairingRetryTimer: Timer?
+    private var pairingRetries = 0
+
+    /// A BLE notification can be lost while the phone is creating its keys or
+    /// while the link is re-establishing. Re-send PAIR_BEGIN until the phone
+    /// confirms, instead of waiting forever with both sides at "verifying".
+    private func startPairingRetry() {
+        guard pairingRetryTimer == nil else { return }
+        pairingRetries = 0
+        pairingRetryTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] timer in
+            guard let self = self else { timer.invalidate(); return }
+            if !self.unlockPairingActive || self.unlockManager.sessionVerified || self.pairingRetries >= 12 {
+                self.stopPairingRetry()
+                return
+            }
+            self.pairingRetries += 1
+            NSLog("MacSync: pairing retry \(self.pairingRetries)")
+            self.unlockManager.beginPairing(force: true)
+        }
+    }
+
+    private func stopPairingRetry() {
+        pairingRetryTimer?.invalidate()
+        pairingRetryTimer = nil
+        pairingRetries = 0
+    }
 
     private var backoffBase: Double { Platform.isAppleSilicon ? 0.5 : 1 }
     private var backoffMax: Double { Platform.isAppleSilicon ? 8 : 30 }
@@ -1314,7 +1350,7 @@ extension BLEManager: CBPeripheralDelegate {
                     self.connectionState = .rejected
                     // Retry periodically so that, once the phone makes this Mac the
                     // active one, it reconnects on its own.
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 30.0) { [weak self] in
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) { [weak self] in
                         guard let self = self, self.rejectedByPhone else { return }
                         NSLog("MacSync: retry dopo rifiuto Multi-Mac.")
                         self.rejectedByPhone = false
