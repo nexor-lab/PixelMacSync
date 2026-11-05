@@ -117,4 +117,20 @@
     <string name="unlock_away_lock_sub">手机离开后自动锁定 Mac 屏幕</string>
     <string name="unlock_remote_wake_title">远程唤醒</string>
     <string name="unlock_remote_wake_sub">关闭后隐藏绑定/解锁相关操作（保留断开与删除）</string>
+
+    <!-- 应用内语言 -->
+    <string name="language_title">语言</string>
+    <string name="language_subtitle">应用显示语言</string>
+    <string name="language_system">跟随系统</string>
+    <string name="language_zh">简体中文</string>
+    <string name="language_en">English</string>
+
+    <!-- 应用内配对提示 -->
+    <string name="pair_request_title">配对请求</string>
+    <string name="pair_request_text">%1$s 请求与本机配对。</string>
+    <string name="pair_request_hint">点击确认并用指纹验证，即可完成配对。</string>
+    <string name="pair_confirm">确认配对</string>
+    <string name="pair_cancel">取消</string>
+    <string name="pair_screen_title">Mac 配对请求</string>
+    <string name="pair_screen_hint">点击“确认配对”并用指纹验证，即可与该 Mac 建立解锁密钥。</string>
 </resources>

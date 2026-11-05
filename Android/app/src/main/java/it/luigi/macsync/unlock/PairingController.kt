@@ -5,6 +5,9 @@ import android.content.Intent
 import android.util.Log
 import it.luigi.macsync.ble.GattServerManager
 import java.security.SecureRandom
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import org.json.JSONObject
 
 /**
  * Phone-side pairing. No 6-digit code:
@@ -19,6 +22,8 @@ object PairingController {
 
     private const val TAG = "MacSyncPair"
     const val ACTION_TRUST_CHANGED = "it.luigi.macsync.TRUST_CHANGED"
+    private const val PREFS = "MacSync_Pair"
+    private const val KEY_PENDING = "pending_v1"
 
     data class Pending(
         val macId: String,
@@ -32,6 +37,57 @@ object PairingController {
 
     @Volatile
     private var pending: Pending? = null
+
+    private val _pendingFlow = MutableStateFlow<Pending?>(null)
+    val pendingFlow: StateFlow<Pending?> = _pendingFlow
+
+    private fun updatePending(value: Pending?) {
+        pending = value
+        _pendingFlow.value = value
+    }
+
+    /** Persist/restore the pending pairing so a process kill does not leave a
+     *  notification that opens an empty activity. */
+    fun restore(context: Context) {
+        if (pending != null) return
+        val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getString(KEY_PENDING, null) ?: return
+        try {
+            val o = JSONObject(raw)
+            val p = Pending(
+                macId = o.getString("macId"),
+                macName = o.getString("macName"),
+                macPubB64 = o.getString("macPubB64"),
+                macSessionPubB64 = o.getString("macSessionPubB64"),
+                keyAlias = o.getString("keyAlias"),
+                sessionKeyAlias = o.getString("sessionKeyAlias"),
+                pairingId = o.getString("pairingId"),
+            )
+            updatePending(p)
+        } catch (_: Exception) {
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+                .remove(KEY_PENDING).apply()
+        }
+    }
+
+    private fun persist(context: Context, value: Pending?) {
+        val editor = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+        if (value == null) {
+            editor.remove(KEY_PENDING)
+        } else {
+            val o = JSONObject().apply {
+                put("macId", value.macId)
+                put("macName", value.macName)
+                put("macPubB64", value.macPubB64)
+                put("macSessionPubB64", value.macSessionPubB64)
+                put("keyAlias", value.keyAlias)
+                put("sessionKeyAlias", value.sessionKeyAlias)
+                put("pairingId", value.pairingId)
+            }
+            editor.putString(KEY_PENDING, o.toString())
+        }
+        editor.apply()
+    }
 
     fun current(): Pending? = pending
 
@@ -73,7 +129,8 @@ object PairingController {
         ))
 
         val pairingId = UnlockProtocol.b64(ByteArray(12).also { SecureRandom().nextBytes(it) })
-        pending = Pending(macId, macName, macPubB64, macSessionPubB64, alias, sessionAlias, pairingId)
+        updatePending(Pending(macId, macName, macPubB64, macSessionPubB64, alias, sessionAlias, pairingId))
+        persist(context, pending)
         PairingNotification.post(context, macName)
         return true
     }
@@ -104,7 +161,8 @@ object PairingController {
                 trusted = true,
             ),
         )
-        pending = null
+        updatePending(null)
+        persist(context, null)
         PairingNotification.dismiss(context)
         notifyTrustChanged(context)
         GattServerManager.getInstance(context).restartSessionAuth()
@@ -117,7 +175,8 @@ object PairingController {
             AndroidKeyStore.deleteKey(p.keyAlias)
             send(context, listOf("PAIR_CANCEL", UnlockProtocol.VERSION.toString(), p.macId))
         }
-        pending = null
+        updatePending(null)
+        persist(context, null)
         PairingNotification.dismiss(context)
         notifyTrustChanged(context)
     }
@@ -145,8 +204,9 @@ object PairingController {
 
     private fun send(context: Context, fields: List<String>) {
         try {
-            GattServerManager.getInstance(context)
-                .sendNotificationToMac(fields.joinToString(UnlockProtocol.SEP))
+            val packet = fields.joinToString(UnlockProtocol.SEP)
+            val sent = GattServerManager.getInstance(context).sendLinkPacket(packet)
+            if (!sent) Log.w(TAG, "link not ready, dropped: ${fields.firstOrNull()}")
         } catch (e: Exception) {
             Log.e(TAG, "send failed: ${e.message}")
         }

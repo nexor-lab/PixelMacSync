@@ -28,7 +28,7 @@ ad-hoc. Ad-hoc works but macOS may log an AMFI warning.
 ## Install (needs sudo)
 
 ```sh
-sudo ./install.sh   # copies the module to /usr/local/lib/pam and edits /etc/pam.d/screensaver
+sudo ./install.sh   # installs module, edits /etc/pam.d/screensaver, provisions root-owned phone keys
 ```
 
 It only **adds** this line (keeping the password module):
@@ -43,11 +43,18 @@ auth       sufficient     /usr/local/lib/pam/pam_pixelsync.so
 sudo ./uninstall.sh
 ```
 
-## Grant file
+## Grant file (v2, signed)
 
 The app writes `/Users/Shared/PixelSync/unlock_grant` (0600, owned by the user; directory
-0700). The module requires the grant to be **owned by the authenticating user** and bound to
-that **username**, and consumes it once (unlink) — no replay.
+0700). A v2 grant contains the phone id, the unlock transcript and the phone's ECDSA
+signature. The module verifies that signature against a **root-owned** public key in
+`/usr/local/etc/pixelsync/trusted_phones/<phoneId>.pub` before consuming the grant once
+(unlink). A user-level process can therefore no longer forge a grant by writing the file.
+
+`install.sh` provisions the root-owned keys from the target user's
+`~/Library/Application Support/PixelSync/trusted_devices.json`. **Re-run
+`sudo ./install.sh` after pairing, rebinding or unbinding a phone**, otherwise the new key is
+not trusted and the phone unlock falls back to the password path (fail closed).
 
 ## Compatibility
 

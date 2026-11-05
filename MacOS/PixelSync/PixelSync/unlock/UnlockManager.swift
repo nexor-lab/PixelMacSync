@@ -192,6 +192,7 @@ final class UnlockManager {
             NSLog("PixelSync: policy awayAutoLock=\(away) remoteWake=\(wake)")
 
         case .pairReply(let version, let phoneId, let phonePubB64, let phoneSessionPubB64):
+            NSLog("PixelSync: PAIR_REPLY phone=\(phoneId) sessionPub=\(!phoneSessionPubB64.isEmpty)")
             guard version == UnlockProtocol.version, var state = pairing else { return true }
             state.phoneId = phoneId
             state.phonePubB64 = phonePubB64
@@ -205,6 +206,7 @@ final class UnlockManager {
             finalizePairingIfReady()
 
         case .pairConfirm(let version, let pairingId, let confirmedMacId):
+            NSLog("PixelSync: PAIR_CONFIRM id=\(pairingId) mac=\(confirmedMacId) state=\(pairing != nil)")
             guard version == UnlockProtocol.version, confirmedMacId == macId else { return true }
             self.pairingId = pairingId
             if var state = pairing { state.phoneConfirmed = true; pairing = state }
@@ -297,7 +299,14 @@ final class UnlockManager {
                 // Unlock window (not the 10 s BLE session): give the user time to
                 // submit on the lock screen. Single-use, local only.
                 let unlockWindowMs = ChallengeManager.nowMs() + 120_000
-                bridge.grant(sessionIdB64: sessionIdB64, macId: macId, expiresAtMs: unlockWindowMs)
+                bridge.grant(
+                    sessionIdB64: sessionIdB64,
+                    macId: macId,
+                    expiresAtMs: unlockWindowMs,
+                    phoneId: phoneId,
+                    transcriptB64: UnlockProtocol.b64(transcriptResp),
+                    signatureB64: signatureB64
+                )
                 DispatchQueue.main.async { self.onUnlockGranted?() }
                 NSLog("PixelSync: phone signature verified -> unlock granted")
             } else {

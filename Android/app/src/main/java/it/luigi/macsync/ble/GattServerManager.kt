@@ -363,6 +363,17 @@ class GattServerManager private constructor(private val context: Context) {
         }
     }
 
+    /**
+     * Sends a packet on the current GATT link even before the application
+     * session is authenticated (required by pairing: PAIR_REPLY,
+     * PAIR_SESSION_PUB, PAIR_CONFIRM, PAIR_REQUEST, UNBIND).
+     */
+    fun sendLinkPacket(payload: String): Boolean {
+        val mac = sessionGatt ?: authenticatedGatt ?: connectedMac ?: return false
+        sendNotificationToMac(payload, to = mac)
+        return true
+    }
+
     fun sendNotificationToMac(payload: String, to: BluetoothDevice? = null) {
         // App data goes only to the Mac that completed session authentication.
         // Session/pairing packets pass `to` explicitly.
@@ -999,10 +1010,21 @@ class GattServerManager private constructor(private val context: Context) {
     private fun startSessionAuth(macId: String, macName: String, device: BluetoothDevice) {
         sessionGatt = device
         val mac = TrustedMacStore.get(context, macId)
-        if (mac == null || !mac.trusted || mac.sessionPublicKeyB64.isBlank() || mac.sessionKeyAlias.isBlank()) {
+        // A stored alias is not enough: the Keystore entry can disappear after a
+        // reinstall / lock-screen reset / Keystore invalidation. Treat that as
+        // "not paired" so the Mac starts a fresh pairing instead of the session
+        // being rejected forever with no_session_key.
+        val sessionKeyUsable = mac != null &&
+            mac.sessionKeyAlias.isNotBlank() &&
+            AndroidKeyStore.sessionKeyExists(mac.sessionKeyAlias)
+        if (mac == null || !mac.trusted || mac.sessionPublicKeyB64.isBlank() || !sessionKeyUsable) {
             sessionAuthenticated = false
             sessionNonce = null
             sessionMacId = macId
+            android.util.Log.w(
+                "MacSync",
+                "session: no usable session key (alias=${mac?.sessionKeyAlias ?: "-"}), requesting re-pair",
+            )
             sendNotificationToMac(UnlockProtocol.sessionUnpaired(android.os.Build.MODEL), to = device)
             updateSession()
             return
@@ -1041,7 +1063,13 @@ class GattServerManager private constructor(private val context: Context) {
         val sig = AndroidKeyStore.signSession(mac.sessionKeyAlias, UnlockProtocol.sessionPhoneTranscript(nonceMac))
         android.util.Log.d("MacSync", "session: phone sign=${if (sig == null) "NULL" else "ok"} alias=${mac.sessionKeyAlias} phoneId=${TrustedMacStore.deviceId(context)}")
         if (sig == null) {
-            sendNotificationToMac("SESSION_REJECTED\u001Fno_session_key", to = device)
+            // The Keystore key vanished between the challenge and the proof.
+            // Ask for a fresh pairing instead of a terminal rejection.
+            sessionAuthenticated = false
+            sessionNonce = null
+            android.util.Log.w("MacSync", "session: signSession returned null, requesting re-pair")
+            sendNotificationToMac(UnlockProtocol.sessionUnpaired(android.os.Build.MODEL), to = device)
+            updateSession()
             return
         }
         sendNotificationToMac(UnlockProtocol.sessionPhoneProof(TrustedMacStore.deviceId(context), UnlockProtocol.b64(sig)), to = device)

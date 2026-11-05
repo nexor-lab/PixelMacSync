@@ -476,38 +476,92 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
     }
 
     private func advertisedDeviceId(_ advertisementData: [String: Any]) -> String? {
-        guard let mf = advertisementData[CBAdvertisementDataManufacturerDataKey] as? Data,
-              mf.count >= 10, mf[0] == 0xFF, mf[1] == 0xFF else { return nil }
-        return mf.subdata(in: 2..<10).map { String(format: "%02x", $0) }.joined()
+        // New Android builds put the 8-byte id in service data of the primary
+        // advertisement, so it is present on the first discovery.
+        if let serviceData = advertisementData[CBAdvertisementDataServiceDataKey] as? [CBUUID: Data],
+           let data = serviceData[serviceUUID], data.count >= 8 {
+            return data.prefix(8).map { String(format: "%02x", $0) }.joined()
+        }
+        // iOS (and older Android builds) use manufacturer data 0xFFFF + 8 bytes.
+        if let mf = advertisementData[CBAdvertisementDataManufacturerDataKey] as? Data,
+           mf.count >= 10, mf[0] == 0xFF, mf[1] == 0xFF {
+            return mf.subdata(in: 2..<10).map { String(format: "%02x", $0) }.joined()
+        }
+        return nil
     }
 
     func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral, advertisementData: [String : Any], rssi RSSI: NSNumber) {
-        guard self.pixelPeripheral == nil else { return }
+        // Scanning without a service filter (needed because Android puts the id
+        // in service data, not in a service-UUID list) means every nearby BLE
+        // device is delivered. Accept only PixelSync advertisements.
+        let serviceData = advertisementData[CBAdvertisementDataServiceDataKey] as? [CBUUID: Data]
+        let serviceUUIDs = advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID] ?? []
+        let mf = advertisementData[CBAdvertisementDataManufacturerDataKey] as? Data
+        let hasPixelService = serviceUUIDs.contains(serviceUUID) || serviceData?[serviceUUID] != nil
+        // 0xFFFF is a shared "test" company id used by many devices, so a
+        // manufacturer-only advertisement is accepted only when its 8-byte id
+        // matches the remembered/trusted phone.
+        let mfgId: String? = mf.flatMap { data in
+            guard data.count >= 10, data[0] == 0xFF, data[1] == 0xFF else { return nil }
+            return data.subdata(in: 2..<10).map { String(format: "%02x", $0) }.joined()
+        }
+        let mfgKnown = mfgId.map { id in
+            id == selectedPhoneDeviceId || trustedPhones.contains { $0.id.hasPrefix(id) }
+        } ?? false
+        guard hasPixelService || mfgKnown else { return }
+
+        // Only an actually connected/connecting peripheral may block discovery.
+        // A stale object left behind by a failed attempt used to swallow every
+        // advertisement, which made reconnection look "stuck" until a restart.
+        if let current = pixelPeripheral {
+            if current.state == .connected || current.state == .connecting { return }
+            current.delegate = nil
+            pixelPeripheral = nil
+            commandCharacteristic = nil
+        }
         let id = peripheral.identifier
         let deviceId = advertisedDeviceId(advertisementData) ?? ""
         let trustedById = deviceId.isEmpty ? nil : trustedPhones.first(where: { $0.id.hasPrefix(deviceId) })
         let name = peripheral.name ?? trustedById?.name ?? "PixelSync"
         let rssi = RSSI.intValue
+        if discoveryLogCount < 10 {
+            discoveryLogCount += 1
+            NSLog("MacSync: discovered \(name) deviceId=\(deviceId.isEmpty ? "-" : deviceId) rssi=\(rssi)")
+        }
         discoveredPeripherals[id] = peripheral
         if let idx = discoveredPhones.firstIndex(where: { $0.id == id }) {
-            discoveredPhones[idx].name = name
-            discoveredPhones[idx].rssi = rssi
-            discoveredPhones[idx].deviceId = deviceId
+            // With duplicate reports enabled the RSSI arrives several times per
+            // second. Updating @Published state that often needlessly re-renders
+            // the popover, so refresh the UI at most once per second.
+            let now = Date()
+            if now.timeIntervalSince(lastDiscoveryUiUpdate[id] ?? .distantPast) >= 1.0 {
+                lastDiscoveryUiUpdate[id] = now
+                discoveredPhones[idx].name = name
+                discoveredPhones[idx].rssi = rssi
+                discoveredPhones[idx].deviceId = deviceId
+            }
         } else {
+            lastDiscoveryUiUpdate[id] = Date()
             discoveredPhones.append(DiscoveredPhone(id: id, name: name, rssi: rssi, deviceId: deviceId))
         }
 
-        if let trusted = trustedById {
-            // Reconnect by the stable short device id, independent of the
-            // CoreBluetooth UUID / BLE address.
-            if selectedPhoneDeviceId == deviceId {
-                selectedPhoneId = id
-                selectedPhoneName = trusted.name
-                UserDefaults.standard.set(id.uuidString, forKey: "pixel.selectedPhoneId")
-                UserDefaults.standard.set(trusted.name, forKey: "pixel.selectedPhoneName")
-                connect(peripheral)
-                return
+        // Reconnect by the stable short device id, independent of the
+        // CoreBluetooth UUID / BLE address. This must work even after the phone
+        // dropped its trust (e.g. unbind/reinstall): the link is re-established
+        // and session auth asks for a fresh pairing.
+        if !deviceId.isEmpty, selectedPhoneDeviceId == deviceId {
+            selectedPhoneId = id
+            if let trusted = trustedById { selectedPhoneName = trusted.name }
+            UserDefaults.standard.set(id.uuidString, forKey: "pixel.selectedPhoneId")
+            if let name = trustedById?.name {
+                UserDefaults.standard.set(name, forKey: "pixel.selectedPhoneName")
             }
+            connect(peripheral)
+            return
+        }
+
+        if let trusted = trustedById {
+            NSLog("MacSync: trusted match \(trusted.name) deviceId=\(deviceId) selected=\(selectedPhoneDeviceId ?? "-")")
             if selectedPhoneDeviceId == nil {
                 selectedPhoneDeviceId = deviceId
                 selectedPhoneId = id
@@ -574,6 +628,7 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
     }
 
     private func connect(_ peripheral: CBPeripheral) {
+        NSLog("MacSync: connect -> \(peripheral.name ?? "?") id=\(peripheral.identifier.uuidString)")
         if let cur = pixelPeripheral, cur.identifier != peripheral.identifier {
             centralManager.cancelPeripheralConnection(cur)
         }
@@ -584,19 +639,29 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
         connectionState = .connecting
         connectionAttempts += 1
         centralManager.connect(peripheral, options: nil)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8.0) { [weak self] in
             guard let self = self else { return }
             if self.pixelPeripheral?.identifier == peripheral.identifier && peripheral.state != .connected {
                 self.centralManager.cancelPeripheralConnection(peripheral)
                 self.connectionState = .scanning
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                    if self.centralManager.state == .poweredOn { self.startScanningOrReconnect() }
+                self.connectFailureStreak += 1
+                if self.connectFailureStreak >= 2 {
+                    // A half-open link can survive the process quit on this
+                    // Broadcom stack. Re-creating the central drops it.
+                    self.connectFailureStreak = 0
+                    self.forceRestartBluetooth(force: true, state: .autoReconnecting)
+                } else {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                        if self.centralManager.state == .poweredOn { self.startScanningOrReconnect() }
+                    }
                 }
             }
         }
     }
 
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
+        NSLog("MacSync: GATT connesso (\(peripheral.name ?? "sconosciuto"))")
+        connectFailureStreak = 0
         connectionAttempts = 0
         autoPairedThisLink = false
         repairAttemptedThisLink = false
@@ -620,6 +685,11 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
         handshakeTimeout?.cancel()
         autoPairedThisLink = false
+        if pixelPeripheral?.identifier == peripheral.identifier {
+            peripheral.delegate = nil
+            pixelPeripheral = nil
+            commandCharacteristic = nil
+        }
         NSLog("MacSync: Dispositivo disconnesso. Ripristino stato e riavvio scansione.")
         
         DispatchQueue.main.async {
@@ -679,6 +749,12 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
         pixelPeripheral = nil
         DispatchQueue.main.async {
             self.connectionState = .scanning
+            self.connectFailureStreak += 1
+            if self.connectFailureStreak >= 2 {
+                self.connectFailureStreak = 0
+                self.forceRestartBluetooth(force: true, state: .autoReconnecting)
+                return
+            }
             DispatchQueue.main.asyncAfter(deadline: .now() + self.nextBackoff()) {
                 if self.centralManager.state == .poweredOn {
                     self.startScanningOrReconnect()
@@ -857,46 +933,86 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
     }
 
     func startScanningOrReconnect() {
+        NSLog("MacSync: startScanningOrReconnect (cached=\(pixelPeripheral != nil))")
         if let peripheral = pixelPeripheral {
             if peripheral.state == .connected { return }
             if peripheral.state == .connecting { return }
             centralManager.cancelPeripheralConnection(peripheral)
             peripheral.delegate = nil
         }
-        
+
         self.pixelPeripheral = nil
         self.commandCharacteristic = nil
-        
-        let systemConnected = centralManager.retrieveConnectedPeripherals(withServices: [serviceUUID])
-        
-        if let peripheral = systemConnected.first {
+
+        // `retrieveConnectedPeripherals` can also return a stale/cached handle
+        // left over from a previous process. Connecting to it never succeeds,
+        // and the old code retried it forever without ever scanning. Accept only
+        // a peripheral that the system reports as actually connected.
+        let cached = centralManager.retrieveConnectedPeripherals(withServices: [serviceUUID])
+        if let peripheral = cached.first(where: { $0.state == .connected }) {
+            NSLog("MacSync: riconnessione al peripheral di sistema \(peripheral.name ?? "?")")
             self.pixelPeripheral = peripheral
-            self.pixelPeripheral?.delegate = self
+            peripheral.delegate = self
             connectionState = .cacheConnecting
             connectionAttempts += 1
             centralManager.connect(peripheral, options: nil)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) { [weak self] in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 8.0) { [weak self] in
                 guard let self = self else { return }
                 if self.pixelPeripheral?.identifier == peripheral.identifier && peripheral.state != .connected {
                     self.centralManager.cancelPeripheralConnection(peripheral)
-                    self.connectionState = .scanning
-                    DispatchQueue.main.asyncAfter(deadline: .now() + self.nextBackoff()) {
-                        if self.centralManager.state == .poweredOn { self.startScanningOrReconnect() }
+                    peripheral.delegate = nil
+                    self.pixelPeripheral = nil
+                    self.commandCharacteristic = nil
+                    self.connectFailureStreak += 1
+                    if self.connectFailureStreak >= 2 {
+                        self.connectFailureStreak = 0
+                        self.forceRestartBluetooth(force: true, state: .autoReconnecting)
+                    } else {
+                        self.startScan()
                     }
                 }
             }
-            
         } else {
-            connectionState = .scanning
-            centralManager.stopScan()
-            centralManager.scanForPeripherals(withServices: [serviceUUID], options: nil)
-            
-            DispatchQueue.main.asyncAfter(deadline: .now() + 20.0) { [weak self] in
-                guard let self = self else { return }
-                if self.connectionState == .scanning && self.pixelPeripheral == nil && self.discoveredPhones.isEmpty {
-                    // Automatic path → respect the cooldown; don't churn the radio.
-                    self.forceRestartBluetooth(force: false)
-                }
+            if !cached.isEmpty {
+                NSLog("MacSync: ignoro \(cached.count) peripheral cache non connessi")
+            }
+            startScan()
+        }
+    }
+
+    private func startScan() {
+        NSLog("MacSync: scansione BLE avviata")
+        connectionState = .scanning
+        centralManager.stopScan()
+        // Allow duplicates: the stable device id travels in the scan response,
+        // which may arrive after the first advertisement. Without this option
+        // CoreBluetooth can report the device once (without the id) and never
+        // report it again, so the Mac never reconnects.
+        centralManager.scanForPeripherals(
+            withServices: nil,
+            options: [CBCentralManagerScanOptionAllowDuplicatesKey: true]
+        )
+
+        // On the Intel/Broadcom stack the very first scan after launch sometimes
+        // delivers no callbacks at all. A cheap stop/start usually revives it;
+        // only if that also fails do we pay for a CBCentralManager re-creation.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
+            guard let self = self else { return }
+            if self.connectionState == .scanning && self.pixelPeripheral == nil && self.discoveredPhones.isEmpty {
+                NSLog("MacSync: nessuna discovery, riavvio scansione")
+                self.centralManager.stopScan()
+                self.centralManager.scanForPeripherals(
+                    withServices: nil,
+                    options: [CBCentralManagerScanOptionAllowDuplicatesKey: true]
+                )
+            }
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 12.0) { [weak self] in
+            guard let self = self else { return }
+            if self.connectionState == .scanning && self.pixelPeripheral == nil && self.discoveredPhones.isEmpty {
+                // Automatic path → respect the cooldown; don't churn the radio.
+                self.forceRestartBluetooth(force: false)
             }
         }
     }
@@ -905,6 +1021,10 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
     // Apple Silicon radios coexist with Classic + LE and connect quickly, so use
     // fast/aggressive retries. The older Intel/Broadcom baseline needs slower
     // backoff and a long cooldown to avoid link churn.
+
+    private var discoveryLogCount = 0
+    private var lastDiscoveryUiUpdate: [UUID: Date] = [:]
+    private var connectFailureStreak = 0
 
     private var backoffBase: Double { Platform.isAppleSilicon ? 0.5 : 1 }
     private var backoffMax: Double { Platform.isAppleSilicon ? 8 : 30 }

@@ -20,6 +20,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -38,6 +39,7 @@ class PairingActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        PairingController.restore(this)
         val pending = PairingController.current()
         if (pending == null) {
             finish()
@@ -98,7 +100,7 @@ private fun PairingScreen(
         verticalArrangement = Arrangement.Center,
     ) {
         Text(
-            text = "Mac 配对请求",
+            text = stringResource(R.string.pair_screen_title),
             style = MaterialTheme.typography.titleLarge,
         )
         Spacer(Modifier.height(8.dp))
@@ -108,14 +110,14 @@ private fun PairingScreen(
         )
         Spacer(Modifier.height(16.dp))
         Text(
-            text = "点击“确认配对”并用指纹验证，即可与该 Mac 建立解锁密钥。",
+            text = stringResource(R.string.pair_screen_hint),
             style = MaterialTheme.typography.bodySmall,
             textAlign = androidx.compose.ui.text.style.TextAlign.Center,
         )
         Spacer(Modifier.height(32.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            OutlinedButton(onClick = onDeny) { Text("取消") }
-            Button(onClick = onConfirm) { Text("确认配对") }
+            OutlinedButton(onClick = onDeny) { Text(stringResource(R.string.pair_cancel)) }
+            Button(onClick = onConfirm) { Text(stringResource(R.string.pair_confirm)) }
         }
     }
 }

@@ -26,16 +26,28 @@ class BLEAdvertiser(context: Context) {
 
     private val serviceUUID = UUID.fromString("58DF214B-9942-45A5-BAF9-7B24F5D0232C")
 
+    // BALANCED (~250 ms) is still discovered by the Mac in well under a second,
+    // but uses far less radio/CPU than LOW_LATENCY. HIGH TX power is unnecessary
+    // for a phone that is usually within a metre of the Mac.
     private val advertiseSettings = AdvertiseSettings.Builder()
-        .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
-        .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_HIGH)
+        .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_BALANCED)
+        .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_MEDIUM)
         .setConnectable(true)
         .build()
 
-    private val advertiseData = AdvertiseData.Builder()
-        .setIncludeDeviceName(false)
-        .addServiceUuid(ParcelUuid(serviceUUID))
-        .build()
+    // The 8-byte stable device id travels in *service data* inside the main
+    // advertisement. The scan response is not requested on every scan window,
+    // so relying on it alone made the Mac wait tens of seconds before it could
+    // reconnect. The 128-bit service UUID list cannot be added as well: service
+    // data (26 B) + UUID list (18 B) + flags (3 B) exceeds the 31-byte legacy
+    // limit and makes startAdvertising fail. Manufacturer data stays in the
+    // scan response for older Mac builds.
+    private val advertiseData: AdvertiseData by lazy {
+        AdvertiseData.Builder()
+            .setIncludeDeviceName(false)
+            .addServiceData(ParcelUuid(serviceUUID), deviceIdBytes)
+            .build()
+    }
 
     // Stable 64-bit prefix of the phone device id, so the Mac can reconnect the
     // remembered device even if its BLE address / CoreBluetooth UUID changes.
@@ -46,7 +58,12 @@ class BLEAdvertiser(context: Context) {
         }
     }
 
+    // The scan response keeps the 128-bit service UUID + manufacturer data so
+    // older Mac builds (v2.3-beta.3 and earlier) that scan with
+    // `withServices: [serviceUUID]` can still discover and identify this phone.
+    // Payload: UUID list 18 B + manufacturer 12 B = 30 B (legacy limit 31 B).
     private val scanResponse = AdvertiseData.Builder()
+        .addServiceUuid(ParcelUuid(serviceUUID))
         .addManufacturerData(0xFFFF, deviceIdBytes)
         .build()
 

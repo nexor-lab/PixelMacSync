@@ -47,6 +47,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -54,11 +55,14 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import it.luigi.macsync.ble.GattServerManager
+import it.luigi.macsync.unlock.PairingActivity
 import it.luigi.macsync.unlock.PairingController
 import it.luigi.macsync.unlock.TrustedMacStore
 import it.luigi.macsync.unlock.UnbindActivity
 import it.luigi.macsync.unlock.UnlockController
 import it.luigi.macsync.unlock.UnlockSettings
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import it.luigi.macsync.ui.theme.MacSyncTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -75,6 +79,7 @@ class MainActivity : ComponentActivity() {
         )
         super.onCreate(savedInstanceState)
 
+        PairingController.restore(this)
         NotificationFilter.ensureInitialized(this)
         gattServerManager = GattServerManager.getInstance(this)
 
@@ -151,10 +156,23 @@ fun MainScreen(
 
     val statusText by gattServerManager.connectionState.collectAsState()
     val isConnected by gattServerManager.connected.collectAsState()
+    val pendingPairing by PairingController.pendingFlow.collectAsState()
 
     val context = LocalContext.current
-    val isListenerGranted = isNotificationServiceEnabled(context)
-    val batteryOptimized = !isIgnoringBatteryOptimizations(context)
+    // These two checks hit Settings/PowerManager; do not run them on every
+    // recomposition. Re-evaluate only when the screen resumes (the user may
+    // have just changed the permission in system settings).
+    var resumeTick by remember { mutableIntStateOf(0) }
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    DisposableEffect(lifecycle) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) resumeTick++
+        }
+        lifecycle.addObserver(observer)
+        onDispose { lifecycle.removeObserver(observer) }
+    }
+    val isListenerGranted = remember(resumeTick) { isNotificationServiceEnabled(context) }
+    val batteryOptimized = remember(resumeTick) { !isIgnoringBatteryOptimizations(context) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
@@ -283,6 +301,19 @@ fun MainScreen(
 
         Spacer(modifier = Modifier.height(48.dp))
 
+        // Pairing can appear while the app is open: surface it inline so the
+        // user does not have to find the system notification.
+        pendingPairing?.let { pending ->
+            PairingRequestCard(
+                macName = pending.macName,
+                onConfirm = {
+                    context.startActivity(Intent(context, PairingActivity::class.java))
+                },
+                onCancel = { PairingController.cancel(context) },
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+        }
+
         // --- MULTI-MAC: Mac devices (before Settings) ---
         MacDevicesCard(gattServerManager)
 
@@ -349,6 +380,10 @@ fun MainScreen(
             // 4) Authorization method
             Spacer(modifier = Modifier.height(8.dp))
             AuthMethodCard(context)
+
+            // 5) App language (the last settings item)
+            Spacer(modifier = Modifier.height(8.dp))
+            LanguageCard(context)
         }
 
         Spacer(modifier = Modifier.height(24.dp))
@@ -892,6 +927,172 @@ fun ContactsCard(context: Context, onManage: () -> Unit) {
                 }
             }
         }
+    }
+}
+
+@Composable
+fun PairingRequestCard(
+    macName: String,
+    onConfirm: () -> Unit,
+    onCancel: () -> Unit
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        color = MaterialTheme.colorScheme.primaryContainer
+    ) {
+        Column(modifier = Modifier.padding(18.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = Icons.Rounded.Bluetooth,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                    modifier = Modifier.size(24.dp)
+                )
+                Spacer(modifier = Modifier.width(12.dp))
+                Text(
+                    text = stringResource(R.string.pair_request_title),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = stringResource(R.string.pair_request_text, macName),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onPrimaryContainer
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = stringResource(R.string.pair_request_hint),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End
+            ) {
+                OutlinedButton(onClick = onCancel) {
+                    Text(stringResource(R.string.pair_cancel))
+                }
+                Spacer(modifier = Modifier.width(12.dp))
+                Button(onClick = onConfirm) {
+                    Text(stringResource(R.string.pair_confirm))
+                }
+            }
+        }
+    }
+}
+
+/** Bottom settings row: system / 简体中文 / English (platform per-app locale). */
+@Composable
+fun LanguageCard(context: Context) {
+    var expanded by rememberSaveable { mutableStateOf(false) }
+    val current = AppLanguage.current(context)
+    val currentLabel = when {
+        current.startsWith("zh") -> stringResource(R.string.language_zh)
+        current.startsWith("en") -> stringResource(R.string.language_en)
+        else -> stringResource(R.string.language_system)
+    }
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+    ) {
+        Column {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { expanded = !expanded }
+                    .padding(horizontal = 18.dp, vertical = 16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Translate,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(26.dp)
+                )
+                Spacer(modifier = Modifier.width(18.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = stringResource(R.string.language_title),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = currentLabel,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Icon(
+                    imageVector = if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
+
+            AnimatedVisibility(
+                visible = expanded,
+                enter = expandVertically(animationSpec = tween(220)) + fadeIn(animationSpec = tween(220)),
+                exit = shrinkVertically(animationSpec = tween(220)) + fadeOut(animationSpec = tween(160))
+            ) {
+                Column(
+                    modifier = Modifier.padding(start = 18.dp, end = 18.dp, bottom = 10.dp)
+                ) {
+                    LanguageOption(
+                        label = stringResource(R.string.language_system),
+                        selected = current.isBlank()
+                    ) {
+                        AppLanguage.set(context, AppLanguage.SYSTEM)
+                        (context as? android.app.Activity)?.recreate()
+                    }
+                    LanguageOption(
+                        label = stringResource(R.string.language_zh),
+                        selected = current.startsWith("zh")
+                    ) {
+                        AppLanguage.set(context, AppLanguage.ZH_CN)
+                        (context as? android.app.Activity)?.recreate()
+                    }
+                    LanguageOption(
+                        label = stringResource(R.string.language_en),
+                        selected = current.startsWith("en")
+                    ) {
+                        AppLanguage.set(context, AppLanguage.EN)
+                        (context as? android.app.Activity)?.recreate()
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun LanguageOption(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        RadioButton(selected = selected, onClick = onClick)
+        Spacer(modifier = Modifier.width(8.dp))
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurface
+        )
     }
 }
 

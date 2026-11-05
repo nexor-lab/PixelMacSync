@@ -17,6 +17,46 @@ echo "==> Installing module -> $DEST"
 mkdir -p /usr/local/lib/pam
 install -m 755 -o root -g wheel "$SO" "$DEST"
 
+# Provision root-owned phone public keys used to verify the signed grant.
+# The v2 PAM module fails closed: without these keys, only the password works.
+TRUST_DIR=/usr/local/etc/pixelsync/trusted_phones
+install -d -m 755 -o root -g wheel /usr/local/etc/pixelsync "$TRUST_DIR"
+TARGET_USER="${PMS_USER:-${SUDO_USER:-$(stat -f %Su /dev/console)}}"
+USER_HOME="$(dscl . -read "/Users/$TARGET_USER" NFSHomeDirectory 2>/dev/null | awk '{print $2}')"
+TRUST_JSON="$USER_HOME/Library/Application Support/PixelSync/trusted_devices.json"
+if [ -f "$TRUST_JSON" ]; then
+  echo "==> Provisioning trusted phone keys from: $TRUST_JSON"
+  python3 - "$TRUST_JSON" "$TRUST_DIR" <<'PY'
+import json, os, re, sys
+src, outdir = sys.argv[1], sys.argv[2]
+with open(src) as f:
+    devices = json.load(f)
+# Root-owned directory is rebuilt from the current trust list.
+for name in os.listdir(outdir):
+    if name.endswith(".pub"):
+        os.unlink(os.path.join(outdir, name))
+for d in devices:
+    if not d.get("enabled", True):
+        continue
+    phone_id = d.get("id", "")
+    pub = d.get("publicKeyB64", "")
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", phone_id) or not pub:
+        continue
+    path = os.path.join(outdir, phone_id + ".pub")
+    with open(path, "w") as f:
+        f.write(pub)
+    os.chmod(path, 0o644)
+    print("   ", path)
+PY
+  chown root:wheel "$TRUST_DIR"/*.pub 2>/dev/null || true
+else
+  echo "WARN: trusted_devices.json not found for $TARGET_USER."
+  echo "      Pair the phone in the app, then rerun: sudo ./install.sh"
+fi
+
+echo "==> Trusted phone keys:"
+ls -l "$TRUST_DIR" 2>/dev/null || true
+
 echo "==> Backing up /etc/pam.d/screensaver"
 cp -n /etc/pam.d/screensaver /etc/pam.d/screensaver.bak.pixelsync 2>/dev/null || true
 

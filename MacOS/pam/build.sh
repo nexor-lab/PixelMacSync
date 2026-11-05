@@ -10,6 +10,7 @@ clang -bundle -fPIC -O2 -Wall \
   -isysroot "$SDK" \
   -mmacosx-version-min=12.0 \
   -undefined dynamic_lookup \
+  -framework Security -framework CoreFoundation \
   -o "$OUT" "$DIR/pam_pixelsync.c"
 
 SIGN_IDENTITY="${SIGN_IDENTITY:-Apple Development}"

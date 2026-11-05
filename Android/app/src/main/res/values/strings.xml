@@ -117,4 +117,20 @@
     <string name="unlock_away_lock_sub">Lock the Mac when the phone moves away</string>
     <string name="unlock_remote_wake_title">Remote wake</string>
     <string name="unlock_remote_wake_sub">Off hides binding/unlock controls (keeps disconnect &amp; delete)</string>
+
+    <!-- In-app language -->
+    <string name="language_title">Language</string>
+    <string name="language_subtitle">App display language</string>
+    <string name="language_system">Follow system</string>
+    <string name="language_zh">简体中文</string>
+    <string name="language_en">English</string>
+
+    <!-- In-app pairing prompt -->
+    <string name="pair_request_title">Pairing request</string>
+    <string name="pair_request_text">%1$s requests to pair with this phone.</string>
+    <string name="pair_request_hint">Confirm and verify with your fingerprint to finish pairing.</string>
+    <string name="pair_confirm">Confirm pairing</string>
+    <string name="pair_cancel">Cancel</string>
+    <string name="pair_screen_title">Mac pairing request</string>
+    <string name="pair_screen_hint">Tap “Confirm pairing” and verify with your fingerprint to create the unlock key for this Mac.</string>
 </resources>

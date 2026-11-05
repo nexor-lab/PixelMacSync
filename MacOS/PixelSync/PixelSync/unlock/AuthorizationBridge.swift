@@ -32,9 +32,23 @@ final class AuthorizationBridge {
     private var grantURL: URL { dir.appendingPathComponent("unlock_grant") }
 
     /// Called after a phone signature verified. Grants a single unlock window.
-    func grant(sessionIdB64: String, macId: String, expiresAtMs: Int64) {
+    ///
+    /// v2 includes the phone's signature over the unlock transcript. The PAM
+    /// module verifies it against a **root-owned** public key, so a user-level
+    /// process cannot forge a grant by simply writing this file.
+    func grant(sessionIdB64: String, macId: String, expiresAtMs: Int64,
+               phoneId: String, transcriptB64: String, signatureB64: String) {
         let user = NSUserName()
-        let body = "\(sessionIdB64)\n\(macId)\n\(expiresAtMs)\n\(user)\n"
+        let body = [
+            "v2",
+            sessionIdB64,
+            macId,
+            String(expiresAtMs),
+            user,
+            phoneId,
+            transcriptB64,
+            signatureB64,
+        ].joined(separator: "\n") + "\n"
         try? body.data(using: .utf8)?.write(to: grantURL, options: [.atomic])
         try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: grantURL.path)
     }
