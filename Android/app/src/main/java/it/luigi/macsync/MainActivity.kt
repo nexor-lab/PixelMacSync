@@ -52,9 +52,11 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import it.luigi.macsync.ble.GattServerManager
+import it.luigi.macsync.unlock.AndroidKeyStore
 import it.luigi.macsync.unlock.PairingActivity
 import it.luigi.macsync.unlock.PairingController
 import it.luigi.macsync.unlock.TrustedMacStore
@@ -506,12 +508,18 @@ fun MacDevicesCard(gattServerManager: GattServerManager) {
                                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.15f)
                             )
                         }
+                        val trusted = remember(trustVersion, mac.id) {
+                            TrustedMacStore.get(context, mac.id)
+                        }
+                        val isBound = trusted?.trusted == true
+                        val unlockKeyUsable = remember(trustVersion, mac.id, trusted?.keyAlias) {
+                            trusted?.keyAlias?.let { AndroidKeyStore.isUnlockKeyUsable(it) } ?: false
+                        }
                         MacDeviceRow(
                             mac = mac,
                             isConnected = connectedId == mac.id,
-                            isBound = remember(trustVersion, mac.id) {
-                                TrustedMacStore.isTrusted(context, mac.id)
-                            },
+                            isBound = isBound,
+                            unlockKeyUsable = unlockKeyUsable,
                             showUnlock = showUnlock,
                             onConnect = { gattServerManager.setActiveMac(mac.id) },
                             onDisconnect = { gattServerManager.disconnectActiveMac() },
@@ -539,6 +547,7 @@ private fun MacDeviceRow(
     mac: SavedMac,
     isConnected: Boolean,
     isBound: Boolean,
+    unlockKeyUsable: Boolean,
     showUnlock: Boolean,
     onConnect: () -> Unit,
     onDisconnect: () -> Unit,
@@ -548,6 +557,7 @@ private fun MacDeviceRow(
     onTriggerUnlock: () -> Unit
 ) {
     var confirmUnbind by remember { mutableStateOf(false) }
+    var confirmForget by remember { mutableStateOf(false) }
 
     Row(
         modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
@@ -558,7 +568,9 @@ private fun MacDeviceRow(
                 text = mac.name,
                 fontSize = 15.sp,
                 fontWeight = FontWeight.Medium,
-                color = MaterialTheme.colorScheme.onSurface
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
             if (isConnected) {
                 Text(
@@ -569,9 +581,13 @@ private fun MacDeviceRow(
             }
             if (isBound && showUnlock) {
                 Text(
-                    text = stringResource(R.string.mac_unlock_bound),
+                    text = stringResource(
+                        if (unlockKeyUsable) R.string.mac_unlock_bound
+                        else R.string.unlock_key_invalid_repair
+                    ),
                     fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.primary
+                    color = if (unlockKeyUsable) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.error
                 )
             }
         }
@@ -583,13 +599,21 @@ private fun MacDeviceRow(
                     modifier = Modifier.width(58.dp),
                     onClick = { if (isConnected) onDisconnect() else onConnect() },
                 )
-                MacActionButton(
-                    text = stringResource(R.string.mac_delete),
-                    modifier = Modifier.width(104.dp),
-                    onClick = onForget,
-                )
+                if (!isBound) {
+                    MacActionButton(
+                        text = stringResource(R.string.mac_delete),
+                        modifier = Modifier.width(104.dp),
+                        onClick = { confirmForget = true },
+                    )
+                } else {
+                    // Removing a bound Mac from the list without unbinding would
+                    // leave the Mac trusting this phone with no way to revoke it.
+                    Spacer(Modifier.width(104.dp))
+                }
             }
-            if (showUnlock) {
+            // Unbind must remain reachable even when the remote-wake policy hides
+            // the bind/unlock controls; otherwise a bound Mac cannot be removed.
+            if (showUnlock || isBound) {
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     if (isBound) {
                         MacActionButton(
@@ -598,7 +622,7 @@ private fun MacDeviceRow(
                             modifier = Modifier.width(58.dp),
                             onClick = { confirmUnbind = true },
                         )
-                    } else if (isConnected) {
+                    } else if (showUnlock && isConnected) {
                         MacActionButton(
                             text = stringResource(R.string.mac_unlock_bind),
                             modifier = Modifier.width(58.dp),
@@ -607,7 +631,7 @@ private fun MacDeviceRow(
                     } else {
                         Spacer(Modifier.width(58.dp))
                     }
-                    if (isBound) {
+                    if (isBound && showUnlock) {
                         MacActionButton(
                             text = stringResource(R.string.mac_unlock_trigger),
                             enabled = isConnected,
@@ -620,6 +644,27 @@ private fun MacDeviceRow(
                 }
             }
         }
+    }
+
+    if (confirmForget) {
+        AlertDialog(
+            onDismissRequest = { confirmForget = false },
+            title = { Text(stringResource(R.string.mac_forget_confirm_title)) },
+            text = { Text(stringResource(R.string.mac_forget_confirm_text, mac.name)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmForget = false
+                    onForget()
+                }) {
+                    Text(stringResource(R.string.mac_delete))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmForget = false }) {
+                    Text(stringResource(R.string.unlock_prompt_cancel))
+                }
+            },
+        )
     }
 
     if (confirmUnbind) {

@@ -106,6 +106,8 @@
     <string name="mac_unlock_bound">已绑定指纹解锁</string>
     <string name="mac_unlock_trigger">唤醒远程解锁</string>
     <string name="mac_delete">删除</string>
+    <string name="mac_forget_confirm_title">移除这台 Mac？</string>
+    <string name="mac_forget_confirm_text">将把 %1$s 从本机列表移除。如需同时撤销指纹解锁，请先解绑。</string>
     <string name="mac_unlock_unbind">解绑</string>
     <string name="pair_auth_title">验证身份以完成绑定</string>
     <string name="unbind_auth_title">验证身份以解绑</string>
