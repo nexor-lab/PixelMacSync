@@ -385,6 +385,15 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
         }
     }
 
+    /// One admin-authorized update of the root-owned PAM trust keys.
+    func syncPamTrust(completion: @escaping (Bool, String) -> Void) {
+        let phones = trustedPhones
+        AuthorizationBridge.shared.syncPamTrust(phones: phones) { [weak self] ok, message in
+            if ok { self?.refreshTrust() }
+            completion(ok, message)
+        }
+    }
+
     /// Application Support folder shared by the unlock stores (keys + trust list).
     static func supportDir() -> URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first

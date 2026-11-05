@@ -67,6 +67,64 @@ final class AuthorizationBridge {
             == publicKeyB64.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// Updates the root-owned PAM trust keys from the current trust store.
+    /// Runs one admin-authorized shell step; only the key files are touched.
+    func syncPamTrust(phones: [TrustedPhone],
+                      completion: @escaping (Bool, String) -> Void) {
+        let entries: [(String, String)] = phones.filter { $0.enabled }.compactMap { phone in
+            let id = phone.id
+            guard id.range(of: "^[A-Za-z0-9_-]{1,128}$", options: .regularExpression) != nil else { return nil }
+            let key = phone.publicKeyB64.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !key.isEmpty, !key.contains("'") else { return nil }
+            return (id, key)
+        }
+        guard !entries.isEmpty else {
+            completion(false, L10n.t("No trusted phone key", "没有可同步的手机公钥"))
+            return
+        }
+
+        var shell = "set -e; "
+        shell += "D=/usr/local/etc/pixelsync/trusted_phones; "
+        shell += "mkdir -p \"$D\"; "
+        shell += "chown root:wheel /usr/local/etc/pixelsync \"$D\"; "
+        shell += "chmod 755 /usr/local/etc/pixelsync \"$D\"; "
+        shell += "rm -f \"$D\"/*.pub; "
+        for (id, key) in entries {
+            shell += "printf '%s\\n' '\(key)' > \"$D/\(id).pub\"; "
+            shell += "chown root:wheel \"$D/\(id).pub\"; "
+            shell += "chmod 644 \"$D/\(id).pub\"; "
+        }
+        let escaped = shell
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        let appleScript = "do shell script \"\(escaped)\" with administrator privileges"
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+            process.arguments = ["-e", appleScript]
+            let out = Pipe()
+            let err = Pipe()
+            process.standardOutput = out
+            process.standardError = err
+            do {
+                try process.run()
+                process.waitUntilExit()
+            } catch {
+                DispatchQueue.main.async { completion(false, error.localizedDescription) }
+                return
+            }
+            if process.terminationStatus == 0 {
+                DispatchQueue.main.async { completion(true, L10n.t("PAM key synced", "PAM 公钥已同步")) }
+            } else {
+                let data = err.fileHandleForReading.readDataToEndOfFile()
+                let message = String(data: data, encoding: .utf8)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? "osascript failed"
+                DispatchQueue.main.async { completion(false, message) }
+            }
+        }
+    }
+
     /// True if a currently-installed Authorization Plugin could unlock this Mac.
     /// (The plugin is installed to /Library/Security/SecurityAgentPlugins by an
     /// admin step; until then the app must not promise passwordless unlock.)

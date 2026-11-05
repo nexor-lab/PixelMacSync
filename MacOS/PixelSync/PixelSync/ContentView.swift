@@ -572,6 +572,14 @@ struct UnlockPanel: View {
     @ObservedObject var bleManager: BLEManager
     @State private var awayDelay: Double = 20
     @State private var trustedExpanded = false
+    @State private var pamSyncing = false
+    @State private var pamSyncMessage: String?
+
+    private var needsPamSync: Bool {
+        bleManager.trustedPhones.contains {
+            !AuthorizationBridge.shared.isProvisioned(phoneId: $0.id, publicKeyB64: $0.publicKeyB64)
+        }
+    }
 
     init(bleManager: BLEManager) {
         self.bleManager = bleManager
@@ -653,6 +661,37 @@ struct UnlockPanel: View {
                     bleManager.unlockManager.triggerUnlock(reason: "manual")
                 }
                 .font(.caption)
+            }
+
+            if !bleManager.trustedPhones.isEmpty {
+                HStack(spacing: 8) {
+                    Button(pamSyncing
+                           ? L10n.t("Syncing…", "同步中…")
+                           : L10n.t("Sync PAM key", "同步 PAM 公钥")) {
+                        pamSyncing = true
+                        pamSyncMessage = nil
+                        bleManager.syncPamTrust { ok, message in
+                            pamSyncing = false
+                            pamSyncMessage = ok ? message
+                                : L10n.t("Sync failed: ", "同步失败：") + message
+                        }
+                    }
+                    .font(.caption)
+                    .disabled(pamSyncing)
+
+                    if needsPamSync {
+                        Text(L10n.t("Needs sync", "需要同步"))
+                            .font(.caption2)
+                            .foregroundColor(.orange)
+                    }
+                    Spacer()
+                }
+                if let message = pamSyncMessage {
+                    Text(message)
+                        .font(.caption2)
+                        .foregroundColor(message.hasPrefix(L10n.t("Sync failed", "同步失败")) ? .red : .secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
 
             if !bleManager.unlockPluginInstalled {
