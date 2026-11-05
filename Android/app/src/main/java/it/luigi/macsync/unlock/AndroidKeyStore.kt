@@ -27,6 +27,12 @@ object AndroidKeyStore {
 
     fun keyExists(alias: String): Boolean = keyStore().containsAlias(alias)
 
+    /** True when the key exists AND can still be used for signing. Enrolling a
+     *  new fingerprint invalidates biometric-gated keys; that must trigger a
+     *  re-pair instead of leaving a notification that cannot open a prompt. */
+    fun isUnlockKeyUsable(alias: String): Boolean =
+        keyExists(alias) && initSignatureForAuth(alias) != null
+
     fun createKey(alias: String) {
         val gen = KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_EC, PROVIDER)
         val spec = KeyGenParameterSpec.Builder(alias, KeyProperties.PURPOSE_SIGN)

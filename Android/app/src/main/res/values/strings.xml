@@ -133,4 +133,5 @@
     <string name="pair_cancel">Cancel</string>
     <string name="pair_screen_title">Mac pairing request</string>
     <string name="pair_screen_hint">Tap “Confirm pairing” and verify with your fingerprint to create the unlock key for this Mac.</string>
+    <string name="unlock_key_invalid_repair">Fingerprint changed — re-pair required</string>
 </resources>

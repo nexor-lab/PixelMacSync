@@ -35,8 +35,7 @@ class UnlockActivity : FragmentActivity() {
         val signature = AndroidKeyStore.initSignatureForAuth(pending.keyAlias)
         if (signature == null) {
             Log.w(tag, "signing key missing or invalidated; re-pair required")
-            UnlockController.cancel()
-            UnlockNotification.dismiss(this)
+            UnlockController.requireRepair(this, pending.macId)
             finish()
             return
         }

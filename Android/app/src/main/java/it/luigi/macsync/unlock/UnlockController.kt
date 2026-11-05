@@ -105,6 +105,14 @@ object UnlockController {
             return false
         }
 
+        // A biometric enrollment change invalidates the Keystore key. Posting a
+        // notification in that state only opens an activity that cannot sign.
+        if (!AndroidKeyStore.isUnlockKeyUsable(mac.keyAlias)) {
+            Log.w(TAG, "unlock key missing/invalidated; forcing re-pair")
+            requireRepair(context, macId)
+            return false
+        }
+
         pending = Pending(
             macId = macId,
             macName = mac.name,
@@ -143,6 +151,22 @@ object UnlockController {
         } catch (e: Exception) {
             Log.e(TAG, "failed to send AUTH_RESPONSE: ${e.message}")
             false
+        }
+    }
+
+    /** The unlock key is missing/invalidated: drop trust and ask for a fresh
+     *  pairing (the Mac will send PAIR_BEGIN; the new key is provisioned then). */
+    fun requireRepair(context: Context, macId: String) {
+        pending = null
+        TrustedMacStore.setTrusted(context, macId, false)
+        UnlockNotification.dismiss(context)
+        GattServerManager.getInstance(context).restartSessionAuth()
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+            android.widget.Toast.makeText(
+                context,
+                it.luigi.macsync.R.string.unlock_key_invalid_repair,
+                android.widget.Toast.LENGTH_LONG,
+            ).show()
         }
     }
 

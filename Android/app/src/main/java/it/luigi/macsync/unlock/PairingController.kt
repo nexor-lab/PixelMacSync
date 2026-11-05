@@ -109,7 +109,12 @@ object PairingController {
         val macSessionPubB64 = parts.getOrNull(5) ?: macPubB64
 
         val alias = keyAliasFor(macId)
-        if (!AndroidKeyStore.keyExists(alias)) AndroidKeyStore.createKey(alias)
+        // Recreate the unlock key when it is missing *or invalidated* (the
+        // latter happens after a fingerprint enrollment change).
+        if (!AndroidKeyStore.isUnlockKeyUsable(alias)) {
+            AndroidKeyStore.deleteKey(alias)
+            AndroidKeyStore.createKey(alias)
+        }
         val phonePub = AndroidKeyStore.publicKeyDer(alias) ?: return false
 
         val sessionAlias = sessionAliasFor(macId)

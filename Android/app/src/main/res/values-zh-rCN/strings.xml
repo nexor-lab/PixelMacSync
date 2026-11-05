@@ -133,4 +133,5 @@
     <string name="pair_cancel">取消</string>
     <string name="pair_screen_title">Mac 配对请求</string>
     <string name="pair_screen_hint">点击“确认配对”并用指纹验证，即可与该 Mac 建立解锁密钥。</string>
+    <string name="unlock_key_invalid_repair">指纹已变更，需要重新配对</string>
 </resources>
