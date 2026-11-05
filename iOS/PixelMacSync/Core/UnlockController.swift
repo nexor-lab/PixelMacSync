@@ -18,6 +18,7 @@ final class UnlockController: ObservableObject {
     @Published var pairingActive = false
     @Published var pairingMacName = ""
     @Published var lastMessage = ""
+    @Published var pendingUnlockMacName = ""
 
     private struct PendingUnlock {
         let macId: String
@@ -101,6 +102,7 @@ final class UnlockController: ObservableObject {
                                         signatureB64: UnlockProtocol.b64(sig)))
         TrustedMacStore.shared.markAuthorized(p.macId)
         pendingUnlock = nil
+        DispatchQueue.main.async { self.pendingUnlockMacName = "" }
         lastMessage = "已发送解锁授权"
     }
 
@@ -240,6 +242,7 @@ final class UnlockController: ObservableObject {
         pendingUnlock = PendingUnlock(
             macId: macId, macName: mac.name, sessionIdB64: sessionIdB64,
             transcriptReq: req, expiresAt: expiresAt)
+        DispatchQueue.main.async { self.pendingUnlockMacName = mac.name }
         NotificationManager.shared.postUnlock(macName: mac.name)
     }
 

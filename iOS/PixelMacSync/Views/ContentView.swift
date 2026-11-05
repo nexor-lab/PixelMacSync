@@ -129,6 +129,19 @@ struct ContentView: View {
                 .buttonStyle(.borderedProminent)
             }
 
+            if unlock.hasPendingUnlock {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("\(unlock.pendingUnlockMacName) 请求解锁").font(.caption)
+                    Button {
+                        Task { await unlock.approveUnlock() }
+                    } label: {
+                        Label("使用面容 ID 解锁 Mac", systemImage: "faceid")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+            }
+
             if unlock.pairingActive {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("\(unlock.pairingMacName) 请求绑定").font(.caption)

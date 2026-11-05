@@ -26,6 +26,14 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         center.add(req)
     }
 
+    // Notification tap: run Face ID + grant even if the app was already active.
+    func userNotificationCenter(_ center: UNUserNotificationCenter,
+                                didReceive response: UNNotificationResponse,
+                                withCompletionHandler completionHandler: @escaping () -> Void) {
+        DispatchQueue.main.async { UnlockController.shared.onAppActive() }
+        completionHandler()
+    }
+
     // Foreground presentation
     func userNotificationCenter(_ center: UNUserNotificationCenter,
                                 willPresent notification: UNNotification,

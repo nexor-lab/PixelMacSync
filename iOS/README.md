@@ -1,59 +1,60 @@
-# PixelMacSync — iOS 版（面容 ID 解锁 Mac）
+# PixelMacSync — iOS（Face ID 解锁 Mac）
 
-> 目标：iPhone 用 **Face ID** 解锁 Mac；**Mac 端不改**（复用现有 BLE 协议与 PAM）。
-> 只实现 iOS 能做的部分；做不到的在 App 内明确提示。
+Status（2026-10-18）：**Beta / 会话认证已完成；Face ID 解锁诊断中**
+工作区：`/Users/yanzhequ/PixelMacSync-Workspace/PixelMacSync`
+断点：`../../RESUME.md`（优先读）
 
-## 已实现（源码）
+## 当前状态
+- 已实现 **session 认证**：`PAIR_SESSION_PUB`、`SESSION_CHALLENGE/MAC_PROOF/PHONE_PROOF/OK/READY`。
+- 已修 **iOS 27.x 启动闪退**：`CBAdvertisementDataServiceDataKey: [CBUUID: Data]` → **manufacturer data**。
+- 解锁密钥：Secure Enclave + Face ID（`.biometryCurrentSet`）；session 密钥：非生物识别、`AfterFirstUnlock`。
+- Face ID 解锁 UX：通知点击 → `onAppActive`；App 内新增 **“使用面容 ID 解锁 Mac”** 按钮（**未提交**）。
+- 当前 IPA：`iOS/build-device/PixelMacSync-unsigned.ipa`（22:21，470 KB）；
+  安装包目录 `~/Desktop/PixelMacSync-Install`。
+- **待确认**：iPhone 按 Face ID 后 Mac 是否真正解锁。
 
-- **BLE 外设**：`CBPeripheralManager`，与安卓同一套 Service/Characteristic
-  （Service `58DF214B…`、Telemetry、Notifications、Command）；响应 Mac 的 `HELLO`→`SESSION_READY`。
-- **配对**：手机发起 `PAIR_REQUEST`；Mac 验登录密码 → `PAIR_BEGIN`；iPhone 生成
-  **Secure Enclave P-256** 密钥并回 `PAIR_REPLY`；Face ID 后 `PAIR_CONFIRM` → `PAIR_DONE` 落库。
-- **解锁**：Mac 发一次性挑战 → iPhone 校验 Mac 签名 → 本地通知 → 点开 → **Face ID**
-  → SE 私钥签名 → `AUTH_RESPONSE` → Mac 验签 → PAM 解锁。
-- **策略**：`设备远离自动锁定`、`远程唤醒` 开关（`SET_POLICY` 下发给 Mac）。
-- **其他**：电量/网络状态遥测、`tel:` 拨号、关于页（含 iOS 限制说明）。
-- **UI**：Liquid Glass 风格（用 `.ultraThinMaterial` + 圆角/描边/阴影近似；Liquid Glass 原生 API 需 iOS 26+）。
+## 解锁链路（排错顺序）
+1. Mac `HELLO` → iOS `startSession`（trust 有 Mac session pub 才发 `SESSION_CHALLENGE`）。
+2. `SESSION_MAC_PROOF`（Mac session pub 验签）→ `SecureKey.signSession` → `SESSION_PHONE_PROOF`
+   → `SESSION_OK` → `SESSION_READY` → “已连接”。
+3. Mac 锁屏且 `sessionVerified` → `UNLOCK_REQUEST`。
+4. iOS `handleUnlockRequest`（要求 `sessionAuthenticated`）→ 验 Mac 解锁签名 → `pendingUnlock`
+   → 通知 / App 按钮 → `approveUnlock` → `SecureKey.sign`（Face ID）→ `AUTH_RESPONSE`。
+5. Mac `authResponse` 验签 → grant → PAM 解锁。
 
-## iOS 上不可用（App 内已提示）
-通知转发 / 内联回复、来电事件与挂断、远程个人热点、跨 App 音乐控制、应用图标同步、信号强度。
-后台 BLE 为**尽力而为**：iPhone 锁屏/挂起时可能延迟收到解锁请求。
-
-## 构建
-
-### 推荐：新 Mac + Xcode 26+（原生 Liquid Glass）
+## 构建 / 安装
 ```sh
-brew install xcodegen
-cd iOS
-xcodegen generate        # 生成 PixelMacSyncIOS.xcodeproj
-open PixelMacSyncIOS.xcodeproj
+cd /Users/yanzhequ/PixelMacSync-Workspace/PixelMacSync/iOS
+./build_device_ipa.sh
+# 产物：build-device/PixelMacSync-unsigned.ipa
 ```
-- 在 Xcode 里选择你的 iPhone，填 `DEVELOPMENT_TEAM` 并签名。
-- 若要原生 Liquid Glass，把 `Views/Theme.swift` 的材质替换为 `.glassEffect()`（iOS 26+）。
+- IPA 是 **unsigned**：Sideloadly / AltStore 自签（免费账号 7 天），安装后信任开发者。
+- Xcode 14.2 对 iOS 27.2 显示 **Offline**（无 DeviceSupport，正常）；App 安装仍用 Sideloadly。
+- 覆盖安装通常保留数据；旧配对缺 session 公钥时 Mac 会自动发起重新配对（一次 Face ID）。
 
-### 本机（iOS 16.2 SDK，仅编译校验）
-```sh
-cd iOS
-./build_sim.sh           # swiftc 直编模拟器，验证代码可编译
-```
-注意：本机 Xcode 14.2 只能到 iOS 16.2 SDK，**无法把 App 装到 iOS 27.2 的真机**（缺 DeviceSupport），
-也无法编译 iOS 26/27 的 Liquid Glass API。真机测试需新工具链。
+## 日志 / 实机测试
+- iPhone USB 已连接；可读日志：
+  1. **macOS 控制台 App → 设备 → iPhone → 开始**，过滤 `PixelMacSync`；
+  2. iPhone 设置 → 隐私与安全性 → 分析与改进 → 分析数据 → `PixelMacSync-*.ips`；
+  3. Mac：`log show --last 5m --predicate 'process == "PixelSync"' | grep -Ei "unlock|session|auth|grant|PAM"`。
+- `pymobiledevice3` 安装因网络超时失败；若网络恢复可用它读 syslog/crash。
+- Face ID 必须真人按；测试时保持 Mac 开盖并锁屏。
 
-## 安全
-- 私钥在 **Secure Enclave**，`biometryCurrentSet`：换/加面容即失效，需重新绑定。
-- 只传公钥；一次性 32 字节挑战、有效期；Mac 端 PAM 放行；**不存储/不传输/不输入 Mac 密码**。
-- 配对时 Mac 会弹“登录密码”，iPhone 会弹 Face ID。
+## 已知限制
+- iOS 无法同步其他 App 通知；后台 BLE 受限；热点/音乐/拨号不可用。
+- Face ID 重录后 `.biometryCurrentSet` 密钥失效，需要重新配对。
+- Release `v2.3-beta.3` 里的 IPA 是 21:55，不含 22:21 的 Face ID UX 修复。
 
 ## 目录
 ```
 iOS/
-├── project.yml                 # XcodeGen 规格
-├── build_sim.sh                # 本机模拟器编译校验
+├── project.yml
+├── build_device_ipa.sh / build_sim.sh
 └── PixelMacSync/
     ├── App/PixelMacSyncApp.swift
-    ├── Core/UnlockProtocol.swift / SecureKey.swift / TrustedMacStore.swift
-    │       / UnlockController.swift / BLEPeripheralManager.swift
-    │       / UnlockSettings.swift / NotificationManager.swift
+    ├── Core/BLEPeripheralManager.swift / UnlockController.swift
+    │       / UnlockProtocol.swift / SecureKey.swift / TrustedMacStore.swift
+    │       / NotificationManager.swift / UnlockSettings.swift
     ├── Views/Theme.swift / ContentView.swift
     └── Info.plist
 ```
