@@ -26,6 +26,7 @@ object PairingController {
     private const val PREFS = "MacSync_Pair"
     private const val KEY_PENDING = "pending_v1"
     private const val KEY_PENDING_BEGIN = "pending_begin_v1"
+    private const val KEY_KEY_POLICY = "unlock_key_policy_v2"
 
     data class Pending(
         val macId: String,
@@ -93,9 +94,18 @@ object PairingController {
 
     fun current(): Pending? = pending
 
+    /** Old installs used a biometric-bound Keystore key; the v2 policy signs
+     *  after an app-level biometric prompt instead. Force one re-pair to rotate. */
+    fun needsKeyMigration(context: Context): Boolean =
+        !context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getBoolean(KEY_KEY_POLICY, false)
+
     private fun savePendingBegin(context: Context, parts: List<String>) {
+        val o = JSONObject()
+            .put("ts", System.currentTimeMillis())
+            .put("parts", JSONArray(parts))
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-            .putString(KEY_PENDING_BEGIN, JSONArray(parts).toString()).apply()
+            .putString(KEY_PENDING_BEGIN, o.toString()).apply()
     }
 
     private fun clearPendingBegin(context: Context) {
@@ -103,15 +113,26 @@ object PairingController {
             .remove(KEY_PENDING_BEGIN).apply()
     }
 
-    /** Called after the device is unlocked / the app resumes. Android refuses to
-     *  create biometric-gated keys while locked, so the original PAIR_BEGIN is
-     *  replayed here instead of leaving the Mac/phone stuck at "verifying". */
+    /** Called after the device is unlocked / the app resumes. Retry only while a
+     *  Mac link is actually alive; a stale screen-on must not recreate keys or
+     *  pop a pairing prompt when the Mac is disconnected/Bluetooth is off. */
     @Synchronized
     fun retryPendingBegin(context: Context): Boolean {
         val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .getString(KEY_PENDING_BEGIN, null) ?: return false
+        if (!GattServerManager.getInstance(context).hasConnectedLink()) {
+            clearPendingBegin(context)
+            PairingNotification.dismissUnlockRequired(context)
+            return false
+        }
         return try {
-            val arr = JSONArray(raw)
+            val o = JSONObject(raw)
+            val ts = o.optLong("ts", 0L)
+            if (ts > 0 && System.currentTimeMillis() - ts > 10 * 60_000L) {
+                clearPendingBegin(context)
+                return false
+            }
+            val arr = o.optJSONArray("parts") ?: JSONArray(raw)
             val parts = ArrayList<String>(arr.length())
             for (i in 0 until arr.length()) parts.add(arr.getString(i))
             onBegin(context, parts)
@@ -119,6 +140,15 @@ object PairingController {
             Log.w(TAG, "retryPendingBegin failed: ${e.message}")
             false
         }
+    }
+
+    /** The BLE link is gone: pairing cannot continue; drop stale state. */
+    fun onLinkLost(context: Context) {
+        clearPendingBegin(context)
+        updatePending(null)
+        persist(context, null)
+        PairingNotification.dismiss(context)
+        PairingNotification.dismissUnlockRequired(context)
     }
 
     /** Phone-initiated pairing from the "connected devices" list. */
@@ -140,12 +170,15 @@ object PairingController {
 
         val alias = keyAliasFor(macId)
         val sessionAlias = sessionAliasFor(macId)
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val biometricKeyPolicy = prefs.getBoolean(KEY_KEY_POLICY, false)
         val phonePub: ByteArray?
         val phoneSessionPub: ByteArray?
         try {
-            // Recreate the unlock key when it is missing *or invalidated* (the
-            // latter happens after a fingerprint enrollment change).
-            if (!AndroidKeyStore.isUnlockKeyUsable(alias)) {
+            // v2 policy: the key is NOT auth-bound (see AndroidKeyStore). The
+            // flag also migrates old auth-bound keys, which cannot be signed
+            // after the app-level biometric prompt.
+            if (!biometricKeyPolicy || !AndroidKeyStore.isUnlockKeyUsable(alias)) {
                 AndroidKeyStore.deleteKey(alias)
                 AndroidKeyStore.createKey(alias)
             }
@@ -155,19 +188,18 @@ object PairingController {
             }
             phoneSessionPub = AndroidKeyStore.publicKeyDer(sessionAlias)
         } catch (e: Exception) {
-            // Android refuses to generate biometric-gated keys while the device
-            // is locked. Remember the request and retry after USER_PRESENT.
-            Log.w(TAG, "pairing key generation failed (device locked?): ${e.message}")
+            // Keystore can still refuse while the device is locked. Do not pop
+            // a notification; wait for the next USER_PRESENT / link retry.
+            Log.w(TAG, "pairing key generation failed: ${e.message}")
             savePendingBegin(context, parts)
-            PairingNotification.postUnlockRequired(context, macName)
             return false
         }
         if (phonePub == null || phoneSessionPub == null) {
             Log.w(TAG, "pairing public key unavailable")
             savePendingBegin(context, parts)
-            PairingNotification.postUnlockRequired(context, macName)
             return false
         }
+        prefs.edit().putBoolean(KEY_KEY_POLICY, true).apply()
 
         val phoneId = TrustedMacStore.deviceId(context)
         // Split to stay under the 180-byte BLE notification cap: the two P-256

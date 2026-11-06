@@ -109,8 +109,9 @@ object UnlockController {
 
         // A biometric enrollment change invalidates the Keystore key. Posting a
         // notification in that state only opens an activity that cannot sign.
-        if (!AndroidKeyStore.isUnlockKeyUsable(mac.keyAlias)) {
-            Log.w(TAG, "unlock key missing/invalidated; forcing re-pair")
+        if (PairingController.needsKeyMigration(context) ||
+            !AndroidKeyStore.isUnlockKeyUsable(mac.keyAlias)) {
+            Log.w(TAG, "unlock key missing/invalidated or old policy; forcing re-pair")
             requireRepair(context, macId)
             return false
         }

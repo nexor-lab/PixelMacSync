@@ -689,6 +689,10 @@ class GattServerManager private constructor(private val context: Context) {
     }
 
     /** Makes [macId] the active Mac (clears any user-disconnect) and drops another link. */
+    /** True while a peripheral (Mac) link exists; used before replaying a stored
+     *  PAIR_BEGIN so screen-on events cannot create keys while the Mac is off. */
+    fun hasConnectedLink(): Boolean = connectedMac != null
+
     fun setActiveMac(macId: String) {
         MacRegistry.setActive(context, macId)
         MacRegistry.setUserDisconnected(context, null)
@@ -765,6 +769,11 @@ class GattServerManager private constructor(private val context: Context) {
                 updateSession()
                 startHandshakeTimeout(device)
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+                if (device == connectedMac) {
+                    // Drop stale pairing requests/prompts; a screen-on must not
+                    // resurrect them while the Mac is gone.
+                    PairingController.onLinkLost(context)
+                }
                 if (device == authenticatedGatt) {
                     authenticatedGatt = null
                     authenticatedMacId = null

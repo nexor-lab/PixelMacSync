@@ -35,13 +35,15 @@ object AndroidKeyStore {
 
     fun createKey(alias: String) {
         val gen = KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_EC, PROVIDER)
+        // The key is hardware-backed and non-exportable, but deliberately NOT
+        // user-authentication-bound: Android refuses to create auth-bound keys
+        // until the phone has been unlocked with the PIN/pattern after boot,
+        // which made pairing impossible after a normal fingerprint unlock.
+        // Face/fingerprint approval is enforced by BiometricPrompt in the app
+        // before every signature instead.
         val spec = KeyGenParameterSpec.Builder(alias, KeyProperties.PURPOSE_SIGN)
             .setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1"))
             .setDigests(KeyProperties.DIGEST_SHA256)
-            .setUserAuthenticationRequired(true)
-            .setInvalidatedByBiometricEnrollment(true)
-            // 0 => authentication required for every single use
-            .setUserAuthenticationParameters(0, KeyProperties.AUTH_BIOMETRIC_STRONG)
             .build()
         gen.initialize(spec)
         gen.generateKeyPair()

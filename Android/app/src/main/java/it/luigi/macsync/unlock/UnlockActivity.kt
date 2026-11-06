@@ -53,7 +53,7 @@ class UnlockActivity : FragmentActivity() {
                     )
                 } catch (e: Exception) {
                     Log.e(tag, "sign failed: ${e.message}")
-                    UnlockController.cancel()
+                    UnlockController.requireRepair(this@UnlockActivity, pending.macId)
                 }
                 UnlockNotification.dismiss(this@UnlockActivity)
                 finish()
@@ -74,6 +74,8 @@ class UnlockActivity : FragmentActivity() {
             .setNegativeButtonText(getString(R.string.unlock_prompt_cancel))
             .build()
 
-        prompt.authenticate(info, BiometricPrompt.CryptoObject(signature))
+        // The Keystore key is not auth-bound (see AndroidKeyStore.createKey);
+        // biometrics are enforced by this prompt, then we sign.
+        prompt.authenticate(info)
     }
 }

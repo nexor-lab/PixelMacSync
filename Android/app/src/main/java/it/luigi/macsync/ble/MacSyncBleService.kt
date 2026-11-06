@@ -77,6 +77,7 @@ class MacSyncBleService : Service() {
 
         // Restore a pairing prompt that outlived the process; clear a stale one.
         PairingController.restore(this)
+        PairingNotification.dismissUnlockRequired(this)
         PairingController.current()?.let { PairingNotification.post(this, it.macName) }
             ?: PairingNotification.dismiss(this)
 
