@@ -1,5 +1,6 @@
 package it.luigi.macsync.unlock
 
+import android.app.KeyguardManager
 import android.content.Context
 import android.content.Intent
 import android.util.Log
@@ -125,6 +126,10 @@ object PairingController {
             PairingNotification.dismissUnlockRequired(context)
             return false
         }
+        if (context.getSystemService(KeyguardManager::class.java)?.isDeviceLocked == true) {
+            // Keep the request, but do not try Keystore or post UI while locked.
+            return false
+        }
         return try {
             val o = JSONObject(raw)
             val ts = o.optLong("ts", 0L)
@@ -167,6 +172,15 @@ object PairingController {
         val macName = parts.getOrNull(3)?.ifBlank { macId } ?: macId
         val macPubB64 = parts.getOrNull(4) ?: return false
         val macSessionPubB64 = parts.getOrNull(5) ?: macPubB64
+
+        // Correct timing: while the phone is locked, only remember the request.
+        // Generating the Keystore key (and showing pairing UI) happens after the
+        // user unlocks with fingerprint; no PIN is needed unless the OS itself
+        // requires it after a cold boot.
+        if (context.getSystemService(KeyguardManager::class.java)?.isDeviceLocked == true) {
+            savePendingBegin(context, parts)
+            return false
+        }
 
         val alias = keyAliasFor(macId)
         val sessionAlias = sessionAliasFor(macId)
