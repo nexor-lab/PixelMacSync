@@ -5,6 +5,8 @@
 > Fork。功能清单、实现方式、来源与改动、构建/安装、限制与安全说明，请见 **[`FORK.md`](FORK.md)**；
 > 协议见 [`BLE_PROTOCOL.md`](BLE_PROTOCOL.md)，变更见 [`CHANGELOG.md`](CHANGELOG.md)，
 > 测试见 [`TEST_REPORT.md`](TEST_REPORT.md)。
+>
+> **当前版本：2.4.0（2026-11-14）。** 下方 Android 与 macOS 截图均来自本版本正式包实机测试。
 
 ## 适配范围（本 Fork）
 
@@ -126,8 +128,9 @@ L’app Android agisce come **Peripheral / GATT Server** ed è ottimizzata per l
 * **Hotspot via root**: esegue realmente `cmd wifi start-softap` / `stop-softap` come root e riporta lo stato reale (nessun intent verso terzi).
 
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/1a3caa7b-d75c-4b5b-8d17-f07829351716" width="300" />
-  <img src="https://github.com/user-attachments/assets/cd07089a-2362-41d9-a85e-0e1a90a205dc" width="300" />
+  <img src="docs/screenshots/android-home-2.4.0.png" width="190" alt="MacSync 2.4.0 已连接首页" />
+  <img src="docs/screenshots/android-notifications-2.4.0.png" width="190" alt="MacSync 2.4.0 通知应用选择" />
+  <img src="docs/screenshots/android-settings-2.4.0.png" width="190" alt="MacSync 2.4.0 设置" />
 </p>
 
 ### 💻 macOS Client — PixelSync
@@ -139,11 +142,8 @@ L’app macOS agisce come **Central / GATT Client** e vive nella Menu Bar.
 * **Configurazione disaccoppiata**: usa un file JSON locale per le regole di mapping delle app.
 
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/4a4723fe-4591-4464-9a53-d1822d0aa46b" />
-</p>
-
-<p align="center">
-  <img src="https://github.com/user-attachments/assets/8387a26b-e0d5-48ef-9cc7-ea965ef9079e" />
+  <img src="docs/screenshots/macos-device-2.4.0.png" width="320" alt="PixelSync 2.4.0 设备状态" />
+  <img src="docs/screenshots/macos-settings-2.4.0.png" width="320" alt="PixelSync 2.4.0 可信设备设置" />
 </p>
 
 ---
@@ -204,7 +204,7 @@ Risposta inline: `REPLY\u001F[id]\u001F[base64(testo)]` → l'Android usa il `Re
 
 Il client macOS mappa i `PackageName` ricevuti su file locali in formato **.icns** situati in `~/Pictures/icone/` tramite un dizionario a tempo di ricerca O(1).
 <p align="center">
-<img width="928" height="515" alt="Screenshot 2026-06-05 alle 11 47 53" src="https://github.com/user-attachments/assets/c8b705e1-d121-4662-9f16-ce8afe234c3d" />
+  <img src="docs/screenshots/macos-device-2.4.0.png" width="420" alt="PixelSync 设备与服务状态" />
 </p>
 
 <br><br><br>
@@ -309,8 +309,9 @@ The Android app acts as the **Peripheral / GATT Server** and is optimized for th
 * **Hotspot via root**: Actually runs `cmd wifi start-softap` / `stop-softap` as root and reports the real state (no third-party intents).
 
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/1a3caa7b-d75c-4b5b-8d17-f07829351716" width="300" />
-  <img src="https://github.com/user-attachments/assets/cd07089a-2362-41d9-a85e-0e1a90a205dc" width="300" />
+  <img src="docs/screenshots/android-home-2.4.0.png" width="190" alt="MacSync 2.4.0 connected home screen" />
+  <img src="docs/screenshots/android-notifications-2.4.0.png" width="190" alt="MacSync 2.4.0 notification app selection" />
+  <img src="docs/screenshots/android-settings-2.4.0.png" width="190" alt="MacSync 2.4.0 settings" />
 </p>
 
 ### 💻 macOS Client — PixelSync
@@ -322,11 +323,8 @@ The macOS app acts as the **Central / GATT Client** and lives in the Menu Bar.
 * **Decoupled Configuration**: Uses a local JSON file for app mapping rules.
 
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/4a4723fe-4591-4464-9a53-d1822d0aa46b" />
-</p>
-
-<p align="center">
-  <img src="https://github.com/user-attachments/assets/8387a26b-e0d5-48ef-9cc7-ea965ef9079e" />
+  <img src="docs/screenshots/macos-device-2.4.0.png" width="320" alt="PixelSync 2.4.0 device status" />
+  <img src="docs/screenshots/macos-settings-2.4.0.png" width="320" alt="PixelSync 2.4.0 trusted device settings" />
 </p>
 
 ---
@@ -391,5 +389,5 @@ Inline reply: `REPLY\u001F[id]\u001F[base64(text)]` → Android injects it via t
 
 The macOS client maps received `PackageNames` to local files in **.icns** format located in `~/Pictures/icone/` using an O(1) lookup dictionary.
 <p align="center">
-<img width="928" height="515" alt="Screenshot 2026-06-05 alle 11 47 53" src="https://github.com/user-attachments/assets/c8b705e1-d121-4662-9f16-ce8afe234c3d" />
+  <img src="docs/screenshots/macos-device-2.4.0.png" width="420" alt="PixelSync device and service status" />
 </p>

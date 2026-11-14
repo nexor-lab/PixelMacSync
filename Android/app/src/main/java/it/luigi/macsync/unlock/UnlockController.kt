@@ -85,14 +85,16 @@ object UnlockController {
         expiresAt: Long,
         macSigB64: String,
     ): Boolean {
+        val macLabel = macId.take(8)
+        Log.d(TAG, "event=unlock_request_received mac=$macLabel version=$version")
         if (version != UnlockProtocol.VERSION) return false
         val mac = TrustedMacStore.get(context, macId)
         if (mac == null || !mac.trusted) {
-            Log.w(TAG, "unlock request from untrusted mac")
+            Log.w(TAG, "event=unlock_request_rejected reason=untrusted_mac mac=$macLabel")
             return false
         }
         if (System.currentTimeMillis() > expiresAt + CLOCK_SKEW_MS) {
-            Log.w(TAG, "unlock request expired")
+            Log.w(TAG, "event=unlock_request_rejected reason=expired mac=$macLabel")
             return false
         }
         val sessionId = try { UnlockProtocol.unb64(sessionIdB64) } catch (_: Exception) { return false }
@@ -103,18 +105,22 @@ object UnlockController {
 
         // Authenticate the requesting Mac: a rogue BLE device cannot produce this.
         if (!verifyMacSignature(mac.publicKeyB64, transcriptReq, macSigB64)) {
-            Log.w(TAG, "mac request signature invalid")
+            Log.w(TAG, "event=unlock_request_rejected reason=invalid_mac_signature mac=$macLabel")
             return false
         }
 
-        // A biometric enrollment change invalidates the Keystore key. Posting a
-        // notification in that state only opens an activity that cannot sign.
-        if (PairingController.needsKeyMigration(context) ||
-            !AndroidKeyStore.isUnlockKeyUsable(mac.keyAlias)) {
-            Log.w(TAG, "unlock key missing/invalidated or old policy; forcing re-pair")
-            requireRepair(context, macId)
-            return false
+        // Never revoke trust from this pre-notification path. Keystore calls can
+        // fail transiently while the phone is locked; UnlockActivity performs
+        // the real key check and asks for a re-pair only after the user acts.
+        if (!AndroidKeyStore.isUnlockKeyPresent(mac.keyAlias)) {
+            Log.w(TAG, "event=unlock_key_unreadable mac=$macLabel; deferring check")
         }
+        val authBound = AndroidKeyStore.requiresUserAuthentication(mac.keyAlias)
+        Log.d(
+            TAG,
+            "event=unlock_key_state mac=$macLabel present=" +
+                "${AndroidKeyStore.isUnlockKeyPresent(mac.keyAlias)} authBound=$authBound",
+        )
 
         pending = Pending(
             macId = macId,
@@ -126,6 +132,7 @@ object UnlockController {
             keyAlias = mac.keyAlias,
         )
         UnlockNotification.post(context, mac.name)
+        Log.d(TAG, "event=unlock_prompt_posted mac=$macLabel")
         return true
     }
 
@@ -150,9 +157,10 @@ object UnlockController {
         TrustedMacStore.markAuthorized(context, p.macId)
         return try {
             GattServerManager.getInstance(context).sendNotificationToMac(payload)
+            Log.d(TAG, "event=unlock_auth_response_sent mac=${p.macId.take(8)}")
             true
         } catch (e: Exception) {
-            Log.e(TAG, "failed to send AUTH_RESPONSE: ${e.message}")
+            Log.e(TAG, "event=unlock_auth_response_failed error=${e.message}")
             false
         }
     }
@@ -160,6 +168,7 @@ object UnlockController {
     /** The unlock key is missing/invalidated: drop trust and ask for a fresh
      *  pairing (the Mac will send PAIR_BEGIN; the new key is provisioned then). */
     fun requireRepair(context: Context, macId: String) {
+        Log.w(TAG, "event=require_repair mac=${macId.take(8)}")
         pending = null
         TrustedMacStore.setTrusted(context, macId, false)
         UnlockNotification.dismiss(context)

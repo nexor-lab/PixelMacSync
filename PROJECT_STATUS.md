@@ -1,8 +1,30 @@
 # PROJECT_STATUS.md — PixelMacSync macOS 12.7 / Intel port
 
-Last updated: 2026-10-18 (v2.3-beta.3 published; **current focus: iOS**)
-Branch: `macos12-port` — **v2.3-beta.3** (`3500ca8`, pushed)
-State: Beta; Android/macOS stable; iOS Face ID unlock diagnostics pending
+Last updated: 2026-11-14 (v2.4.0 release prepared; remote-unlock regression fixed)
+Branch: `macos12-port` — **v2.4.0 (5)**
+State: Release; Android and macOS 2.4.0 tested; iOS excluded from this release
+
+## 2026-11-14 — remote unlock, Pixel-style UI and debug pipeline
+- Root cause: the unlock key is still auth-bound, but the 2026-11-06 change
+  removed `BiometricPrompt.CryptoObject(signature)`. Biometric auth succeeded,
+  then `sign()` failed with `KEY_USER_NOT_AUTHENTICATED` and forced a re-pair.
+- Restored the CryptoObject binding. Existing auth-bound keys and the current
+  non-auth-bound policy are both supported without forcing a re-pair.
+- Keystore errors are classified as permanent vs temporary; transient provider
+  failures no longer revoke trust. PAM trust mismatch blocks unlock requests.
+- Real locked-screen test passed: `loginwindow` -> signed UNLOCK_REQUEST ->
+  Android biometric success -> phone signature -> Mac verification -> grant
+  consumed by PAM -> Codex session restored.
+- Android UI is now Pixel/Material-You style: dynamic color, three-tab bottom
+  navigation, compact device card, direct notification-app picker, centered
+  loading indicator (portrait + landscape), concurrent icon loading and cache;
+  disconnecting a Mac requires explicit secondary confirmation.
+- Mac popover is Pixel-aligned and compact (340x340): three-section navigation,
+  fully expanded controls, left-aligned advanced actions, no redundant
+  disclosure groups or oversized watermark.
+- Beta debug pipeline: `pixelsync://unlock/test`, `pixelsync://debug/status`,
+  `scripts/pixelsync_debug.sh` and sanitized log collection. `evidence/` is
+  ignored, and a local pre-push hook blocks GitHub sync until explicitly removed.
 
 ## 2026-11-05 — pairing/reconnect hardening + signed PAM grant
 - Pairing packets (`PAIR_REPLY/SESSION_PUB/CONFIRM`) were dropped by the
@@ -20,14 +42,19 @@ State: Beta; Android/macOS stable; iOS Face ID unlock diagnostics pending
 - `allowBackup=false`; Android in-app language (`跟随系统/简体中文/English`).
 - Verified: PAIR_DONE → SESSION_READY; reconnect after app restart ~2 s; idle
   CPU 0%; jank baseline 1.5%.
-- Remaining: commit/push, refresh release assets, revoke exposed GitHub token,
-  verify phone unlock with the new PAM module, iOS Face ID / new IPA.
+- Security: BLE commands are now session-gated (only HELLO/SESSION_*/PAIR_* pre-auth);
+  telemetry reads require the authenticated Mac; unsolicited SESSION_OK is rejected.
+- Stability: advertising continues while connected (avoids half-open invisibility);
+  cover cache pruned to 400 files; unlock expiry tolerates 60 s clock skew;
+  Mac warns when the PAM trust key needs resync.
+- Remaining: BLE link encryption (needs protocol v2), ACK/retry, iOS device-id/Face ID,
+  token revocation, re-pair + PAM resync test.
 
 ## 2026-10-18 — v2.3-beta.3 + iOS focus
 - Session auth everywhere; device-bound notifications; stable device-ID (manufacturer data) auto-reconnect.
 - Release `v2.3-beta.3`: APK 22:02 / DMG 21:55 / IPA 21:55.
 - iOS: session auth + manufacturer ad + iOS 27.x `CBUUID` crash fix; Face ID notification/UI fix
-  **uncommitted** (IPA 22:21 in `~/Desktop/PixelMacSync-Install`).
+  **uncommitted** (IPA 22:21 in `~/Documents/Pixelmacsync开发项目/安装包`).
 - Current blocker: iOS Face ID unlock of Mac unconfirmed. Exact test/log plan: `../../RESUME.md`.
 
 ## v2.2-beta publication + M4 verification — RESULT (2026-10-03)

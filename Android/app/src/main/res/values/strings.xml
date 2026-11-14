@@ -4,6 +4,15 @@
     <!-- Main screen -->
     <string name="device_label">MacBook Pro</string>
     <string name="requesting_permissions">Requesting Bluetooth permissions…</string>
+    <string name="nav_home">Home</string>
+    <string name="nav_notifications">Notifications</string>
+    <string name="nav_settings">Settings</string>
+    <string name="current_mac">Current Mac</string>
+    <string name="permission_gate_title">Bluetooth permission required</string>
+    <string name="permission_gate_subtitle">MacSync needs Bluetooth access to find and connect to your Mac.</string>
+    <string name="permission_gate_action">Grant access</string>
+    <string name="permission_gate_settings_action">Open system settings</string>
+    <string name="more_actions">More actions</string>
     <string name="settings">Settings</string>
     <string name="notifications">Notifications</string>
     <string name="notifications_subtitle">Sync notifications with the Mac</string>
@@ -28,8 +37,11 @@
     <string name="macs_title">Macs</string>
     <string name="macs_empty">No Mac has connected yet</string>
     <string name="mac_active">Active</string>
+    <string name="mac_connected">Connected</string>
     <string name="mac_connect">Connect</string>
     <string name="mac_disconnect">Disconnect</string>
+    <string name="mac_disconnect_confirm_title">Disconnect this Mac?</string>
+    <string name="mac_disconnect_confirm_text">%1$s will stop syncing notifications and media, and remote unlock will be unavailable until you reconnect.</string>
     <string name="mac_forget">Forget</string>
 
     <!-- Connection status -->
@@ -78,9 +90,6 @@
     <string name="about_crypto">Contacts are only sent when you select them; the Mac stores them AES-GCM encrypted with a key kept on that Mac (never in the Keychain, not synced to iCloud). Plaintext lives only in memory.</string>
     <string name="about_unlock_title">Remote unlock security</string>
     <string name="about_unlock">Unlock runs over BLE only — no cloud, no network. The phone proves identity with a fingerprint-gated Android Keystore ECDSA P-256 key signing a one-time 32-byte random challenge (SHA-256); the Mac verifies the signature against the paired public key, then authorizes the unlock through macOS PAM. The Mac password is never stored, transmitted, or typed.</string>
-    <string name="about_device_title">Device info (Beta only)</string>
-    <string name="about_device_android">Android device: %1$s · Android %2$s (API %3$d)</string>
-    <string name="about_device_mac">Mac: %1$s · %2$s</string>
     <string name="about_desc">MacSync mirrors your phone to the Mac over BLE: notifications, calls, hotspot, app icons and media controls — no cloud, no Wi-Fi.</string>
     <string name="about_version">Version %1$s</string>
     <string name="about_repo">GitHub repository</string>
@@ -136,6 +145,7 @@
     <string name="pair_screen_title">Mac pairing request</string>
     <string name="pair_screen_hint">Tap “Confirm pairing” and verify with your fingerprint to create the unlock key for this Mac.</string>
     <string name="unlock_key_invalid_repair">Fingerprint changed — re-pair required</string>
+    <string name="unlock_temporary_error">Could not unlock right now. Unlock the phone and try again.</string>
     <string name="pair_unlock_required_title">Unlock the phone to pair with %1$s</string>
     <string name="pair_unlock_required_text">The biometric key cannot be created while the phone is locked. Unlock it and reopen PixelMacSync.</string>
 </resources>

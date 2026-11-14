@@ -4,6 +4,15 @@
     <!-- 主界面 -->
     <string name="device_label">MacBook Pro</string>
     <string name="requesting_permissions">正在请求蓝牙权限…</string>
+    <string name="nav_home">首页</string>
+    <string name="nav_notifications">通知</string>
+    <string name="nav_settings">设置</string>
+    <string name="current_mac">当前 Mac</string>
+    <string name="permission_gate_title">需要蓝牙权限</string>
+    <string name="permission_gate_subtitle">MacSync 需要蓝牙权限才能发现并连接你的 Mac。</string>
+    <string name="permission_gate_action">授予权限</string>
+    <string name="permission_gate_settings_action">前往系统设置</string>
+    <string name="more_actions">更多操作</string>
     <string name="settings">设置</string>
     <string name="notifications">通知</string>
     <string name="notifications_subtitle">与 Mac 同步通知</string>
@@ -28,8 +37,11 @@
     <string name="macs_title">Mac 设备</string>
     <string name="macs_empty">还没有 Mac 连接过</string>
     <string name="mac_active">当前</string>
+    <string name="mac_connected">已连接</string>
     <string name="mac_connect">连接</string>
     <string name="mac_disconnect">断开</string>
+    <string name="mac_disconnect_confirm_title">断开这台 Mac？</string>
+    <string name="mac_disconnect_confirm_text">断开后将暂停与 %1$s 的通知和媒体同步，远程解锁也不可用；你可以随时重新连接。</string>
     <string name="mac_forget">删除</string>
 
     <!-- 连接状态 -->
@@ -78,9 +90,6 @@
     <string name="about_crypto">联系人仅在你勾选后才传输；Mac 端以 AES-GCM 加密保存，密钥只存于本机（不进钥匙串、不同步 iCloud），明文仅存在于内存。</string>
     <string name="about_unlock_title">远程解锁安全策略</string>
     <string name="about_unlock">解锁仅通过蓝牙（BLE）传输，无云端、无网络。手机以受指纹保护的 Android Keystore ECDSA P-256 私钥，对一次性 32 字节随机挑战做 SHA-256 签名；Mac 用配对时保存的公钥验签，再经 macOS PAM 授权解锁。全程不存储、不传输、不输入 Mac 密码。</string>
-    <string name="about_device_title">设备信息（仅 Beta）</string>
-    <string name="about_device_android">安卓设备：%1$s · Android %2$s（API %3$d）</string>
-    <string name="about_device_mac">Mac：%1$s · %2$s</string>
     <string name="about_desc">MacSync 通过 BLE 把手机镜像到 Mac：通知、来电、热点、应用图标与媒体控制——无云端、无需 Wi‑Fi。</string>
     <string name="about_version">版本 %1$s</string>
     <string name="about_repo">GitHub 仓库</string>
@@ -136,6 +145,7 @@
     <string name="pair_screen_title">Mac 配对请求</string>
     <string name="pair_screen_hint">点击“确认配对”并用指纹验证，即可与该 Mac 建立解锁密钥。</string>
     <string name="unlock_key_invalid_repair">指纹已变更，需要重新配对</string>
+    <string name="unlock_temporary_error">暂时无法完成解锁，请先解锁手机后重试</string>
     <string name="pair_unlock_required_title">解锁手机以与 %1$s 配对</string>
     <string name="pair_unlock_required_text">锁屏状态下无法生成指纹密钥。请解锁手机并重新打开 PixelMacSync。</string>
 </resources>

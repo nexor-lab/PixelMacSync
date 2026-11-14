@@ -32,6 +32,7 @@ final class UnlockManager {
 
     // UI callbacks (dispatched on the main queue).
     var onPairingStateChanged: ((Bool) -> Void)?   // active
+    var onPairReplySeen: (() -> Void)?
     var onPaired: ((TrustedPhone) -> Void)?
     var onUnlockGranted: (() -> Void)?
     var onUnlockFailed: ((String) -> Void)?
@@ -63,6 +64,11 @@ final class UnlockManager {
     var hasTrustedDevice: Bool { deviceStore.devices.contains { $0.enabled } }
     var macPublicKeyB64: String? { signingKey.publicKeyB64 }
     var isPairing: Bool { pairing != nil }
+    var debugStatus: String {
+        let trustedCount = deviceStore.devices.filter { $0.enabled }.count
+        return "sessionVerified=\(sessionVerified) pairing=\(pairing != nil) " +
+            "trusted=\(trustedCount) pendingNonce=\(pendingNonceMac != nil)"
+    }
 
     func resetSession() { sessionVerified = false; pendingNonceMac = nil }
 
@@ -193,6 +199,7 @@ final class UnlockManager {
 
         case .pairReply(let version, let phoneId, let phonePubB64, let phoneSessionPubB64):
             NSLog("PixelSync: PAIR_REPLY phone=\(phoneId) sessionPub=\(!phoneSessionPubB64.isEmpty)")
+            DispatchQueue.main.async { self.onPairReplySeen?() }
             guard version == UnlockProtocol.version, var state = pairing else { return true }
             state.phoneId = phoneId
             state.phonePubB64 = phonePubB64
@@ -200,6 +207,7 @@ final class UnlockManager {
             pairing = state
 
         case .pairSessionPub(let version, let phoneId, let sessionPubB64):
+            NSLog("PixelSync: PAIR_SESSION_PUB phone=\(phoneId)")
             guard version == UnlockProtocol.version, var state = pairing, state.phoneId == nil || state.phoneId == phoneId else { return true }
             state.phoneSessionPubB64 = sessionPubB64
             pairing = state
@@ -333,7 +341,10 @@ final class UnlockManager {
             NSLog("PixelSync: unlock skipped (\(reason)) — lid closed")
             return
         }
-        if !LockStateMonitor.isScreenLocked() {
+        // The menu-bar "Test unlock" action intentionally sends a request while
+        // the Mac is unlocked. All other triggers still require the lock screen;
+        // a grant is only usable by PAM when the screen is actually locked.
+        if reason != "manual", !LockStateMonitor.isScreenLocked() {
             NSLog("PixelSync: unlock skipped (\(reason)) — screen not locked")
             return
         }
@@ -345,6 +356,14 @@ final class UnlockManager {
         }
         guard let device = deviceStore.devices.first(where: { $0.enabled }) else {
             NSLog("PixelSync: unlock skipped (\(reason)) — no trusted phone")
+            DispatchQueue.main.async { self.onUnlockFailed?("no_trusted_device") }
+            return
+        }
+        guard AuthorizationBridge.shared.isProvisioned(
+            phoneId: device.id, publicKeyB64: device.publicKeyB64
+        ) else {
+            NSLog("PixelSync: unlock skipped (\(reason)) — PAM trust key not synced")
+            DispatchQueue.main.async { self.onUnlockFailed?("pam_not_synced") }
             return
         }
         let session = challengeManager.create(macId: macId)

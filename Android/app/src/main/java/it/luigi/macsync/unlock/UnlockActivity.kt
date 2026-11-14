@@ -2,6 +2,7 @@ package it.luigi.macsync.unlock
 
 import android.os.Bundle
 import android.util.Log
+import android.widget.Toast
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.core.content.ContextCompat
@@ -25,6 +26,7 @@ class UnlockActivity : FragmentActivity() {
 
         val pending = UnlockController.currentPending()
         if (pending == null) {
+            Log.d(tag, "event=unlock_activity_no_pending")
             finish()
             return
         }
@@ -32,28 +34,60 @@ class UnlockActivity : FragmentActivity() {
         val phoneId = TrustedMacStore.deviceId(this)
         val transcriptResp = UnlockProtocol.transcriptResponse(pending.transcriptRequest, phoneId)
 
-        val signature = AndroidKeyStore.initSignatureForAuth(pending.keyAlias)
-        if (signature == null) {
-            Log.w(tag, "signing key missing or invalidated; re-pair required")
-            UnlockController.requireRepair(this, pending.macId)
-            finish()
-            return
+        val signature = when (val result = AndroidKeyStore.initUnlockSignature(pending.keyAlias)) {
+            is AndroidKeyStore.UnlockSignatureResult.Ready -> result.signature
+            is AndroidKeyStore.UnlockSignatureResult.PermanentFailure -> {
+                Log.w(tag, "event=unlock_signature_init_failed permanent=true reason=${result.reason}")
+                UnlockController.requireRepair(this, pending.macId)
+                finish()
+                return
+            }
+            is AndroidKeyStore.UnlockSignatureResult.TemporaryFailure -> {
+                Log.w(tag, "event=unlock_signature_init_failed permanent=false reason=${result.reason}")
+                showTemporaryFailure()
+                finish()
+                return
+            }
         }
+        Log.d(
+            tag,
+            "event=biometric_prompt_open authBound=" +
+                "${AndroidKeyStore.requiresUserAuthentication(pending.keyAlias)} cryptoObject=true",
+        )
 
         val executor = ContextCompat.getMainExecutor(this)
         val callback = object : BiometricPrompt.AuthenticationCallback() {
             override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
-                val s = result.cryptoObject?.signature ?: signature
+                Log.d(
+                    tag,
+                    "event=biometric_success cryptoObject=${result.cryptoObject != null}",
+                )
+                val s = result.cryptoObject?.signature
+                if (s == null) {
+                    Log.w(tag, "event=unlock_signature_missing_crypto_object")
+                    showTemporaryFailure()
+                    finish()
+                    return
+                }
                 try {
                     val der = AndroidKeyStore.sign(s, transcriptResp)
+                    Log.d(tag, "event=unlock_signature_success")
                     UnlockController.onSigned(
                         this@UnlockActivity,
                         UnlockProtocol.b64(pending.sessionId),
                         UnlockProtocol.b64(der),
                     )
                 } catch (e: Exception) {
-                    Log.e(tag, "sign failed: ${e.message}")
-                    UnlockController.requireRepair(this@UnlockActivity, pending.macId)
+                    Log.e(
+                        tag,
+                        "event=unlock_signature_failed type=${e.javaClass.simpleName} " +
+                            "error=${e.message}",
+                    )
+                    if (AndroidKeyStore.isPermanentKeyFailure(e)) {
+                        UnlockController.requireRepair(this@UnlockActivity, pending.macId)
+                    } else {
+                        showTemporaryFailure()
+                    }
                 }
                 UnlockNotification.dismiss(this@UnlockActivity)
                 finish()
@@ -74,8 +108,16 @@ class UnlockActivity : FragmentActivity() {
             .setNegativeButtonText(getString(R.string.unlock_prompt_cancel))
             .build()
 
-        // The Keystore key is not auth-bound (see AndroidKeyStore.createKey);
-        // biometrics are enforced by this prompt, then we sign.
-        prompt.authenticate(info)
+        // Bind the signature to BiometricPrompt. This is required for legacy
+        // auth-bound Keystore keys (otherwise sign() fails with
+        // KEY_USER_NOT_AUTHENTICATED) and also remains valid for the current
+        // non-auth-bound key policy.
+        prompt.authenticate(info, BiometricPrompt.CryptoObject(signature))
+    }
+
+    private fun showTemporaryFailure() {
+        UnlockController.cancel()
+        UnlockNotification.dismiss(this)
+        Toast.makeText(this, R.string.unlock_temporary_error, Toast.LENGTH_LONG).show()
     }
 }

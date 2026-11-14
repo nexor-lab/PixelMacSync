@@ -27,7 +27,6 @@ object PairingController {
     private const val PREFS = "MacSync_Pair"
     private const val KEY_PENDING = "pending_v1"
     private const val KEY_PENDING_BEGIN = "pending_begin_v1"
-    private const val KEY_KEY_POLICY = "unlock_key_policy_v2"
 
     data class Pending(
         val macId: String,
@@ -94,12 +93,6 @@ object PairingController {
     }
 
     fun current(): Pending? = pending
-
-    /** Old installs used a biometric-bound Keystore key; the v2 policy signs
-     *  after an app-level biometric prompt instead. Force one re-pair to rotate. */
-    fun needsKeyMigration(context: Context): Boolean =
-        !context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getBoolean(KEY_KEY_POLICY, false)
 
     private fun savePendingBegin(context: Context, parts: List<String>) {
         val o = JSONObject()
@@ -184,15 +177,13 @@ object PairingController {
 
         val alias = keyAliasFor(macId)
         val sessionAlias = sessionAliasFor(macId)
-        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        val biometricKeyPolicy = prefs.getBoolean(KEY_KEY_POLICY, false)
         val phonePub: ByteArray?
         val phoneSessionPub: ByteArray?
         try {
-            // v2 policy: the key is NOT auth-bound (see AndroidKeyStore). The
-            // flag also migrates old auth-bound keys, which cannot be signed
-            // after the app-level biometric prompt.
-            if (!biometricKeyPolicy || !AndroidKeyStore.isUnlockKeyUsable(alias)) {
+            // Existing auth-bound keys remain valid via CryptoObject. Only
+            // create a key when the alias is genuinely absent.
+            if (!AndroidKeyStore.isUnlockKeyPresent(alias)) {
+                Log.i(TAG, "creating missing unlock key alias=$alias")
                 AndroidKeyStore.deleteKey(alias)
                 AndroidKeyStore.createKey(alias)
             }
@@ -213,7 +204,6 @@ object PairingController {
             savePendingBegin(context, parts)
             return false
         }
-        prefs.edit().putBoolean(KEY_KEY_POLICY, true).apply()
 
         val phoneId = TrustedMacStore.deviceId(context)
         // Split to stay under the 180-byte BLE notification cap: the two P-256

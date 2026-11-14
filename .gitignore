@@ -11,6 +11,7 @@ HUMAN_INTERVENTION_REQUIRED
 
 # Build artifacts
 Android/build/
+Android/.kotlin/
 Android/app/build/
 Android/notifytest/build/
 Android/local.properties
@@ -37,8 +38,10 @@ MacOS/pam/*.so
 
 # Local logs / test data
 *.log
+evidence/
 test-data/
 local-test-data/
+/scripts/
 
 # Secrets (never commit)
 .env

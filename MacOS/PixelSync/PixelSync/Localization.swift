@@ -251,6 +251,8 @@ enum L10n {
         case "session_invalid":   return t("Challenge expired or already used.", "挑战已过期或已使用。")
         case "device_revoked":    return t("This phone is no longer authorized.", "该手机已不再被授权。")
         case "no_trusted_device": return t("No trusted phone.", "没有受信任的手机。")
+        case "pam_not_synced":    return t("Sync the PAM key before using phone unlock.",
+                                          "请先同步 PAM 公钥，再使用手机解锁。")
         default:                  return t("Could not unlock.", "无法解锁。")
         }
     }

@@ -30,6 +30,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let popover = NSPopover()
     private let bleManager = BLEManager()
     private var cancellables = Set<AnyCancellable>()
+    private var testCommandsEnabled: Bool {
+        L10n.isBetaBuild ||
+            ProcessInfo.processInfo.environment["PIXELSYNC_ENABLE_TEST_COMMANDS"] == "1"
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Agent app: no Dock icon, no main menu window.
@@ -47,7 +51,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         // --- Popover hosting the SwiftUI ContentView ---
-        popover.contentSize = NSSize(width: 320, height: 200)
+        popover.contentSize = NSSize(width: 340, height: 340)
         popover.behavior = .transient
         popover.animates = false
         popover.contentViewController = NSHostingController(
@@ -141,6 +145,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             bleManager.manualReconnect()
         case "pair":
             bleManager.unlockManager.beginPairing(force: true)
+        case "unlock":
+            // Beta-only automation hook. It sends the same authenticated
+            // UNLOCK_REQUEST as the menu action but does not require lock screen.
+            if testCommandsEnabled, action == "test" {
+                bleManager.unlockManager.triggerUnlock(reason: "manual")
+            }
+        case "debug":
+            if testCommandsEnabled, action == "status" {
+                bleManager.logDebugStatus()
+            }
         case "login":
             LoginItem.setEnabled(action == "on")
         case "reply":
@@ -169,7 +183,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if popover.isShown {
             popover.performClose(sender)
         } else {
-            popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
+            popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .maxY)
             popover.contentViewController?.view.window?.makeKey()
             NSApp.activate(ignoringOtherApps: true)
         }

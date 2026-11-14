@@ -1,8 +1,23 @@
 import SwiftUI
 import AppKit
 
+private enum PopoverSection: String, CaseIterable {
+    case devices
+    case media
+    case settings
+
+    var title: String {
+        switch self {
+        case .devices: return L10n.t("Device", "设备")
+        case .media: return L10n.t("Media", "媒体")
+        case .settings: return L10n.t("Settings", "设置")
+        }
+    }
+}
+
 struct ContentView: View {
     @ObservedObject var bleManager: BLEManager
+    @State private var selectedSection: PopoverSection = .devices
     
     // Funzione di supporto corretta per l'icona della batteria
     var batteryIconName: String {
@@ -25,184 +40,305 @@ struct ContentView: View {
     }
     
     var body: some View {
-      ZStack {
-        VStack(spacing: 16) {
-            
-            // --- SEZIONE 1: STATO CONNESSIONE E DISPOSITIVO ---
-            HStack {
-                if bleManager.isSwitchedOn && bleManager.isConnected {
-                    Image(systemName: "iphone")
-                        .foregroundColor(.primary)
-                } else {
-                    // ICONA ANTENNA CLICCABILE
-                    Image(systemName: bleManager.isSwitchedOn ? "antenna.radiowaves.left.and.right" : "antenna.radiowaves.left.and.right.slash")
-                        .foregroundColor(bleManager.isSwitchedOn ? .accentColor : .red)
-                        .onTapGesture {
-                            if bleManager.isSwitchedOn {
-                                // Manual re-handshake: resets the auto-reconnect budget.
-                                bleManager.reconnectNow(reason: "manual-antenna")
-                            }
-                        }
-                        .help(bleManager.isSwitchedOn ? L10n.reconnectTooltip : L10n.bluetoothOffTooltip)
-                }
-                
-                Text(bleManager.isConnected ? bleManager.deviceName : bleManager.connectionStatus)
-                    .font(.headline)
-                    .fixedSize(horizontal: true, vertical: false)
-                if !bleManager.isConnected {
-                    if bleManager.isLinkConnected {
-                        Button(L10n.t("Pair", "配对")) { bleManager.unlockManager.beginPairing(force: true) }
-                            .font(.caption2).buttonStyle(.link)
-                    }
-                }
-                
-                Spacer()
-                
-                if bleManager.isConnected {
+        ZStack {
+            VStack(spacing: 0) {
+                header
+                    .padding(.horizontal, 16)
+                    .padding(.top, 14)
+                    .padding(.bottom, 12)
 
-                    // Segnale di Rete
-                    HStack(spacing: 4) {
-                        Text(bleManager.networkType).font(.system(size: 10, weight: .bold)).foregroundColor(.secondary).lineLimit(1).minimumScaleFactor(0.6)
-                        
-                        if bleManager.isWifi {
-                            Image(systemName: "wifi")
-                                .foregroundColor(.primary)
-                        }
-                        
-                        if #available(macOS 13.0, *) {
-                            Image(systemName: "cellularbars", variableValue: Double(bleManager.signalStrength) / 4.0)
-                                .foregroundColor(.primary)
-                        } else {
-                            Image(systemName: "cellularbars")
-                                .foregroundColor(.primary)
-                        }
+                if bleManager.connectionState == .needsUnpair {
+                    Text(L10n.unpairHint)
+                        .font(.caption2)
+                        .foregroundColor(.orange)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 8)
+                }
+
+                if bleManager.callPhase != .none {
+                    callPanel
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 10)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
+
+                if bleManager.pamTrustNeedsSync {
+                    pamWarning
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 10)
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                }
+
+                Divider()
+
+                Picker("", selection: $selectedSection) {
+                    ForEach(PopoverSection.allCases, id: \.self) { section in
+                        Text(section.title).tag(section)
                     }
-                    
-                    // Batteria
-                    HStack(spacing: 4) {
-                        Text(bleManager.batteryLevel)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+
+                ScrollView {
+                    selectedContent
+                        .id(selectedSection)
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 16)
+                        .transition(.opacity)
+                }
+                .frame(maxHeight: .infinity)
+            }
+            .frame(width: 340, height: 340)
+            .animation(.easeInOut(duration: 0.22), value: selectedSection)
+            .animation(.easeInOut(duration: 0.20), value: bleManager.callPhase)
+            .animation(.easeInOut(duration: 0.20), value: bleManager.isConnected)
+            .animation(.easeInOut(duration: 0.20), value: bleManager.hotspotState)
+
+        }
+    }
+
+    private var statusColor: Color {
+        if bleManager.isConnected { return .green }
+        if bleManager.isSwitchedOn { return .orange }
+        return .red
+    }
+
+    private var header: some View {
+        HStack(spacing: 10) {
+            ZStack {
+                Circle()
+                    .fill(statusColor.opacity(0.14))
+                    .frame(width: 38, height: 38)
+                Image(systemName: bleManager.isConnected ? "iphone" : "antenna.radiowaves.left.and.right")
+                    .foregroundColor(statusColor)
+            }
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(
+                    bleManager.isConnected
+                        ? (bleManager.selectedPhoneName ?? bleManager.deviceName)
+                        : L10n.appName
+                )
+                    .font(.headline)
+                    .lineLimit(1)
+                HStack(spacing: 4) {
+                    Circle().fill(statusColor).frame(width: 6, height: 6)
+                    Text(bleManager.isConnected ? L10n.state(.connected) : bleManager.connectionStatus)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                }
+            }
+
+            Spacer(minLength: 6)
+
+            if bleManager.isConnected {
+                HStack(spacing: 8) {
+                    HStack(spacing: 3) {
+                        Text(bleManager.networkType)
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundColor(.secondary)
+                        Image(systemName: bleManager.isWifi ? "wifi" : "cellularbars")
                             .font(.caption)
-                            .monospacedDigit().fixedSize(horizontal: true, vertical: false)
-                        
+                    }
+                    HStack(spacing: 3) {
+                        Text(bleManager.batteryLevel)
+                            .font(.caption2)
+                            .monospacedDigit()
                         Image(systemName: batteryIconName)
                             .symbolRenderingMode(.hierarchical)
-                            .foregroundColor(bleManager.isCharging ? .green : (levelColor(for: bleManager.batteryLevel)))
-                    }
-                    .padding(.leading, 4)
-                }
-            }
-            
-            if bleManager.connectionState == .needsUnpair {
-                Text(L10n.unpairHint)
-                    .font(.caption2).foregroundColor(.orange)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            if !bleManager.isConnected {
-                NearbyPhonesCard(bleManager: bleManager)
-            }
-
-            Divider()
-
-            // --- CALL CONTROL (only while a call is ringing/active) ---
-            if bleManager.callPhase != .none {
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 8) {
-                        Image(systemName: "phone.fill")
-                            .foregroundColor(.accentColor)
-                        Text(callTitle)
-                            .font(.subheadline)
-                        Spacer()
-                        if bleManager.callPhase == .ringing {
-                            Button(L10n.callAnswer) { bleManager.callAnswer() }
-                            Button(L10n.callReject) { bleManager.callEnd() }
-                        } else {
-                            Button(bleManager.callMuted ? L10n.callUnmute : L10n.callMute) {
-                                bleManager.callMuteToggle()
-                            }
-                            Button(L10n.callHangUp) { bleManager.callEnd() }
-                        }
-                    }
-                    if !bleManager.callNumber.isEmpty {
-                        Text(bleManager.callNumber)
-                            .font(.title3).fontWeight(.semibold)
-                            .lineLimit(1)
+                            .foregroundColor(
+                                bleManager.isCharging
+                                    ? .green
+                                    : levelColor(for: bleManager.batteryLevel)
+                            )
                     }
                 }
-                .transition(.move(edge: .top).combined(with: .opacity))
-                Divider()
-            }
-
-            // --- SEZIONE 2: HOTSPOT REMOTO (controllo reale via BLE + Root) ---
-            if bleManager.isIPhone {
-                UnavailableOnIOS(title: L10n.remoteHotspot, icon: "personalhotspot")
             } else {
-                HStack(spacing: 8) {
-                    Image(systemName: "personalhotspot")
-                        .foregroundColor(bleManager.hotspotState == .on ? .accentColor : .secondary)
-                    Text(L10n.remoteHotspot)
-                        .font(.subheadline)
-                    Spacer()
-                    if bleManager.isConnected {
-                        Text(bleManager.hotspotStateText)
-                            .font(.caption)
-                            .foregroundColor(bleManager.hotspotState == .error ? .red : .secondary)
+                Button {
+                    bleManager.reconnectNow(reason: "header")
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .buttonStyle(.borderless)
+                .disabled(!bleManager.isSwitchedOn)
+                .help(L10n.reconnectTooltip)
+            }
+        }
+    }
+
+    private var callPanel: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 8) {
+                Image(systemName: "phone.fill")
+                    .foregroundColor(.accentColor)
+                Text(callTitle)
+                    .font(.subheadline)
+                Spacer()
+                if bleManager.callPhase == .ringing {
+                    Button(L10n.callAnswer) { bleManager.callAnswer() }
+                    Button(L10n.callReject) { bleManager.callEnd() }
+                } else {
+                    Button(bleManager.callMuted ? L10n.callUnmute : L10n.callMute) {
+                        bleManager.callMuteToggle()
                     }
-                    Button(bleManager.hotspotState == .on ? L10n.hotspotTurnOff : L10n.hotspotTurnOn) {
-                        bleManager.setRemoteHotspot(enable: bleManager.hotspotState != .on)
-                    }
-                    .disabled(!bleManager.isConnected || bleManager.hotspotBusy)
+                    Button(L10n.callHangUp) { bleManager.callEnd() }
                 }
             }
+            if !bleManager.callNumber.isEmpty {
+                Text(bleManager.callNumber)
+                    .font(.title3)
+                    .fontWeight(.semibold)
+                    .lineLimit(1)
+            }
+        }
+        .padding(12)
+        .background(Color.accentColor.opacity(0.08))
+        .cornerRadius(12)
+    }
 
-            Divider()
+    private var pamWarning: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.shield.fill")
+                .foregroundColor(.orange)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(L10n.t("PAM key needs sync", "PAM 公钥需要同步"))
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                Text(L10n.t("Phone unlock is blocked until the key is synced.",
+                            "同步公钥前，手机解锁会被阻止。"))
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
+            Spacer()
+            Button(L10n.t("Sync", "同步")) {
+                bleManager.syncPamTrust { _, _ in }
+            }
+            .font(.caption)
+            .buttonStyle(.bordered)
+        }
+        .padding(10)
+        .background(Color.orange.opacity(0.09))
+        .cornerRadius(10)
+    }
 
-            // --- SEZIONE 3: MUSICA (controllo MediaSession via BLE) ---
+    @ViewBuilder
+    private var selectedContent: some View {
+        switch selectedSection {
+        case .devices:
+            VStack(spacing: 14) {
+                if !bleManager.isConnected {
+                    NearbyPhonesCard(bleManager: bleManager)
+                }
+                if bleManager.isIPhone {
+                    UnavailableOnIOS(title: L10n.remoteHotspot, icon: "personalhotspot")
+                    UnavailableOnIOS(title: L10n.t("Dialing", "拨号"), icon: "phone")
+                } else {
+                    HotspotControlView(bleManager: bleManager)
+                    Divider()
+                    CollapsibleDial(bleManager: bleManager)
+                }
+                UnlockQuickCard(bleManager: bleManager) {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        selectedSection = .settings
+                    }
+                }
+            }
+        case .media:
             if bleManager.isIPhone {
                 UnavailableOnIOS(title: L10n.t("Music", "音乐"), icon: "music.note")
             } else {
                 MusicControlView(bleManager: bleManager)
             }
-
-            Divider()
-
-            // --- SEZIONE 4: DIAL (remote dialing + synced contacts) ---
-            // Grouped to stay within SwiftUI's 10-view ViewBuilder limit.
-            Group {
-                if bleManager.isIPhone {
-                    UnavailableOnIOS(title: L10n.t("Dialing", "拨号"), icon: "phone")
-                } else {
-                    CollapsibleDial(bleManager: bleManager)
-                }
-
-                Divider()
-
-                // --- SEZIONE 5: PHONE BIOMETRIC UNLOCK ---
-                UnlockPanel(bleManager: bleManager)
-            }
-
+        case .settings:
+            UnlockPanel(bleManager: bleManager)
         }
-        .padding(16)
-        .frame(width: 320)
-        .animation(.easeInOut(duration: 0.25), value: bleManager.callPhase)
-        .animation(.easeInOut(duration: 0.25), value: bleManager.isConnected)
-        .animation(.easeInOut(duration: 0.20), value: bleManager.hotspotState)
-
-        if !L10n.buildWatermark.isEmpty {
-            Text(L10n.buildWatermark)
-                .font(.system(size: 26, weight: .black))
-                .foregroundColor(.red.opacity(0.16))
-                .multilineTextAlignment(.center)
-                .rotationEffect(.degrees(-30))
-                .allowsHitTesting(false)
-        }
-      }
     }
     
     func levelColor(for levelStr: String) -> Color {
         let level = Int(levelStr.replacingOccurrences(of: "%", with: "")) ?? 50
         if level <= 20 { return .red }
         return .primary
+    }
+}
+
+private struct HotspotControlView: View {
+    @ObservedObject var bleManager: BLEManager
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "personalhotspot")
+                .foregroundColor(bleManager.hotspotState == .on ? .accentColor : .secondary)
+                .frame(width: 24)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(L10n.remoteHotspot)
+                    .font(.subheadline)
+                if bleManager.isConnected {
+                    Text(bleManager.hotspotStateText)
+                        .font(.caption2)
+                        .foregroundColor(bleManager.hotspotState == .error ? .red : .secondary)
+                }
+            }
+            Spacer()
+            Button(bleManager.hotspotState == .on ? L10n.hotspotTurnOff : L10n.hotspotTurnOn) {
+                bleManager.setRemoteHotspot(enable: bleManager.hotspotState != .on)
+            }
+            .disabled(!bleManager.isConnected || bleManager.hotspotBusy)
+        }
+        .padding(12)
+        .background(Color.secondary.opacity(0.07))
+        .cornerRadius(12)
+    }
+}
+
+private struct UnlockQuickCard: View {
+    @ObservedObject var bleManager: BLEManager
+    let onManage: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "faceid")
+                .foregroundColor(bleManager.pamTrustNeedsSync ? .orange : .accentColor)
+                .frame(width: 24)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(L10n.trustedDevices)
+                    .font(.subheadline)
+                if bleManager.trustedPhones.isEmpty {
+                    Text(L10n.noTrustedDevice)
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                } else if bleManager.pamTrustNeedsSync {
+                    Text(L10n.t("PAM key needs sync", "PAM 公钥需要同步"))
+                        .font(.caption2)
+                        .foregroundColor(.orange)
+                } else {
+                    Text(L10n.t("Ready for phone unlock", "手机解锁已就绪"))
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+            }
+            Spacer()
+            if bleManager.trustedPhones.isEmpty {
+                Button(L10n.addDevice) {
+                    bleManager.unlockManager.beginPairing()
+                }
+                .disabled(!bleManager.isLinkConnected)
+            } else if bleManager.pamTrustNeedsSync {
+                Button(L10n.t("Sync", "同步")) {
+                    bleManager.syncPamTrust { _, _ in }
+                }
+                .buttonStyle(.borderedProminent)
+            } else {
+                Button(L10n.t("Manage", "管理"), action: onManage)
+                    .buttonStyle(.bordered)
+            }
+        }
+        .padding(12)
+        .background(Color.secondary.opacity(0.07))
+        .cornerRadius(12)
     }
 }
 
@@ -215,7 +351,6 @@ struct MusicControlView: View {
     @State private var dragSeconds: Double = 0
     @State private var isDraggingVolume = false
     @State private var dragVolume: Double = 0
-    @State private var expanded = false
 
     private var durationSeconds: Double {
         max(1, Double(bleManager.music.durationMs) / 1000.0)
@@ -235,9 +370,20 @@ struct MusicControlView: View {
     }
 
     var body: some View {
-        DisclosureGroup(isExpanded: $expanded) {
-            VStack(alignment: .leading, spacing: 8) {
-                if bleManager.isConnected && bleManager.music.hasTrack {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "music.note")
+                    .foregroundColor(bleManager.music.isPlaying ? .accentColor : .secondary)
+                Text(L10n.music).font(.subheadline)
+                Spacer()
+                if !bleManager.isConnected {
+                    Text(L10n.musicUnavailable).font(.caption).foregroundColor(.secondary)
+                } else if bleManager.music.stopped || !bleManager.music.hasTrack {
+                    Text(L10n.musicNoTrack).font(.caption).foregroundColor(.secondary)
+                }
+            }
+
+            if bleManager.isConnected && bleManager.music.hasTrack {
                 HStack(spacing: 10) {
                     coverImage
                     VStack(alignment: .leading, spacing: 2) {
@@ -335,21 +481,9 @@ struct MusicControlView: View {
                 }
             }
         }
-        } label: {
-            HStack(spacing: 8) {
-                Image(systemName: "music.note")
-                    .foregroundColor(bleManager.music.isPlaying ? .accentColor : .secondary)
-                Text(L10n.music).font(.subheadline)
-                Spacer()
-                if !bleManager.isConnected {
-                    Text(L10n.musicUnavailable).font(.caption).foregroundColor(.secondary)
-                } else if bleManager.music.stopped || !bleManager.music.hasTrack {
-                    Text(L10n.musicNoTrack).font(.caption).foregroundColor(.secondary)
-                }
-            }
-        }
-        .onAppear { expanded = bleManager.music.isPlaying }
-        .onChange(of: bleManager.music.isPlaying) { playing in expanded = playing }
+        .padding(12)
+        .background(Color.secondary.opacity(0.07))
+        .cornerRadius(12)
     }
 
     @ViewBuilder
@@ -571,15 +705,8 @@ struct DialView: View {
 struct UnlockPanel: View {
     @ObservedObject var bleManager: BLEManager
     @State private var awayDelay: Double = 20
-    @State private var trustedExpanded = false
     @State private var pamSyncing = false
     @State private var pamSyncMessage: String?
-
-    private var needsPamSync: Bool {
-        bleManager.trustedPhones.contains {
-            !AuthorizationBridge.shared.isProvisioned(phoneId: $0.id, publicKeyB64: $0.publicKeyB64)
-        }
-    }
 
     init(bleManager: BLEManager) {
         self.bleManager = bleManager
@@ -589,17 +716,43 @@ struct UnlockPanel: View {
 
     @ViewBuilder
     private func trustedRow(_ device: TrustedPhone) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: "iphone").font(.caption).foregroundColor(.secondary)
-            Text(device.name).font(.caption).lineLimit(1).truncationMode(.middle)
-            Spacer()
-            Text(device.enabled ? L10n.deviceAuthorized : L10n.deviceRevoked)
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 6) {
+                Image(systemName: "iphone").font(.caption).foregroundColor(.secondary)
+                Text(device.name).font(.caption).lineLimit(1).truncationMode(.middle)
+                Spacer()
+                Text(device.enabled ? L10n.deviceAuthorized : L10n.deviceRevoked)
+                    .font(.caption2)
+                    .foregroundColor(device.enabled ? .green : .secondary)
+                Button(L10n.revoke) { bleManager.unlockManager.revoke(device.id) }
+                    .font(.caption2)
+            }
+            Text(trustedDeviceDetail(device))
                 .font(.caption2)
-                .foregroundColor(device.enabled ? .green : .secondary)
-            Button(L10n.revoke) { bleManager.unlockManager.revoke(device.id) }
-                .font(.caption2)
+                .foregroundColor(.secondary)
+                .lineLimit(1)
         }
     }
+
+    private func trustedDeviceDetail(_ device: TrustedPhone) -> String {
+        let suffix = String(device.id.suffix(6))
+        let lastUsed: String
+        if let date = device.lastAuthAt {
+            lastUsed = L10n.t(
+                "Last unlock \(Self.trustedDateFormatter.string(from: date))",
+                "最近解锁 \(Self.trustedDateFormatter.string(from: date))"
+            )
+        } else {
+            lastUsed = L10n.t("Never unlocked", "尚未用于解锁")
+        }
+        return "\(lastUsed) · ID …\(suffix)"
+    }
+
+    private static let trustedDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy/MM/dd HH:mm"
+        return formatter
+    }()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -618,11 +771,19 @@ struct UnlockPanel: View {
             } else if bleManager.trustedPhones.count == 1 {
                 trustedRow(bleManager.trustedPhones[0])
             } else {
-                DisclosureGroup(isExpanded: $trustedExpanded) {
-                    ForEach(bleManager.trustedPhones, id: \.id) { trustedRow($0) }
-                } label: {
-                    Text("\(L10n.trustedDevices) (\(bleManager.trustedPhones.count))")
-                        .font(.caption)
+                if duplicateTrustedNames {
+                    Label(
+                        L10n.t(
+                            "Duplicate names: use the last-unlock time and ID suffix to revoke old records.",
+                            "存在同名设备：请根据最近解锁时间和标识后缀清理旧记录。"
+                        ),
+                        systemImage: "exclamationmark.triangle"
+                    )
+                    .font(.caption2)
+                    .foregroundColor(.orange)
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(sortedTrustedPhones, id: \.id) { trustedRow($0) }
                 }
             }
 
@@ -657,17 +818,10 @@ struct UnlockPanel: View {
             }
 
             if !bleManager.trustedPhones.isEmpty {
-                Button(L10n.testUnlock) {
-                    bleManager.unlockManager.triggerUnlock(reason: "manual")
-                }
-                .font(.caption)
-            }
-
-            if !bleManager.trustedPhones.isEmpty {
-                HStack(spacing: 8) {
+                if bleManager.pamTrustNeedsSync {
                     Button(pamSyncing
                            ? L10n.t("Syncing…", "同步中…")
-                           : L10n.t("Sync PAM key", "同步 PAM 公钥")) {
+                           : L10n.t("Sync PAM key now", "立即同步 PAM 公钥")) {
                         pamSyncing = true
                         pamSyncMessage = nil
                         bleManager.syncPamTrust { ok, message in
@@ -676,16 +830,10 @@ struct UnlockPanel: View {
                                 : L10n.t("Sync failed: ", "同步失败：") + message
                         }
                     }
-                    .font(.caption)
+                    .buttonStyle(.borderedProminent)
                     .disabled(pamSyncing)
-
-                    if needsPamSync {
-                        Text(L10n.t("Needs sync", "需要同步"))
-                            .font(.caption2)
-                            .foregroundColor(.orange)
-                    }
-                    Spacer()
                 }
+
                 if let message = pamSyncMessage {
                     Text(message)
                         .font(.caption2)
@@ -694,13 +842,64 @@ struct UnlockPanel: View {
                 }
             }
 
-            if !bleManager.unlockPluginInstalled {
-                Text(L10n.t("Unlock helper not installed (password still works).",
-                            "解锁组件未安装（密码仍可用）。"))
-                    .font(.caption2).foregroundColor(.orange)
-                    .fixedSize(horizontal: false, vertical: true)
+            if !bleManager.trustedPhones.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(L10n.t("Advanced", "高级"))
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    Button(L10n.testUnlock) {
+                        bleManager.unlockManager.triggerUnlock(reason: "manual")
+                    }
+                    .font(.caption)
+                    .buttonStyle(.link)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                    if !bleManager.pamTrustNeedsSync {
+                        Button(pamSyncing
+                               ? L10n.t("Syncing…", "同步中…")
+                               : L10n.t("Sync PAM key", "同步 PAM 公钥")) {
+                            pamSyncing = true
+                            pamSyncMessage = nil
+                            bleManager.syncPamTrust { ok, message in
+                                pamSyncing = false
+                                pamSyncMessage = ok ? message
+                                    : L10n.t("Sync failed: ", "同步失败：") + message
+                            }
+                        }
+                        .font(.caption)
+                        .buttonStyle(.link)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .disabled(pamSyncing)
+                    }
+
+                    if !bleManager.unlockPluginInstalled {
+                        Text(L10n.t("Unlock helper not installed (password still works).",
+                                    "解锁组件未安装（密码仍可用）。"))
+                            .font(.caption2)
+                            .foregroundColor(.orange)
+                            .multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+                .padding(.top, 4)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
+    }
+
+    private var sortedTrustedPhones: [TrustedPhone] {
+        bleManager.trustedPhones.sorted {
+            ($0.lastAuthAt ?? .distantPast) > ($1.lastAuthAt ?? .distantPast)
+        }
+    }
+
+    private var duplicateTrustedNames: Bool {
+        Dictionary(grouping: bleManager.trustedPhones, by: \.name)
+            .values
+            .contains { $0.count > 1 }
     }
 }
 
@@ -709,18 +908,9 @@ struct UnlockPanel: View {
 struct UnavailableOnIOS: View {
     let title: String
     let icon: String
-    @State private var expanded = false
 
     var body: some View {
-        DisclosureGroup(isExpanded: $expanded) {
-            Text(L10n.t("This feature is not available when the connected phone is an iPhone (iOS system limitation).",
-                        "连接 iPhone 时该功能不可用（iOS 系统限制）。"))
-                .font(.caption2)
-                .foregroundColor(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.top, 4)
-        } label: {
+        VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
                 Image(systemName: icon).foregroundColor(.secondary)
                 Text(title).font(.subheadline)
@@ -728,6 +918,12 @@ struct UnavailableOnIOS: View {
                 Text(L10n.t("Not on iOS", "iOS 不支持"))
                     .font(.caption2).foregroundColor(.orange)
             }
+            Text(L10n.t("This feature is not available when the connected phone is an iPhone (iOS system limitation).",
+                        "连接 iPhone 时该功能不可用（iOS 系统限制）。"))
+                .font(.caption2)
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 }
@@ -735,68 +931,46 @@ struct UnavailableOnIOS: View {
 
 struct CollapsibleDial: View {
     @ObservedObject var bleManager: BLEManager
-    @State private var expanded = false
 
     var body: some View {
-        DisclosureGroup(isExpanded: $expanded) {
-            DialView(bleManager: bleManager)
-        } label: {
-            HStack(spacing: 8) {
-                Image(systemName: "phone").foregroundColor(.secondary)
-                Text(L10n.t("Dialing", "拨号")).font(.subheadline)
-                Spacer()
-            }
-        }
+        DialView(bleManager: bleManager)
     }
 }
 
 
 struct NearbyPhonesCard: View {
     @ObservedObject var bleManager: BLEManager
-    @State private var expanded: Bool
-
-    init(bleManager: BLEManager) {
-        self.bleManager = bleManager
-        _expanded = State(initialValue: bleManager.trustedPhones.isEmpty)
-    }
 
     var body: some View {
-        DisclosureGroup(isExpanded: $expanded) {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack {
-                    Spacer()
-                    Button(L10n.t("Refresh", "刷新")) { bleManager.rescan() }
-                        .font(.caption2).buttonStyle(.link)
-                }
-                if bleManager.discoveredPhones.isEmpty {
-                    Text(L10n.t("Scanning…", "正在扫描…")).font(.caption).foregroundColor(.secondary)
-                } else {
-                    ForEach(bleManager.discoveredPhones) { phone in
-                        HStack(spacing: 6) {
-                            Image(systemName: "iphone").font(.caption).foregroundColor(.secondary)
-                            Text(phone.name).font(.caption).lineLimit(1).truncationMode(.middle)
-                            Text("\(phone.rssi) dBm").font(.caption2).foregroundColor(.secondary)
-                            Spacer()
-                            if bleManager.selectedPhoneId == phone.id && bleManager.connectionState != .connected {
-                                ProgressView().controlSize(.small)
-                            } else {
-                                Button(L10n.t("Connect", "连接")) { bleManager.selectPhone(phone) }
-                                    .font(.caption2)
-                            }
-                        }
-                    }
-                }
-                if bleManager.needingRepair && bleManager.isLinkConnected {
-                    Button(L10n.t("Pair again", "重新配对")) { bleManager.unlockManager.beginPairing(force: true) }
-                        .font(.caption2).buttonStyle(.link)
-                }
-            }
-            .padding(.top, 4)
-        } label: {
+        VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 Image(systemName: "dot.radiowaves.left.and.right").foregroundColor(.accentColor)
                 Text(L10n.t("Nearby phones", "附近的手机")).font(.subheadline)
                 Spacer()
+                Button(L10n.t("Refresh", "刷新")) { bleManager.rescan() }
+                    .font(.caption2).buttonStyle(.link)
+            }
+            if bleManager.discoveredPhones.isEmpty {
+                Text(L10n.t("Scanning…", "正在扫描…")).font(.caption).foregroundColor(.secondary)
+            } else {
+                ForEach(bleManager.discoveredPhones) { phone in
+                    HStack(spacing: 6) {
+                        Image(systemName: "iphone").font(.caption).foregroundColor(.secondary)
+                        Text(phone.name).font(.caption).lineLimit(1).truncationMode(.middle)
+                        Text("\(phone.rssi) dBm").font(.caption2).foregroundColor(.secondary)
+                        Spacer()
+                        if bleManager.selectedPhoneId == phone.id && bleManager.connectionState != .connected {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Button(L10n.t("Connect", "连接")) { bleManager.selectPhone(phone) }
+                                .font(.caption2)
+                        }
+                    }
+                }
+            }
+            if bleManager.needingRepair && bleManager.isLinkConnected {
+                Button(L10n.t("Pair again", "重新配对")) { bleManager.unlockManager.beginPairing(force: true) }
+                    .font(.caption2).buttonStyle(.link)
             }
         }
     }

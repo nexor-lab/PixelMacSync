@@ -720,9 +720,18 @@ class GattServerManager private constructor(private val context: Context) {
     /** User-initiated disconnect of the active Mac; it will not auto-reconnect. */
     fun disconnectActiveMac() {
         val id = _connectedMacId.value ?: MacRegistry.activeId(context) ?: return
+        val device = connectedMac ?: authenticatedGatt
         MacRegistry.setUserDisconnected(context, id)
         refreshRegistryFlows()
-        connectedMac?.let { gattServer?.cancelConnection(it) }
+        if (device != null) {
+            // Tell the Mac immediately instead of relying only on the GATT close
+            // callback, which can be delayed or missed by the Broadcom stack.
+            sendNotificationToMac("SESSION_REJECTED\u001Fuser_disconnected", to = device)
+            callScope.launch {
+                delay(250)
+                gattServer?.cancelConnection(device)
+            }
+        }
     }
 
     /** Forgets a saved Mac (and disconnects it if linked). */

@@ -61,7 +61,9 @@ final class AuthorizationBridge {
     /// unlock public key. A mismatch means phone unlock will fall back to the
     /// password until `sudo MacOS/pam/install.sh` is run again.
     func isProvisioned(phoneId: String, publicKeyB64: String) -> Bool {
-        let path = "/usr/local/etc/pixelsync/trusted_phones/\(phoneId).pub"
+        let trustDirectory = ProcessInfo.processInfo.environment["PIXELSYNC_PAM_TRUST_DIR"]
+            ?? "/usr/local/etc/pixelsync/trusted_phones"
+        let path = "\(trustDirectory)/\(phoneId).pub"
         guard let stored = try? String(contentsOfFile: path, encoding: .utf8) else { return false }
         return stored.trimmingCharacters(in: .whitespacesAndNewlines)
             == publicKeyB64.trimmingCharacters(in: .whitespacesAndNewlines)

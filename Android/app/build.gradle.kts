@@ -1,13 +1,7 @@
-import java.text.SimpleDateFormat
-import java.util.Date
-
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
 }
-
-// Fixed build timestamp, stamped into debug builds only (watermark / diagnostics).
-val debugBuildStamp: String = SimpleDateFormat("yyyy-MM-dd HH:mm").format(Date())
 
 android {
     namespace = "it.luigi.macsync"
@@ -23,8 +17,8 @@ android {
         // minimum supported. All APIs used are available on API 35.
         minSdk = 35
         targetSdk = 36
-        versionCode = 4
-        versionName = "2.3"
+        versionCode = 5
+        versionName = "2.4.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -34,11 +28,9 @@ android {
             // Clearly separate the test build from the release app: it installs
             // side by side (separate package) and is visibly marked as DEBUG.
             // This is the ONLY variant with on-device diagnostics (see Diagnostics
-            // / DebugJournal); beta and release must never store that content.
+            // / DebugJournal); release must never store that content.
             applicationIdSuffix = ".debug"
             versionNameSuffix = "-debug"
-            buildConfigField("String", "BUILD_TIMESTAMP", "\"$debugBuildStamp\"")
-            buildConfigField("boolean", "IS_BETA", "false")
         }
         release {
             isMinifyEnabled = true // Attiva R8 per offuscare e rimuovere il codice morto
@@ -47,26 +39,6 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            buildConfigField("String", "BUILD_TIMESTAMP", "\"\"")
-            buildConfigField("boolean", "IS_BETA", "false")
-        }
-        // Beta = the debug feature set, renamed + Beta watermark, published to
-        // GitHub. It inherits debug (fast, debuggable, debug-signed for easy
-        // install) but uses the RELEASE package (no ".debug" suffix). It has NO
-        // on-device diagnostics: the only diagnostics sink lives in /src/debug,
-        // which is not part of this variant.
-        create("beta") {
-            // Minified + resource-shrunk like release (much smaller APK), but
-            // debug-signed so it installs easily. Beta branding via src/beta,
-            // IS_BETA=true. No debug diagnostics (src/debug is debug-only).
-            initWith(getByName("release"))
-            applicationIdSuffix = ""
-            versionNameSuffix = "-beta"
-            buildConfigField("boolean", "IS_BETA", "true")
-            // release sets BUILD_TIMESTAMP to ""; give beta its own build time so
-            // the watermark shows it (release also inherits this buildType).
-            buildConfigField("String", "BUILD_TIMESTAMP", "\"$debugBuildStamp\"")
-            signingConfig = signingConfigs.getByName("debug")
         }
     }
     compileOptions {

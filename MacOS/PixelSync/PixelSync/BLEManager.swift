@@ -27,6 +27,7 @@ struct DiscoveredPhone: Identifiable, Equatable {
     var name: String
     var rssi: Int
     var deviceId: String
+    var lastSeen: Date
 }
 
 class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNotificationCenterDelegate {
@@ -122,6 +123,14 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
     var isConnected: Bool { connectionState == .connected }
     var isLinkConnected: Bool { pixelPeripheral?.state == .connected }
 
+    func logDebugStatus() {
+        NSLog(
+            "PixelSyncDebug: connected=\(isConnected) link=\(isLinkConnected) " +
+                "state=\(connectionStatus) phone=\(selectedPhoneName ?? "-") " +
+                "unlock{\(unlockManager.debugStatus)}"
+        )
+    }
+
     /// True when the connected phone reports an Apple model name (iOS app).
     var isIPhone: Bool {
         let d = deviceName.lowercased()
@@ -166,6 +175,7 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
     // Phone biometric unlock UI state.
     @Published var trustedPhones: [TrustedPhone] = []
     private var pamTrustWarned = false
+    @Published var pamTrustNeedsSync = false
     @Published var unlockPairingActive: Bool = false
     @Published var unlockPluginInstalled: Bool = false
 
@@ -260,6 +270,7 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
             }
             .store(in: &hfCancellables)
         centralManager = CBCentralManager(delegate: self, queue: nil)
+        startDiscoveryPruneTimer()
         
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { [weak self] granted, error in
             self?.notificationsAuthorized = granted
@@ -368,7 +379,9 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
             }
             if missing.isEmpty {
                 self.pamTrustWarned = false
+                self.pamTrustNeedsSync = false
             } else {
+                self.pamTrustNeedsSync = true
                 NSLog("MacSync: PAM trust key missing/stale for \(missing.map { $0.id })")
                 if !self.pamTrustWarned {
                     self.pamTrustWarned = true
@@ -572,20 +585,47 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
             NSLog("MacSync: discovered \(name) deviceId=\(deviceId.isEmpty ? "-" : deviceId) rssi=\(rssi)")
         }
         discoveredPeripherals[id] = peripheral
-        if let idx = discoveredPhones.firstIndex(where: { $0.id == id }) {
+        let stableMatch = deviceId.isEmpty ? nil : discoveredPhones.firstIndex {
+            !$0.deviceId.isEmpty && $0.deviceId == deviceId
+        }
+        let samePeripheral = discoveredPhones.firstIndex { $0.id == id }
+        if let idx = stableMatch ?? samePeripheral {
             // With duplicate reports enabled the RSSI arrives several times per
             // second. Updating @Published state that often needlessly re-renders
             // the popover, so refresh the UI at most once per second.
             let now = Date()
-            if now.timeIntervalSince(lastDiscoveryUiUpdate[id] ?? .distantPast) >= 1.0 {
+            let previousId = discoveredPhones[idx].id
+            let identityChanged = previousId != id
+            if identityChanged ||
+                now.timeIntervalSince(lastDiscoveryUiUpdate[id] ?? .distantPast) >= 1.0 {
+                if identityChanged {
+                    discoveredPeripherals.removeValue(forKey: previousId)
+                    lastDiscoveryUiUpdate.removeValue(forKey: previousId)
+                    if selectedPhoneId == previousId {
+                        selectedPhoneId = id
+                        UserDefaults.standard.set(id.uuidString, forKey: "pixel.selectedPhoneId")
+                    }
+                }
                 lastDiscoveryUiUpdate[id] = now
-                discoveredPhones[idx].name = name
-                discoveredPhones[idx].rssi = rssi
-                discoveredPhones[idx].deviceId = deviceId
+                discoveredPhones[idx] = DiscoveredPhone(
+                    id: id,
+                    name: name,
+                    rssi: rssi,
+                    deviceId: deviceId,
+                    lastSeen: now
+                )
             }
         } else {
             lastDiscoveryUiUpdate[id] = Date()
-            discoveredPhones.append(DiscoveredPhone(id: id, name: name, rssi: rssi, deviceId: deviceId))
+            discoveredPhones.append(
+                DiscoveredPhone(
+                    id: id,
+                    name: name,
+                    rssi: rssi,
+                    deviceId: deviceId,
+                    lastSeen: Date()
+                )
+            )
         }
 
         // Reconnect by the stable short device id, independent of the
@@ -662,9 +702,7 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
         discoveredPeripherals.removeAll()
         discoveredPhones.removeAll()
         if centralManager.state == .poweredOn {
-            connectionState = .scanning
-            centralManager.stopScan()
-            centralManager.scanForPeripherals(withServices: [serviceUUID], options: nil)
+            startScan()
         } else {
             startScanningOrReconnect()
         }
@@ -1068,6 +1106,35 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
 
     private var discoveryLogCount = 0
     private var lastDiscoveryUiUpdate: [UUID: Date] = [:]
+    private var discoveryPruneTimer: Timer?
+
+    private func startDiscoveryPruneTimer() {
+        discoveryPruneTimer?.invalidate()
+        let timer = Timer(timeInterval: 2.0, repeats: true) { [weak self] _ in
+            self?.pruneStaleDiscoveries()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        discoveryPruneTimer = timer
+    }
+
+    private func pruneStaleDiscoveries() {
+        let cutoff = Date().addingTimeInterval(-8.0)
+        let activePeripheralId = pixelPeripheral?.identifier
+        let staleIds = Set(
+            discoveredPhones
+                .filter { $0.id != activePeripheralId && $0.lastSeen < cutoff }
+                .map(\.id)
+        )
+        guard !staleIds.isEmpty else { return }
+
+        discoveredPhones.removeAll { staleIds.contains($0.id) }
+        for id in staleIds {
+            discoveredPeripherals.removeValue(forKey: id)
+            lastDiscoveryUiUpdate.removeValue(forKey: id)
+        }
+        NSLog("MacSync: rimosse \(staleIds.count) scansioni BLE obsolete")
+    }
+
     private var connectFailureStreak = 0
     private var pairingRetryTimer: Timer?
     private var pairingRetries = 0
