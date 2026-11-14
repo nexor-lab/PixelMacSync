@@ -128,6 +128,14 @@ class GattServerManager private constructor(private val context: Context) {
     private val _macCpu = MutableStateFlow("")
     val macCpu: StateFlow<String> = _macCpu
 
+    /**
+     * The notification listener can be rebound after a cold start, just after
+     * the Mac has sent SYNC_REQ. In that ordering the request is broadcast
+     * before the listener exists and is lost. Expose the authenticated state so
+     * the listener can request an initial snapshot as soon as it becomes live.
+     */
+    fun isSessionAuthenticated(): Boolean = sessionAuthenticated
+
     // --- VARIABILI DI STATO ---
     private var currentBatteryLevel = 0
     private var isCharging = false

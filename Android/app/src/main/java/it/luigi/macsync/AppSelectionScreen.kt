@@ -125,10 +125,25 @@ fun AppSelectionScreen(embedded: Boolean = false) {
     var searchQuery by remember { mutableStateOf("") }
 
     LaunchedEffect(Unit) {
-        if (AppSelectionCache.apps != null) return@LaunchedEffect
+        val savedApps = prefs.getStringSet(NotificationFilter.KEY_ENABLED_APPS, emptySet())
+            ?.toSet()
+            .orEmpty()
+        val cachedApps = AppSelectionCache.apps
+        if (cachedApps != null) {
+            // Icons and labels are cached, but selection is always restored from
+            // persistent preferences so leaving and reopening this tab cannot
+            // resurrect stale switch positions.
+            val syncedApps = cachedApps.map {
+                it.copy(isEnabled = savedApps.contains(it.packageName))
+            }
+            AppSelectionCache.apps = syncedApps
+            appList = syncedApps
+            isLoading = false
+            return@LaunchedEffect
+        }
+
         withContext(Dispatchers.IO) {
             val pm = context.packageManager
-            val savedApps = prefs.getStringSet("enabled_apps", emptySet()) ?: emptySet()
 
             val intent = android.content.Intent(android.content.Intent.ACTION_MAIN, null)
             intent.addCategory(android.content.Intent.CATEGORY_LAUNCHER)
@@ -174,16 +189,21 @@ fun AppSelectionScreen(embedded: Boolean = false) {
     }
 
     val onToggle: (AppItem, Boolean) -> Unit = { appItem, isChecked ->
-        appList = appList.map {
+        val updatedApps = appList.map {
             if (it.packageName == appItem.packageName) it.copy(isEnabled = isChecked) else it
         }
-        val editor = prefs.edit()
-        val currentSaved = prefs.getStringSet("enabled_apps", mutableSetOf())?.toMutableSet()
-            ?: mutableSetOf()
+        appList = updatedApps
+        AppSelectionCache.apps = updatedApps
+
+        val currentSaved = (
+            prefs.getStringSet(NotificationFilter.KEY_ENABLED_APPS, emptySet())
+                ?: emptySet()
+            ).toMutableSet()
         if (isChecked) currentSaved.add(appItem.packageName)
         else currentSaved.remove(appItem.packageName)
-        editor.putStringSet("enabled_apps", currentSaved)
-        editor.apply()
+        prefs.edit()
+            .putStringSet(NotificationFilter.KEY_ENABLED_APPS, currentSaved)
+            .apply()
     }
 
     if (embedded) {

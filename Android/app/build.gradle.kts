@@ -17,8 +17,8 @@ android {
         // minimum supported. All APIs used are available on API 35.
         minSdk = 35
         targetSdk = 36
-        versionCode = 5
-        versionName = "2.4.0"
+        versionCode = 6
+        versionName = "2.4.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

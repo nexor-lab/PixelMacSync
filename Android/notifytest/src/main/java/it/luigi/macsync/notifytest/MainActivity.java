@@ -77,9 +77,11 @@ public class MainActivity extends android.app.Activity {
         if (intent == null) return;
         String cmd = intent.getStringExtra("cmd");
         if (cmd == null) return;
+        String sequence = intent.getStringExtra("seq");
+        if (sequence == null) sequence = "";
         switch (cmd) {
-            case "post_x":     postPlain(); break;
-            case "post_chat":  postChat();  break;
+            case "post_x":     postPlain(sequence, intent.getIntExtra("id", 101)); break;
+            case "post_chat":  postChat(sequence, intent.getIntExtra("id", 102));  break;
             case "clear":      clearAll();  break;
             default: break;
         }
@@ -165,19 +167,29 @@ public class MainActivity extends android.app.Activity {
      * should NOT offer a reply field (canReply=false).
      */
     private void postPlain() {
+        postPlain("", 101);
+    }
+
+    private void postPlain(String sequence, int id) {
+        String suffix = sequence.isEmpty() ? "" : " #" + sequence;
         Notification n = new Notification.Builder(this, CHANNEL_X)
                 .setSmallIcon(android.R.drawable.stat_notify_more)
-                .setContentTitle("X")
-                .setContentText("New post (no reply action)")
+                .setContentTitle("X" + suffix)
+                .setContentText("New post (no reply action)" + suffix)
                 .setAutoCancel(true)
                 .setContentIntent(selfActivity(1))
                 .build();
-        notify(101, n);
-        Log.i("NotifyTest", "POST plain (no reply action)");
+        notify(id, n);
+        Log.i("NotifyTest", "POST plain (no reply action)" + suffix);
     }
 
     /** Simulated chat message with a real free-form RemoteInput reply action. */
     private void postChat() {
+        postChat("", 102);
+    }
+
+    private void postChat(String sequence, int id) {
+        String suffix = sequence.isEmpty() ? "" : " #" + sequence;
         RemoteInput remoteInput = new RemoteInput.Builder(KEY_REPLY_TEXT)
                 .setLabel("Reply")
                 .build();
@@ -195,15 +207,15 @@ public class MainActivity extends android.app.Activity {
 
         Notification n = new Notification.Builder(this, CHANNEL_CHAT)
                 .setSmallIcon(android.R.drawable.stat_notify_chat)
-                .setContentTitle("测试联系人")
-                .setContentText("请从 Mac 回复这条消息（聊天风格通知）")
+                .setContentTitle("测试联系人" + suffix)
+                .setContentText("请从 Mac 回复这条消息（聊天风格通知）" + suffix)
                 .addAction(replyAction)
                 .setAutoCancel(true)
                 .setContentIntent(selfActivity(3))
                 .build();
 
-        notifManager().notify(CHAT_ID, 102, n);
-        Log.i("NotifyTest", "POST chat with RemoteInput reply action");
+        notifManager().notify(CHAT_ID + id, id, n);
+        Log.i("NotifyTest", "POST chat with RemoteInput reply action" + suffix);
     }
 
     private void clearAll() {

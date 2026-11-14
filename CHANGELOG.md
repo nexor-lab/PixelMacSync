@@ -1,5 +1,42 @@
 # CHANGELOG.md
 
+## [v2.4.1] — 2026-11-14
+
+Pixel UI polish, notification reliability, and ghost-device cleanup.
+
+### Fixed
+
+- **Notification app toggles now persist for real**: the UI, shared preferences, and
+  forwarding filter use the same state, so leaving the page or cold-starting the app no
+  longer restores defaults.
+- **Reconnect snapshots no longer repeat old alerts**: Android marks full snapshots with
+  `SYNC_SNAPSHOT_BEGIN` / `SYNC_SNAPSHOT_END`; macOS reconciles by stable ID and content
+  fingerprint instead of clearing and redelivering every active notification.
+- **HyperOS cold-start race**: if the Mac requests a snapshot before the notification
+  listener becomes live, the listener now sends the initial snapshot immediately after
+  `onListenerConnected()`.
+- **Ghost trusted devices**: authenticating a phone removes stale same-name records while
+  keeping the current device and differently named devices.
+- **Notification loader alignment**: the Android loading animation is centered in portrait,
+  landscape, light mode, and dark mode.
+
+### UI
+
+- Android notification selection is available directly from the center bottom tab.
+- Removed redundant helper text and all Beta labels from release builds.
+- macOS device and settings content is fully expanded; advanced actions are left-aligned.
+- Refreshed README screenshots from the final Android and macOS release builds.
+
+### Verification
+
+- Notification toggle: 10/10 off notifications filtered and 10/10 on notifications received;
+  state survived re-entry and cold start.
+- BLE reconnect: 20/20 notifications delivered exactly once.
+- Burst: 100/100 notifications delivered, with 0 missing and 0 duplicates.
+- Soak: 60/60 notifications delivered exactly once over 15 minutes, with 0 Android FATAL
+  and 0 ANR.
+- Real macOS display: chat notifications show Reply; plain notifications do not.
+
 ## [Unreleased] — Phone biometric unlock of the Mac (2026-10-06)
 
 Lock the Mac and unlock it with the phone's fingerprint/face — passwordless, no password

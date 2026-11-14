@@ -2,6 +2,7 @@ package it.luigi.macsync
 
 import android.Manifest
 import android.content.BroadcastReceiver
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -10,6 +11,8 @@ import android.graphics.Color as AndroidColor
 import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
+import android.service.notification.NotificationListenerService
+import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
@@ -66,6 +69,7 @@ import it.luigi.macsync.unlock.UnlockSettings
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.core.content.ContextCompat
+import it.luigi.macsync.ble.MacSyncNotificationListener
 import it.luigi.macsync.ui.theme.MacSyncTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -103,13 +107,35 @@ class MainActivity : ComponentActivity() {
         // Retry a PAIR_BEGIN that could not create the biometric key while the
         // phone was locked. Safe no-op when there is no pending request.
         PairingController.retryPendingBegin(this)
+        requestNotificationListenerRebindIfEnabled()
+    }
+
+    /**
+     * Package updates can leave an already-authorised listener enabled in
+     * Settings but not live. Ask the system to rebind when the app returns to
+     * the foreground; the call is a no-op if the listener is already connected.
+     */
+    private fun requestNotificationListenerRebindIfEnabled() {
+        if (!isNotificationServiceEnabled(this)) return
+        try {
+            NotificationListenerService.requestRebind(
+                ComponentName(this, MacSyncNotificationListener::class.java)
+            )
+        } catch (e: Exception) {
+            Log.w("MacSync", "Notification listener rebind failed: ${e.message}")
+        }
     }
 }
 
 private fun isNotificationServiceEnabled(context: Context): Boolean {
-    val pkgName = context.packageName
     val flat = Settings.Secure.getString(context.contentResolver, "enabled_notification_listeners")
-    return flat != null && flat.contains(pkgName)
+        ?: return false
+    val expected = ComponentName(context, MacSyncNotificationListener::class.java)
+    return flat.split(':').any { value ->
+        val configured = ComponentName.unflattenFromString(value)
+        configured?.packageName == expected.packageName &&
+            configured.className == expected.className
+    }
 }
 
 private fun isIgnoringBatteryOptimizations(context: Context): Boolean {

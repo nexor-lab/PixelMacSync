@@ -101,6 +101,13 @@ class MacSyncNotificationListener : NotificationListenerService() {
         Log.d("MacSync", "NotificationListener CONNESSO (live).")
         it.luigi.macsync.NotificationFilter.ensureInitialized(applicationContext)
         startMediaMonitor()
+        // On HyperOS the listener can become live after the Mac's SYNC_REQ was
+        // already broadcast during cold start. In that case the request is lost;
+        // recover the initial snapshot once the listener is actually connected.
+        if (GattServerManager.getInstance(applicationContext).isSessionAuthenticated()) {
+            Log.d("MacSync", "Sessione già autenticata: invio snapshot iniziale.")
+            sendSnapshotToMac()
+        }
     }
 
     override fun onListenerDisconnected() {
@@ -120,31 +127,39 @@ class MacSyncNotificationListener : NotificationListenerService() {
         val enabledApps = it.luigi.macsync.NotificationFilter.enabledApps(applicationContext)
         val currentNotifications = this.activeNotifications ?: return
 
-        for (sbn in currentNotifications) {
-            val packageName = sbn.packageName
+        // Explicit boundaries let the Mac distinguish a full active-notification
+        // snapshot from live posts. The Mac can then reconcile removed items
+        // without clearing and re-alerting every notification on each reconnect.
+        sendToGattServer("SYNC_SNAPSHOT_BEGIN")
+        try {
+            for (sbn in currentNotifications) {
+                val packageName = sbn.packageName
 
-            if (packageName == "android" || packageName == "com.android.systemui") continue
-            if (!enabledApps.contains(packageName)) continue
+                if (packageName == "android" || packageName == "com.android.systemui") continue
+                if (!enabledApps.contains(packageName)) continue
 
-            // Filtro anti-doppioni
-            val isGroupSummary = (sbn.notification.flags and Notification.FLAG_GROUP_SUMMARY) != 0
-            if (isGroupSummary) continue
+                // Filtro anti-doppioni
+                val isGroupSummary = (sbn.notification.flags and Notification.FLAG_GROUP_SUMMARY) != 0
+                if (isGroupSummary) continue
 
-            val extras = sbn.notification.extras
-            val title = extras.getString(Notification.EXTRA_TITLE)?.trim() ?: ""
-            val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()?.trim() ?: ""
+                val extras = sbn.notification.extras
+                val title = extras.getString(Notification.EXTRA_TITLE)?.trim() ?: ""
+                val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()?.trim() ?: ""
 
-            if (title.isBlank() && text.isBlank()) continue
+                if (title.isBlank() && text.isBlank()) continue
 
-            // ID stabile e deterministico: lo stesso key → lo stesso ID sul Mac,
-            // così reinvii/snapshot non generano notifiche duplicate.
-            val uniqueMacId = stableId(sbn)
-            macNotificationIds[sbn.key] = mutableListOf(uniqueMacId)
+                // ID stabile e deterministico: lo stesso key → lo stesso ID sul Mac,
+                // così reinvii/snapshot non generano notifiche duplicate.
+                val uniqueMacId = stableId(sbn)
+                macNotificationIds[sbn.key] = mutableListOf(uniqueMacId)
 
-            // Inviamo il pacchetto esattamente come se fosse una notifica normale
-            val payload = buildPostPayload(sbn, uniqueMacId, title, text)
-            sendToGattServer(payload)
-            AppIconSender.sendIfNeeded(applicationContext, packageName) { sendToGattServer(it) }
+                // Inviamo il pacchetto esattamente come se fosse una notifica normale
+                val payload = buildPostPayload(sbn, uniqueMacId, title, text)
+                sendToGattServer(payload)
+                AppIconSender.sendIfNeeded(applicationContext, packageName) { sendToGattServer(it) }
+            }
+        } finally {
+            sendToGattServer("SYNC_SNAPSHOT_END")
         }
         Log.d("MacSync", "Snapshot inviato con successo al Mac.")
     }

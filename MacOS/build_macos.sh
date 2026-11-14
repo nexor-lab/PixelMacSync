@@ -16,8 +16,8 @@ ASSETS_DIR="$SCRIPT_DIR/PixelSync/AppIcon.icon/Assets"
 OUT_DIR="$SCRIPT_DIR/build"
 APP_NAME="PixelSync"
 BUNDLE_ID="it.luigi.pixelsyncmac"
-VERSION="2.4.0"
-BUILD_NUMBER="5"
+VERSION="2.4.1"
+BUILD_NUMBER="6"
 MIN_MACOS="12.0"
 ARCH="${ARCH:-universal}"
 DEBUG_BUILD="${DEBUG_BUILD:-0}"
@@ -161,6 +161,11 @@ SIGN_IDENTITY="${SIGN_IDENTITY:-PixelMacSync Dev}"
 if security find-identity -p codesigning 2>/dev/null | grep -q "$SIGN_IDENTITY"; then
   echo "==> Code signing with identity: $SIGN_IDENTITY"
   codesign --force --deep --sign "$SIGN_IDENTITY" "$APP" 2>&1 || echo "WARN: codesign failed"
+elif DEV_IDENTITY="$(security find-identity -p codesigning 2>/dev/null | sed -n 's/.*"\(Apple Development:.*\)"/\1/p' | head -1)" && [ -n "$DEV_IDENTITY" ]; then
+  # A local development certificate is sufficient for UNUserNotificationCenter.
+  # Prefer it over ad-hoc signing, which macOS 12 rejects for notifications.
+  echo "==> Code signing with detected identity: $DEV_IDENTITY"
+  codesign --force --deep --sign "$DEV_IDENTITY" "$APP" 2>&1 || echo "WARN: codesign failed"
 else
   echo "==> No '$SIGN_IDENTITY' identity found; ad-hoc signing (notifications may be refused)"
   codesign --force --deep --sign - "$APP" 2>&1 || echo "WARN: codesign failed"

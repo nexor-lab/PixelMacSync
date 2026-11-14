@@ -186,6 +186,13 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
     // Apple-issued certificate (UNErrorDomain Code=1). When that happens we
     // deliver to Notification Center via /usr/bin/osascript instead.
     private(set) var notificationsAuthorized = false
+    // Android notification ids are deterministic. Remember their last content
+    // so reconnect snapshots do not re-alert unchanged items; changed content
+    // still updates normally.
+    private var incomingNotificationFingerprints: [String: (String, Date)] = [:]
+    private var notificationSnapshotActive = false
+    private var notificationSnapshotIds = Set<String>()
+    private var remoteNotificationIds = Set<String>()
 
     // Calcolo del percorso del file JSON nella cartella Documenti
     var configURL: URL? {
@@ -325,7 +332,6 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
             self?.needingRepair = false
             DispatchQueue.main.async {
                 self?.connectionState = .connected
-                self?.handleSessionRecovered()
             }
         }
         unlockManager.onPairingStateChanged = { [weak self] active in
@@ -775,6 +781,8 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
         NSLog("MacSync: Dispositivo disconnesso. Ripristino stato e riavvio scansione.")
         
         DispatchQueue.main.async {
+            self.notificationSnapshotActive = false
+            self.notificationSnapshotIds.removeAll()
             if self.rejectedByPhone {
                 // Multi-Mac: the phone refused this Mac; do NOT auto-reconnect.
                 self.connectionState = .rejected
@@ -1318,7 +1326,8 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, UNUserNo
         autoReconnectAttempts = 0
         reconnectEpisodeActive = false
         // Session is authenticated now: safe to ask for notifications/hotspot/music.
-        UNUserNotificationCenter.current().removeAllDeliveredNotifications()
+        // Notification snapshots reconcile themselves via explicit BEGIN/END
+        // boundaries; clearing everything here would re-alert every active item.
         sendCommand("SYNC_REQ")
         sendCommand("HOTSPOT_STATUS")
         sendCommand("MUSIC_STATUS")
@@ -1418,6 +1427,27 @@ extension BLEManager: CBPeripheralDelegate {
 
             // Phone biometric unlock / pairing packets (Mac side).
             if self.unlockManager.handlePacket(fields) { return }
+
+            if fields.first == "SYNC_SNAPSHOT_BEGIN" {
+                notificationSnapshotActive = true
+                notificationSnapshotIds.removeAll()
+                NSLog("MacSync: notification snapshot begin")
+                return
+            }
+            if fields.first == "SYNC_SNAPSHOT_END" {
+                notificationSnapshotActive = false
+                let stale = remoteNotificationIds.subtracting(notificationSnapshotIds)
+                if !stale.isEmpty {
+                    UNUserNotificationCenter.current().removeDeliveredNotifications(
+                        withIdentifiers: Array(stale)
+                    )
+                    for id in stale { incomingNotificationFingerprints.removeValue(forKey: id) }
+                }
+                remoteNotificationIds = notificationSnapshotIds
+                NSLog("MacSync: notification snapshot end active=\(notificationSnapshotIds.count) removed=\(stale.count)")
+                notificationSnapshotIds.removeAll()
+                return
+            }
 
             // Multi-Mac: the phone refused this Mac (not active / user-disconnected).
             if let reason = PixelPacket.parseSessionRejected(fields) {
@@ -1606,22 +1636,63 @@ extension BLEManager: CBPeripheralDelegate {
             if let notification = PixelPacket.parseNotification(fields) {
                 switch notification.kind {
                 case .post:
-                    self.deliverNotification(id: notification.id,
-                                             title: notification.title,
-                                             body: notification.body,
-                                             package: notification.package,
-                                             appLabel: notification.appLabel,
-                                             canReply: notification.canReply)
-                    NSLog("MacSync: POST ricevuto id=\(notification.id) pkg=\(notification.package) title=\(notification.title) canReply=\(notification.canReply)")
+                    let fingerprint = [
+                        notification.package,
+                        notification.title,
+                        notification.body,
+                        notification.appLabel,
+                        String(notification.canReply),
+                    ].joined(separator: "\u{1F}")
+                    let duplicate = self.isDuplicateIncomingNotification(
+                        id: notification.id,
+                        fingerprint: fingerprint
+                    )
+                    if duplicate {
+                        NSLog("MacSync: POST duplicate ignorato id=\(notification.id)")
+                    } else {
+                        self.deliverNotification(id: notification.id,
+                                                 title: notification.title,
+                                                 body: notification.body,
+                                                 package: notification.package,
+                                                 appLabel: notification.appLabel,
+                                                 canReply: notification.canReply)
+                        NSLog("MacSync: POST ricevuto id=\(notification.id) pkg=\(notification.package) title=\(notification.title) canReply=\(notification.canReply)")
+                    }
+                    if self.notificationSnapshotActive {
+                        self.notificationSnapshotIds.insert(notification.id)
+                    }
+                    if !notification.package.isEmpty {
+                        self.remoteNotificationIds.insert(notification.id)
+                    }
 
                 case .remove:
                     if self.notificationsAuthorized {
                         UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [notification.id])
                     }
+                    self.incomingNotificationFingerprints.removeValue(forKey: notification.id)
+                    self.remoteNotificationIds.remove(notification.id)
                     NSLog("MacSync: REMOVE ricevuto id=\(notification.id)")
                 }
             }
         }
+    }
+
+    private func isDuplicateIncomingNotification(id: String, fingerprint: String) -> Bool {
+        let now = Date()
+        if let previous = incomingNotificationFingerprints[id],
+           previous.0 == fingerprint {
+            return true
+        }
+        incomingNotificationFingerprints[id] = (fingerprint, now)
+        if incomingNotificationFingerprints.count > 1000 {
+            let keep = incomingNotificationFingerprints
+                .sorted { $0.value.1 > $1.value.1 }
+                .prefix(500)
+            incomingNotificationFingerprints = Dictionary(
+                uniqueKeysWithValues: keep.map { ($0.key, $0.value) }
+            )
+        }
+        return false
     }
 }
 

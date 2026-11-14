@@ -73,6 +73,27 @@ final class TrustedDeviceStore {
         save()
     }
 
+    /// Remove stale trust records that have the same display name as the
+    /// device that just completed session authentication. Reinstalling the
+    /// Android app can rotate its phone id and otherwise leave duplicate
+    /// "ghost" entries behind on the Mac.
+    @discardableResult
+    func removeDuplicateNames(keeping deviceId: String) -> Int {
+        guard let current = devices.first(where: { $0.id == deviceId }) else { return 0 }
+        let name = current.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return 0 }
+
+        let before = devices.count
+        devices.removeAll {
+            $0.id != deviceId &&
+                $0.name.trimmingCharacters(in: .whitespacesAndNewlines)
+                    .caseInsensitiveCompare(name) == .orderedSame
+        }
+        let removed = before - devices.count
+        if removed > 0 { save() }
+        return removed
+    }
+
     func markAuthorized(_ id: String) {
         guard let idx = devices.firstIndex(where: { $0.id == id }) else { return }
         devices[idx].lastAuthAt = Date()

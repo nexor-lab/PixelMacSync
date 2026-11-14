@@ -9,6 +9,34 @@ Device: **Android test phone**, Android 15 / API 35, HyperOS OS3.0, Bluetooth ON
 
 ---
 
+## PixelMacSync 2.4.1 final notification + stability test — 2026-11-14
+
+Host: macOS 12.7 Intel Mac. Phone: `23013PC75G`, Android 15 / HyperOS,
+1440 × 3200. Final release APK `2.4.1 (6)` and macOS app `2.4.1 (6)`.
+
+| # | Test | Result |
+|---|---|---|
+| R241-1 | NotifyTest disabled: notifications filtered | **PASS** — 10/10 filtered |
+| R241-2 | NotifyTest enabled: notifications received on Mac | **PASS** — 10/10 received |
+| R241-3 | Toggle survives tab re-entry | **PASS** |
+| R241-4 | Toggle survives force-stop + cold start | **PASS** |
+| R241-5 | Chat notification shows native macOS Reply action | **PASS** |
+| R241-6 | Plain notification omits Reply action | **PASS** |
+| R241-7 | BLE reconnect snapshot deduplication | **PASS** — 20/20 exactly once |
+| R241-8 | Burst delivery | **PASS** — plain 50/50, chat 50/50 |
+| R241-9 | 15-minute soak | **PASS** — 60/60 exactly once |
+| R241-10 | Android FATAL / ANR during soak | **PASS** — 0 / 0 |
+| R241-11 | macOS parser tests | **PASS** — 115/115 |
+| R241-12 | Trusted-device cleanup tests | **PASS** — 9/9 |
+| R241-13 | Android Gradle tests | **PASS** — 1/1 (project currently has one example test) |
+| R241-14 | Portrait / landscape notification loader alignment | **PASS** |
+| R241-15 | Light / dark mode UI | **PASS** |
+| R241-16 | Remote unlock / lock destructive test | **NOT TESTED** — avoided to keep the active Codex session running |
+
+Detailed artifacts are stored under `evidence/release-2.4.1-final/`.
+
+---
+
 ## Apple Silicon (M4) real-device test — 2026-10-03
 
 Independent test on MacBook Pro 14" (Apple M4, 16 GB, macOS 26.3 / build 25D125).

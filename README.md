@@ -6,44 +6,48 @@
 > 协议见 [`BLE_PROTOCOL.md`](BLE_PROTOCOL.md)，变更见 [`CHANGELOG.md`](CHANGELOG.md)，
 > 测试见 [`TEST_REPORT.md`](TEST_REPORT.md)。
 >
-> **当前版本：2.4.0（2026-11-14）。** 下方 Android 与 macOS 截图均来自本版本正式包实机测试。
+> **当前版本：2.4.1（2026-11-14）。** 下方 Android 与 macOS 截图均来自本版本正式包实机测试。
 
-## 📦 下载正式版 2.4.0
+## 📦 下载正式版 2.4.1
 
 | Android | macOS |
 | --- | --- |
-| [PixelMacSync-Android-2.4.0.apk](https://github.com/nexor-lab/PixelMacSync/releases/download/v2.4.0/PixelMacSync-Android-2.4.0.apk) | [PixelMacSync-macOS12-2.4.0-Universal.dmg](https://github.com/nexor-lab/PixelMacSync/releases/download/v2.4.0/PixelMacSync-macOS12-2.4.0-Universal.dmg) |
-| Android 15+ · Release 签名 · 版本 2.4.0 (5) | macOS 12.7+ · Universal · 版本 2.4.0 (5) |
+| [PixelMacSync-Android-2.4.1.apk](https://github.com/nexor-lab/PixelMacSync/releases/download/v2.4.1/PixelMacSync-Android-2.4.1.apk) | [PixelMacSync-macOS12-2.4.1-Universal.dmg](https://github.com/nexor-lab/PixelMacSync/releases/download/v2.4.1/PixelMacSync-macOS12-2.4.1-Universal.dmg) |
+| Android 15+ · Release 签名 · 版本 2.4.1 (6) | macOS 12.7+ · Universal · 版本 2.4.1 (6) |
 
-## 🚀 2.4.0 本次重点更新
+## 🚀 2.4.1 本次重点更新
 
 ### UI 与交互
 
-- **Android 全新 Pixel / Material You 风格**：动态取色、三栏底部导航、紧凑设备卡片，首页与设置页减少空白和重复说明文字。
-- **通知应用改为直接选择**：点击底部中间的「通知」即可查看应用列表，不再经过额外的“通知与 Mac 同步”页面。
-- **macOS 小窗重排**：压缩无效留白，设备、媒体、设置三栏保持完整展开；高级操作统一左对齐，移除多余折叠区域。
-- **状态体验统一**：Android 深色模式、横竖屏旋转、权限重新授权流程已适配；加载动画在竖屏和横屏下均保持屏幕居中。
-- **Beta 标识清理**：Android 与 macOS 正式包均已移除 Beta 字样，并统一版本号为 `2.4.0 (5)`。
+- **Android Pixel / Material You 风格继续精简**：底部三栏导航、紧凑设备卡片，移除重复说明小字，通知页直接展示应用选择列表。
+- **通知开关真实持久化**：开启或关闭应用通知后，返回首页、重新进入甚至冷启动都不会恢复成默认值。
+- **加载动画严格居中**：修复约 0.5 秒的通知列表加载动画偏到屏幕左侧的问题，竖屏、横屏和自动旋转均保持居中。
+- **macOS 小窗完整展开**：设备页、设置页不再折叠，减少无效空白；高级操作全部左对齐。
+- **正式版标识统一**：Android 与 macOS 正式包均无 Beta 字样，版本统一为 `2.4.1 (6)`。
 
 ### 重点修复
 
-- **修复远程解锁误报“需重新绑定 Mac”**：恢复生物识别 `CryptoObject` 绑定；临时 Keystore 错误不再清除可信设备。
-- **修复 PAM 公钥不匹配仍尝试解锁**：Mac 检测到公钥不一致时直接阻止解锁并提示重新同步。
-- **修复断开连接状态不同步**：Android 增加断开二级确认，断开后两端连接状态和可信设备列表同步刷新。
-- **修复幽灵设备**：过滤已失效的 BLE 记录，清理重复和不可达的旧设备条目。
-- **修复通知加载页位置错误**：加载动画不再偏到屏幕左侧。
+- **修复通知应用开关“看起来改了但实际没改”**：开关状态、磁盘持久化和通知过滤使用同一份配置，不再被页面缓存覆盖。
+- **修复重连后旧通知重复提醒**：新增通知快照 `BEGIN/END`、稳定 ID 和内容指纹，只更新变化项，不再清空后重放全部通知。
+- **修复 HyperOS 冷启动竞态**：通知监听器晚于 Mac 的 `SYNC_REQ` 上线时，会在真正连接后主动补发首个快照。
+- **修复幽灵设备**：新设备认证后自动清理同名且失效的旧可信记录，保留当前设备和其他不同名设备。
+- **修复 Mac 通知展示与回复能力**：真实实机验证聊天通知显示「回复」，普通通知保持无回复操作。
 
-## 📸 2.4.0 实机界面
+## 📸 2.4.1 实机界面
 
 <p align="center">
-  <img src="docs/screenshots/android-home-2.4.0.png" width="190" alt="Android 2.4.0 首页" />
-  <img src="docs/screenshots/android-notifications-2.4.0.png" width="190" alt="Android 2.4.0 通知应用" />
-  <img src="docs/screenshots/android-settings-2.4.0.png" width="190" alt="Android 2.4.0 设置" />
+  <img src="docs/screenshots/android-home-2.4.1.png" width="190" alt="Android 2.4.1 已连接首页" />
+  <img src="docs/screenshots/android-notifications-2.4.1.png" width="190" alt="Android 2.4.1 通知应用" />
+  <img src="docs/screenshots/android-settings-2.4.1.png" width="190" alt="Android 2.4.1 设置" />
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/macos-device-2.4.0.png" width="320" alt="macOS 2.4.0 设备页" />
-  <img src="docs/screenshots/macos-settings-2.4.0.png" width="320" alt="macOS 2.4.0 设置页" />
+  <img src="docs/screenshots/macos-device-2.4.1.png" width="320" alt="macOS 2.4.1 设备页" />
+  <img src="docs/screenshots/macos-settings-2.4.1.png" width="320" alt="macOS 2.4.1 设置页" />
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/macos-notifications-2.4.1.png" width="520" alt="macOS 2.4.1 真实通知与回复操作" />
 </p>
 
 ## 适配范围（本 Fork）
@@ -166,9 +170,9 @@ L’app Android agisce come **Peripheral / GATT Server** ed è ottimizzata per l
 * **Hotspot via root**: esegue realmente `cmd wifi start-softap` / `stop-softap` come root e riporta lo stato reale (nessun intent verso terzi).
 
 <p align="center">
-  <img src="docs/screenshots/android-home-2.4.0.png" width="190" alt="MacSync 2.4.0 已连接首页" />
-  <img src="docs/screenshots/android-notifications-2.4.0.png" width="190" alt="MacSync 2.4.0 通知应用选择" />
-  <img src="docs/screenshots/android-settings-2.4.0.png" width="190" alt="MacSync 2.4.0 设置" />
+  <img src="docs/screenshots/android-home-2.4.1.png" width="190" alt="MacSync 2.4.1 已连接首页" />
+  <img src="docs/screenshots/android-notifications-2.4.1.png" width="190" alt="MacSync 2.4.1 通知应用选择" />
+  <img src="docs/screenshots/android-settings-2.4.1.png" width="190" alt="MacSync 2.4.1 设置" />
 </p>
 
 ### 💻 macOS Client — PixelSync
@@ -180,8 +184,8 @@ L’app macOS agisce come **Central / GATT Client** e vive nella Menu Bar.
 * **Configurazione disaccoppiata**: usa un file JSON locale per le regole di mapping delle app.
 
 <p align="center">
-  <img src="docs/screenshots/macos-device-2.4.0.png" width="320" alt="PixelSync 2.4.0 设备状态" />
-  <img src="docs/screenshots/macos-settings-2.4.0.png" width="320" alt="PixelSync 2.4.0 可信设备设置" />
+  <img src="docs/screenshots/macos-device-2.4.1.png" width="320" alt="PixelSync 2.4.1 设备状态" />
+  <img src="docs/screenshots/macos-settings-2.4.1.png" width="320" alt="PixelSync 2.4.1 可信设备设置" />
 </p>
 
 ---
@@ -242,7 +246,7 @@ Risposta inline: `REPLY\u001F[id]\u001F[base64(testo)]` → l'Android usa il `Re
 
 Il client macOS mappa i `PackageName` ricevuti su file locali in formato **.icns** situati in `~/Pictures/icone/` tramite un dizionario a tempo di ricerca O(1).
 <p align="center">
-  <img src="docs/screenshots/macos-device-2.4.0.png" width="420" alt="PixelSync 设备与服务状态" />
+  <img src="docs/screenshots/macos-device-2.4.1.png" width="420" alt="PixelSync 设备与服务状态" />
 </p>
 
 <br><br><br>
@@ -347,9 +351,9 @@ The Android app acts as the **Peripheral / GATT Server** and is optimized for th
 * **Hotspot via root**: Actually runs `cmd wifi start-softap` / `stop-softap` as root and reports the real state (no third-party intents).
 
 <p align="center">
-  <img src="docs/screenshots/android-home-2.4.0.png" width="190" alt="MacSync 2.4.0 connected home screen" />
-  <img src="docs/screenshots/android-notifications-2.4.0.png" width="190" alt="MacSync 2.4.0 notification app selection" />
-  <img src="docs/screenshots/android-settings-2.4.0.png" width="190" alt="MacSync 2.4.0 settings" />
+  <img src="docs/screenshots/android-home-2.4.1.png" width="190" alt="MacSync 2.4.1 connected home screen" />
+  <img src="docs/screenshots/android-notifications-2.4.1.png" width="190" alt="MacSync 2.4.1 notification app selection" />
+  <img src="docs/screenshots/android-settings-2.4.1.png" width="190" alt="MacSync 2.4.1 settings" />
 </p>
 
 ### 💻 macOS Client — PixelSync
@@ -361,8 +365,8 @@ The macOS app acts as the **Central / GATT Client** and lives in the Menu Bar.
 * **Decoupled Configuration**: Uses a local JSON file for app mapping rules.
 
 <p align="center">
-  <img src="docs/screenshots/macos-device-2.4.0.png" width="320" alt="PixelSync 2.4.0 device status" />
-  <img src="docs/screenshots/macos-settings-2.4.0.png" width="320" alt="PixelSync 2.4.0 trusted device settings" />
+  <img src="docs/screenshots/macos-device-2.4.1.png" width="320" alt="PixelSync 2.4.1 device status" />
+  <img src="docs/screenshots/macos-settings-2.4.1.png" width="320" alt="PixelSync 2.4.1 trusted device settings" />
 </p>
 
 ---
@@ -427,5 +431,5 @@ Inline reply: `REPLY\u001F[id]\u001F[base64(text)]` → Android injects it via t
 
 The macOS client maps received `PackageNames` to local files in **.icns** format located in `~/Pictures/icone/` using an O(1) lookup dictionary.
 <p align="center">
-  <img src="docs/screenshots/macos-device-2.4.0.png" width="420" alt="PixelSync device and service status" />
+  <img src="docs/screenshots/macos-device-2.4.1.png" width="420" alt="PixelSync device and service status" />
 </p>

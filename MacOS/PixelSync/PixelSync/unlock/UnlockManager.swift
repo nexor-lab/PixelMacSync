@@ -271,6 +271,11 @@ final class UnlockManager {
             NSLog("PixelSync: session proof phone=\(phoneId) hasSessionPub=\(device.sessionKeyB64 != nil) verify=\(ok)")
             if ok {
                 sessionVerified = true
+                let removed = deviceStore.removeDuplicateNames(keeping: phoneId)
+                if removed > 0 {
+                    NSLog("PixelSync: removed \(removed) stale duplicate trust record(s) for \(device.name)")
+                    DispatchQueue.main.async { self.onTrustChanged?() }
+                }
                 sendCommand?(UnlockProtocol.sessionOk())
                 DispatchQueue.main.async { self.onSessionAuthenticated?() }
             } else {
