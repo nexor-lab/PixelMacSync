@@ -9,8 +9,8 @@
 互联网 / 云 / TCP**，全部数据只在 BLE 链路上、按事件触发传输（无轮询）。
 
 本仓库是上游项目的一个 **Fork**，目标是把原本面向较新 macOS 的工程移植到
-**macOS 12.7.6 (Monterey) / Intel x86_64**（MacBookPro12,1），并在此之上新增了若干功能
-（见第 4、5 节），其中最新的是 **音乐控件**。
+**macOS 12.7.6 (Monterey) / Intel x86_64**（2015 Intel Mac），并在此之上新增了若干功能
+（见第 4、5 节），其中最新的是 **手机生物识别解锁 Mac**。
 
 **本仓库**：`https://github.com/nexor-lab/PixelMacSync`
 **预编译包（Releases）**：`https://github.com/nexor-lab/PixelMacSync/releases`
@@ -25,6 +25,9 @@
 - **音乐控件**：Mac 显示手机正在播放的 **歌名 / 歌手 / 专辑 / 封面**，并可 **播放/暂停、上一首/
   下一首、拖动进度 seek、调节手机媒体音量**。
 - **遥测**：电量、充电、网络类型/SSID、信号、机型等。
+- **手机生物识别解锁 Mac**：锁屏后手机收到通知 → 点按 → **原生指纹/面容** → 手机用 Android Keystore
+  私钥对一次性挑战签名 → Mac 验签 → 经 **macOS 原生 PAM** 放行解锁。**不存/不传/不输 Mac 密码**；
+  支持绑定/解绑（两端授权）、距离自动锁定、远程唤醒、「远程解锁安全策略」两个开关。
 - **系统集成**：菜单栏常驻、开机自启；中英文界面。
 
 ## 3. 从哪里来（来源与变更基线）
@@ -74,7 +77,7 @@
 ## 6. 平台与兼容
 
 - macOS：**12.7.6 (Monterey) / Intel x86_64** 实测通过；构建脚本支持 `ARCH=arm64|universal`。
-- Android：**POCO F5 Pro / Android 15 (API 35) / HyperOS** 实测通过；`minSdk 35`、`targetSdk 36`。
+- Android：**test Android phone / Android 15 (API 35) / HyperOS** 实测通过；`minSdk 35`、`targetSdk 36`。
 - 通知监听器（`NotificationListenerService`）是核心授权入口；部分 OEM 需允许“自启动/后台”。
 
 ## 7. 构建与安装

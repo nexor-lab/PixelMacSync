@@ -1,0 +1,33 @@
+name: PixelMacSyncIOS
+options:
+  bundleIdPrefix: it.luigi
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    DEVELOPMENT_TEAM: ""
+    CODE_SIGN_STYLE: Automatic
+targets:
+  PixelMacSync:
+    type: application
+    platform: iOS
+    sources:
+      - path: PixelMacSync
+    info:
+      path: PixelMacSync/Info.plist
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: it.luigi.pixelsync.ios
+        PRODUCT_NAME: PixelMacSync
+        TARGETED_DEVICE_FAMILY: "1"
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: NO
+        INFOPLIST_KEY_CFBundleDisplayName: PixelMacSync
+    dependencies:
+      - sdk: CoreBluetooth.framework
+      - sdk: Security.framework
+      - sdk: CryptoKit.framework
+      - sdk: LocalAuthentication.framework
+      - sdk: UserNotifications.framework
+      - sdk: Network.framework

@@ -16,6 +16,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 : "${ANDROID_HOME:?set ANDROID_HOME to your Android SDK}"
 
 GRADLE="${GRADLE:-gradle}"          # gradle 9.4.1 or ./gradlew
+VARIANT="${VARIANT:-Release}"       # Release | Beta | Debug
+VARIANT_LC="$(echo "$VARIANT" | tr '[:upper:]' '[:lower:]')"
+OUT_NAME="${OUT_NAME:-PixelMacSync-Android.apk}"
 BT_VERSION="${BT_VERSION:-36.1.0}"
 BT="$ANDROID_HOME/build-tools/$BT_VERSION"
 KEYSTORE="${KEYSTORE:-$SCRIPT_DIR/keystore/pixelsync.jks}"
@@ -31,13 +34,16 @@ fi
 echo "sdk.dir=$ANDROID_HOME" > "$SCRIPT_DIR/local.properties"
 
 cd "$SCRIPT_DIR"
-"$GRADLE" :app:assembleRelease --no-daemon --console=plain
+"$GRADLE" ":app:assemble${VARIANT}" --no-daemon --console=plain
 
-UNSIGNED="app/build/outputs/apk/release/app-release-unsigned.apk"
-ALIGNED="app/build/outputs/apk/release/app-release-aligned.apk"
-OUT="$SCRIPT_DIR/PixelMacSync-Android.apk"
+# Release produces an *-unsigned.apk; debug/beta are already signed (debug key),
+# so fall back to the signed artifact and re-sign it with the release keystore.
+SRC_APK="app/build/outputs/apk/${VARIANT_LC}/app-${VARIANT_LC}-unsigned.apk"
+[ -f "$SRC_APK" ] || SRC_APK="app/build/outputs/apk/${VARIANT_LC}/app-${VARIANT_LC}.apk"
+ALIGNED="app/build/outputs/apk/${VARIANT_LC}/app-${VARIANT_LC}-aligned.apk"
+OUT="$SCRIPT_DIR/$OUT_NAME"
 
-"$BT/zipalign" -f -p 4 "$UNSIGNED" "$ALIGNED"
+"$BT/zipalign" -f -p 4 "$SRC_APK" "$ALIGNED"
 "$BT/apksigner" sign \
   --ks "$KEYSTORE" \
   --ks-pass "pass:$KS_PASS" \

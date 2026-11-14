@@ -1,10 +1,50 @@
 # 🍏⇄🤖 PixelMacSync
 
 > **本 Fork 说明（中文）**：这是一个把上游 [`LK024/PixelMacSync`](https://github.com/LK024/PixelMacSync)
-> 移植到 **macOS 12.7 / Intel** 并新增 **电话事件、Root 远程热点、App 图标同步、音乐控件** 等功能的
+> 移植到 **macOS 12.7 / Intel** 并新增 **电话事件、Root 远程热点、App 图标同步、音乐控件、手机生物识别解锁 Mac** 等功能的
 > Fork。功能清单、实现方式、来源与改动、构建/安装、限制与安全说明，请见 **[`FORK.md`](FORK.md)**；
 > 协议见 [`BLE_PROTOCOL.md`](BLE_PROTOCOL.md)，变更见 [`CHANGELOG.md`](CHANGELOG.md)，
 > 测试见 [`TEST_REPORT.md`](TEST_REPORT.md)。
+>
+> **当前版本：2.4.0（2026-11-14）。** 下方 Android 与 macOS 截图均来自本版本正式包实机测试。
+
+## 📦 下载正式版 2.4.0
+
+| Android | macOS |
+| --- | --- |
+| [PixelMacSync-Android-2.4.0.apk](https://github.com/nexor-lab/PixelMacSync/releases/download/v2.4.0/PixelMacSync-Android-2.4.0.apk) | [PixelMacSync-macOS12-2.4.0-Universal.dmg](https://github.com/nexor-lab/PixelMacSync/releases/download/v2.4.0/PixelMacSync-macOS12-2.4.0-Universal.dmg) |
+| Android 15+ · Release 签名 · 版本 2.4.0 (5) | macOS 12.7+ · Universal · 版本 2.4.0 (5) |
+
+## 🚀 2.4.0 本次重点更新
+
+### UI 与交互
+
+- **Android 全新 Pixel / Material You 风格**：动态取色、三栏底部导航、紧凑设备卡片，首页与设置页减少空白和重复说明文字。
+- **通知应用改为直接选择**：点击底部中间的「通知」即可查看应用列表，不再经过额外的“通知与 Mac 同步”页面。
+- **macOS 小窗重排**：压缩无效留白，设备、媒体、设置三栏保持完整展开；高级操作统一左对齐，移除多余折叠区域。
+- **状态体验统一**：Android 深色模式、横竖屏旋转、权限重新授权流程已适配；加载动画在竖屏和横屏下均保持屏幕居中。
+- **Beta 标识清理**：Android 与 macOS 正式包均已移除 Beta 字样，并统一版本号为 `2.4.0 (5)`。
+
+### 重点修复
+
+- **修复远程解锁误报“需重新绑定 Mac”**：恢复生物识别 `CryptoObject` 绑定；临时 Keystore 错误不再清除可信设备。
+- **修复 PAM 公钥不匹配仍尝试解锁**：Mac 检测到公钥不一致时直接阻止解锁并提示重新同步。
+- **修复断开连接状态不同步**：Android 增加断开二级确认，断开后两端连接状态和可信设备列表同步刷新。
+- **修复幽灵设备**：过滤已失效的 BLE 记录，清理重复和不可达的旧设备条目。
+- **修复通知加载页位置错误**：加载动画不再偏到屏幕左侧。
+
+## 📸 2.4.0 实机界面
+
+<p align="center">
+  <img src="docs/screenshots/android-home-2.4.0.png" width="190" alt="Android 2.4.0 首页" />
+  <img src="docs/screenshots/android-notifications-2.4.0.png" width="190" alt="Android 2.4.0 通知应用" />
+  <img src="docs/screenshots/android-settings-2.4.0.png" width="190" alt="Android 2.4.0 设置" />
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/macos-device-2.4.0.png" width="320" alt="macOS 2.4.0 设备页" />
+  <img src="docs/screenshots/macos-settings-2.4.0.png" width="320" alt="macOS 2.4.0 设置页" />
+</p>
 
 ## 适配范围（本 Fork）
 
@@ -13,10 +53,38 @@
 | 组件 | 支持范围 |
 | --- | --- |
 | **macOS** | **macOS 12.7 Monterey 及以上**（Intel x86_64 实测；`ARCH=arm64` / `universal` 亦可构建） |
-| **Android** | **Android 15（API 35）及以上**，`compileSdk/targetSdk 36`（POCO F5 Pro / HyperOS 实测） |
+| **Android** | **Android 15（API 35）及以上**，`compileSdk/targetSdk 36`（test Android phone / HyperOS 实测） |
 | **Root** | 需要（SukiSU / Magisk）以**真实**开关热点；**不再需要 MacroDroid** |
 | **连接** | 仅 BLE 4.2+，不使用 Wi‑Fi / 局域网 / 云 / TCP |
 | **对比上游** | 上游要求 macOS 13+ / Android 16+ 并依赖 MacroDroid，本 Fork 已下移适配并移除该依赖 |
+
+## 🔓 本 Fork 新增：手机生物识别解锁 Mac
+
+> 手机指纹/面容即可是你的“钥匙”：Mac 锁屏后手机收到通知，点按并完成**原生指纹/面容**验证，
+> 手机用 **Android Keystore 私钥**对一次性随机挑战签名，Mac 验签通过后经 **macOS 原生 PAM**
+> 放行解锁。**不存储、不传输、不输入 Mac 密码**，也不模拟键盘。
+
+- **免密解锁**：仅走 BLE 蓝牙本地直连，无云端、无网络。算法为公开成熟的 **ECDSA P-256 + SHA-256**；
+  私钥受指纹保护、永不导出；挑战为 **一次性 32 字节随机数**、有有效期、用后即废，防重放。
+- **抗伪装**：其它蓝牙设备即使知道设备 ID/蓝牙地址，没有手机私钥就**签不出有效签名**，无法解锁；
+  可随时在两端撤销授权。
+- **绑定/解绑**：在安卓「已连接的设备」中**绑定指纹解锁**；绑定需 **Mac 登录密码**（系统授权框，
+  不读取不保存）+ **手机指纹**；**解绑需指纹 + 二次确认**（红色）。
+- **距离自动锁定**：手机远离 Mac（BLE 断开）一段时间后**自动锁定 Mac 屏幕**。
+- **远程唤醒**：靠近重连后**唤醒屏幕**并可用手机指纹解锁。
+- **安全策略开关**（设置 →「远程解锁安全策略」）：`设备远离自动锁定`、`远程唤醒`（关闭后隐藏绑定/
+  解锁相关操作，仅保留断开与删除）。
+- **兼容**：锁屏授权走 macOS 原生 **PAM**，模块为 **Intel + Apple Silicon 通用二进制**；密码解锁
+  路径保持不变，随时可用。
+
+> [!WARNING]
+> ⚠️ **需要一定技术能力，且并非开箱即用。** 要启用「手机生物识别解锁 Mac」等功能，需自行完成下列操作（涉及**系统级改动**，请勿在主力机上贸然操作）：
+> 1. 安装 App：Android 安装 APK；macOS 把 `PixelSync.app` 放入 `/Applications`。
+> 2. 以**管理员权限**安装 PAM 模块：`cd MacOS/pam && ./build.sh && sudo ./install.sh`（会向 `/etc/pam.d/screensaver` 添加 `auth sufficient` 一行，**保留密码回退**；可 `sudo ./uninstall.sh` 回退）。
+> 3. 在安卓端「已连接的设备」完成**绑定**：Mac 输入登录密码 + 手机指纹（密钥各自生成，不共享）。
+> 4. 手机与 Mac 保持 BLE 连接，锁屏后手机点通知 → 指纹 → 免密解锁。
+>
+> 无相关经验者请勿尝试；升级/换机需重装 PAM 并重新配对。
 
 ### PixelSync (macOS) ⇄ MacSync (Android)
 (🇬🇧 Scroll down for the English readme, READ IT!)
@@ -65,7 +133,7 @@ L’obiettivo è offrire sincronizzazione di notifiche, telemetria e controllo r
 
 | Componente     | Requisito minimo (fork)                        |
 | -------------- | ---------------------------------------------- |
-| **Android** | Android 15+ (API 35, target 36) — testato su POCO F5 Pro / HyperOS |
+| **Android** | Android 15+ (API 35, target 36) — testato su test Android phone / HyperOS |
 | **macOS** | macOS 12.7 Monterey+ (Intel x86_64; `ARCH=arm64`/`universal` disponibili) |
 | **Root** | Richiesto (SukiSU/Magisk) per controllare davvero l'Hotspot — **MacroDroid non più necessario** |
 | **Bluetooth** | BLE 4.2+ su entrambi i dispositivi             |
@@ -98,8 +166,9 @@ L’app Android agisce come **Peripheral / GATT Server** ed è ottimizzata per l
 * **Hotspot via root**: esegue realmente `cmd wifi start-softap` / `stop-softap` come root e riporta lo stato reale (nessun intent verso terzi).
 
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/1a3caa7b-d75c-4b5b-8d17-f07829351716" width="300" />
-  <img src="https://github.com/user-attachments/assets/cd07089a-2362-41d9-a85e-0e1a90a205dc" width="300" />
+  <img src="docs/screenshots/android-home-2.4.0.png" width="190" alt="MacSync 2.4.0 已连接首页" />
+  <img src="docs/screenshots/android-notifications-2.4.0.png" width="190" alt="MacSync 2.4.0 通知应用选择" />
+  <img src="docs/screenshots/android-settings-2.4.0.png" width="190" alt="MacSync 2.4.0 设置" />
 </p>
 
 ### 💻 macOS Client — PixelSync
@@ -111,11 +180,8 @@ L’app macOS agisce come **Central / GATT Client** e vive nella Menu Bar.
 * **Configurazione disaccoppiata**: usa un file JSON locale per le regole di mapping delle app.
 
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/4a4723fe-4591-4464-9a53-d1822d0aa46b" />
-</p>
-
-<p align="center">
-  <img src="https://github.com/user-attachments/assets/8387a26b-e0d5-48ef-9cc7-ea965ef9079e" />
+  <img src="docs/screenshots/macos-device-2.4.0.png" width="320" alt="PixelSync 2.4.0 设备状态" />
+  <img src="docs/screenshots/macos-settings-2.4.0.png" width="320" alt="PixelSync 2.4.0 可信设备设置" />
 </p>
 
 ---
@@ -176,7 +242,7 @@ Risposta inline: `REPLY\u001F[id]\u001F[base64(testo)]` → l'Android usa il `Re
 
 Il client macOS mappa i `PackageName` ricevuti su file locali in formato **.icns** situati in `~/Pictures/icone/` tramite un dizionario a tempo di ricerca O(1).
 <p align="center">
-<img width="928" height="515" alt="Screenshot 2026-06-05 alle 11 47 53" src="https://github.com/user-attachments/assets/c8b705e1-d121-4662-9f16-ce8afe234c3d" />
+  <img src="docs/screenshots/macos-device-2.4.0.png" width="420" alt="PixelSync 设备与服务状态" />
 </p>
 
 <br><br><br>
@@ -234,7 +300,7 @@ The goal is to offer notification synchronization, telemetry, and remote control
 
 | Component      | Minimum Requirement (fork)                    |
 | -------------- | --------------------------------------------- |
-| **Android** | Android 15+ (API 35, target 36) — tested on POCO F5 Pro / HyperOS |
+| **Android** | Android 15+ (API 35, target 36) — tested on test Android phone / HyperOS |
 | **macOS** | macOS 12.7 Monterey+ (Intel x86_64; `ARCH=arm64`/`universal` also buildable) |
 | **Root** | Required (SukiSU/Magisk) for real Hotspot control — **MacroDroid no longer needed** |
 | **Bluetooth** | BLE 4.2+ on both devices                      |
@@ -250,6 +316,20 @@ The goal is to offer notification synchronization, telemetry, and remote control
 * 🧹 **Bidirectional Dismiss**: A notification opened or dismissed on one side is synced to the other side, within the limits of the available APIs.
 * 🖱️ **Dynamic App Launching**: The mapping between Android package names and macOS apps/PWAs is configurable and saved in a local JSON file.
 * 🚀 **Remote Hotspot Control (root)**: Turn the phone's hotspot on and off from the Mac for real via root + system command, with real state.
+* 🔓 **Phone biometric unlock of the Mac (new)**: Lock the Mac and unlock it with the phone's fingerprint/face. The phone signs a one-time random challenge with a fingerprint-gated **Android Keystore** key (**ECDSA P-256 / SHA-256**); the Mac verifies it against the paired public key and authorizes the unlock through native macOS **PAM** — no Mac password is stored, transmitted, or typed.
+  * **Spoof-resistant**: another Bluetooth device cannot forge the signature without the phone's private key; the challenge is single-use, expiring, and revocable.
+  * **Bind/unbind** from the Android "connected devices" list: binding requires the **Mac login password** (system dialog) + **phone fingerprint**; unbinding requires a fingerprint and a confirmation.
+  * **Auto-lock when away** (phone out of range) and **remote wake** (wake + unlock on reconnect), controllable via two switches under Settings → *Remote unlock security*.
+
+> [!WARNING]
+> ⚠️ **Requires technical ability — not plug-and-play.** To enable the phone-unlock feature you must perform the setup yourself (these are **system-level changes**; do not try them on a daily driver unless you know what you are doing):
+> 1. Install the apps: Android APK; put `PixelSync.app` into `/Applications`.
+> 2. Install the PAM module **as admin**: `cd MacOS/pam && ./build.sh && sudo ./install.sh` (adds one `auth sufficient` line to `/etc/pam.d/screensaver`, **keeps the password fallback**; revert with `sudo ./uninstall.sh`).
+> 3. **Pair** from the Android "connected devices" list: Mac login password + phone fingerprint (keys are generated per device, never shared).
+> 4. Keep the phone and Mac on BLE; lock the Mac, tap the phone notification, fingerprint → passwordless unlock.
+>
+> Reinstalling/upgrading or switching machines requires reinstalling the PAM module and re-pairing.
+
 
 ---
 
@@ -267,8 +347,9 @@ The Android app acts as the **Peripheral / GATT Server** and is optimized for th
 * **Hotspot via root**: Actually runs `cmd wifi start-softap` / `stop-softap` as root and reports the real state (no third-party intents).
 
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/1a3caa7b-d75c-4b5b-8d17-f07829351716" width="300" />
-  <img src="https://github.com/user-attachments/assets/cd07089a-2362-41d9-a85e-0e1a90a205dc" width="300" />
+  <img src="docs/screenshots/android-home-2.4.0.png" width="190" alt="MacSync 2.4.0 connected home screen" />
+  <img src="docs/screenshots/android-notifications-2.4.0.png" width="190" alt="MacSync 2.4.0 notification app selection" />
+  <img src="docs/screenshots/android-settings-2.4.0.png" width="190" alt="MacSync 2.4.0 settings" />
 </p>
 
 ### 💻 macOS Client — PixelSync
@@ -280,11 +361,8 @@ The macOS app acts as the **Central / GATT Client** and lives in the Menu Bar.
 * **Decoupled Configuration**: Uses a local JSON file for app mapping rules.
 
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/4a4723fe-4591-4464-9a53-d1822d0aa46b" />
-</p>
-
-<p align="center">
-  <img src="https://github.com/user-attachments/assets/8387a26b-e0d5-48ef-9cc7-ea965ef9079e" />
+  <img src="docs/screenshots/macos-device-2.4.0.png" width="320" alt="PixelSync 2.4.0 device status" />
+  <img src="docs/screenshots/macos-settings-2.4.0.png" width="320" alt="PixelSync 2.4.0 trusted device settings" />
 </p>
 
 ---
@@ -349,5 +427,5 @@ Inline reply: `REPLY\u001F[id]\u001F[base64(text)]` → Android injects it via t
 
 The macOS client maps received `PackageNames` to local files in **.icns** format located in `~/Pictures/icone/` using an O(1) lookup dictionary.
 <p align="center">
-<img width="928" height="515" alt="Screenshot 2026-06-05 alle 11 47 53" src="https://github.com/user-attachments/assets/c8b705e1-d121-4662-9f16-ce8afe234c3d" />
+  <img src="docs/screenshots/macos-device-2.4.0.png" width="420" alt="PixelSync device and service status" />
 </p>

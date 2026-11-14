@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- DEBUG-ONLY: exposes a shell-triggerable call simulator (no second phone needed).
+     This file is only merged into debug builds, never release. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application android:name="it.luigi.macsync.DebugApp">
+        <receiver
+            android:name="it.luigi.macsync.CallSimReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="it.luigi.macsync.DEBUG_SIM_CALL" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>

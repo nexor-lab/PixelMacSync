@@ -39,6 +39,11 @@ import androidx.graphics.shapes.RoundedPolygon
 import androidx.graphics.shapes.star
 import androidx.graphics.shapes.toPath
 import androidx.graphics.shapes.CornerRounding
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 
 class MorphShape(
     private val morph: Morph,
@@ -104,17 +109,23 @@ fun MorphingLoadingIndicator() {
 
 data class AppItem(val name: String, val packageName: String, val isEnabled: Boolean, val icon: ImageBitmap)
 
+private object AppSelectionCache {
+    @Volatile
+    var apps: List<AppItem>? = null
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AppSelectionScreen() {
+fun AppSelectionScreen(embedded: Boolean = false) {
     val context = LocalContext.current
     val prefs = context.getSharedPreferences("MacSync_Prefs", Context.MODE_PRIVATE)
 
-    var appList by remember { mutableStateOf<List<AppItem>>(emptyList()) }
-    var isLoading by remember { mutableStateOf(true) }
+    var appList by remember { mutableStateOf(AppSelectionCache.apps.orEmpty()) }
+    var isLoading by remember { mutableStateOf(AppSelectionCache.apps == null) }
     var searchQuery by remember { mutableStateOf("") }
 
     LaunchedEffect(Unit) {
+        if (AppSelectionCache.apps != null) return@LaunchedEffect
         withContext(Dispatchers.IO) {
             val pm = context.packageManager
             val savedApps = prefs.getStringSet("enabled_apps", emptySet()) ?: emptySet()
@@ -123,25 +134,33 @@ fun AppSelectionScreen() {
             intent.addCategory(android.content.Intent.CATEGORY_LAUNCHER)
 
             val resolveInfos = pm.queryIntentActivities(intent, 0)
-
-            val apps = resolveInfos.mapNotNull { resolveInfo ->
-                val appInfo = resolveInfo.activityInfo.applicationInfo
-
-                if (appInfo.packageName == context.packageName) return@mapNotNull null
-
-                val iconBitmap = pm.getApplicationIcon(appInfo).toBitmap(128, 128).asImageBitmap()
-
-                AppItem(
-                    name = pm.getApplicationLabel(appInfo).toString(),
-                    packageName = appInfo.packageName,
-                    isEnabled = savedApps.contains(appInfo.packageName),
-                    icon = iconBitmap
-                )
+            val gate = Semaphore(8)
+            val apps = coroutineScope {
+                resolveInfos.map { resolveInfo ->
+                    async {
+                        gate.withPermit {
+                            val appInfo = resolveInfo.activityInfo.applicationInfo
+                            if (appInfo.packageName == context.packageName) {
+                                null
+                            } else {
+                                AppItem(
+                                    name = pm.getApplicationLabel(appInfo).toString(),
+                                    packageName = appInfo.packageName,
+                                    isEnabled = savedApps.contains(appInfo.packageName),
+                                    icon = pm.getApplicationIcon(appInfo)
+                                        .toBitmap(128, 128)
+                                        .asImageBitmap(),
+                                )
+                            }
+                        }
+                    }
+                }.awaitAll().filterNotNull()
             }
                 .distinctBy { it.packageName }
                 .sortedWith(compareByDescending<AppItem> { it.isEnabled }.thenBy { it.name })
 
             withContext(Dispatchers.Main) {
+                AppSelectionCache.apps = apps
                 appList = apps
                 isLoading = false
             }
@@ -154,86 +173,116 @@ fun AppSelectionScreen() {
         appList.filter { it.name.contains(searchQuery, ignoreCase = true) }
     }
 
-    Scaffold(contentWindowInsets = WindowInsets(0, 0, 0, 0),
-        topBar = {
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                // Titolo centrale in puro stile widget di Android Stock
-                Text(
-                    text = stringResource(R.string.app_notifications_title),
-                    style = MaterialTheme.typography.titleLarge,
-                    modifier = Modifier.padding(bottom = 12.dp)
-                )
-
-                // SearchBar "Pillola" pulita e senza parentesi graffe finali
-                TextField(
-                    value = searchQuery,
-                    onValueChange = { searchQuery = it },
-                    placeholder = { Text(stringResource(R.string.search)) },
-                    leadingIcon = {
-                        Icon(Icons.Default.Search, contentDescription = stringResource(R.string.search))
-                    },
-                    trailingIcon = {
-                        if (searchQuery.isNotEmpty()) {
-                            IconButton(onClick = { searchQuery = "" }) {
-                                Icon(Icons.Default.Clear, contentDescription = stringResource(R.string.clear))
-                            }
-                        }
-                    },
-                    shape = RoundedCornerShape(50),
-                    colors = TextFieldDefaults.colors(
-                        focusedIndicatorColor = androidx.compose.ui.graphics.Color.Transparent,
-                        unfocusedIndicatorColor = androidx.compose.ui.graphics.Color.Transparent,
-                        disabledIndicatorColor = androidx.compose.ui.graphics.Color.Transparent
-                    ),
-                    singleLine = true,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp) // <-- Primo step: i lati
-                        .padding(bottom = 8.dp)      // <-- Secondo step: la base
-                )
-            }
+    val onToggle: (AppItem, Boolean) -> Unit = { appItem, isChecked ->
+        appList = appList.map {
+            if (it.packageName == appItem.packageName) it.copy(isEnabled = isChecked) else it
         }
-    ) { innerPadding ->
-        if (isLoading) {
-            Box(
+        val editor = prefs.edit()
+        val currentSaved = prefs.getStringSet("enabled_apps", mutableSetOf())?.toMutableSet()
+            ?: mutableSetOf()
+        if (isChecked) currentSaved.add(appItem.packageName)
+        else currentSaved.remove(appItem.packageName)
+        editor.putStringSet("enabled_apps", currentSaved)
+        editor.apply()
+    }
+
+    if (embedded) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            AppSelectionHeader(searchQuery) { searchQuery = it }
+            AppSelectionList(
+                items = filteredList,
+                isLoading = isLoading,
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+                onToggle = onToggle,
+            )
+        }
+    } else {
+        Scaffold(
+            contentWindowInsets = WindowInsets(0, 0, 0, 0),
+            topBar = { AppSelectionHeader(searchQuery) { searchQuery = it } },
+        ) { innerPadding ->
+            AppSelectionList(
+                items = filteredList,
+                isLoading = isLoading,
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(innerPadding),
-                contentAlignment = Alignment.Center
-            ) {
-                MorphingLoadingIndicator()
-            }
-        } else {
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(innerPadding),
-            ) {
-                items(filteredList, key = { it.packageName }) { appItem ->
-                    AppRow(appItem = appItem) { isChecked ->
-                        appList = appList.map {
-                            if (it.packageName == appItem.packageName) it.copy(isEnabled = isChecked) else it
-                        }
+                onToggle = onToggle,
+            )
+        }
+    }
+}
 
-                        val editor = prefs.edit()
-                        val currentSaved = prefs.getStringSet("enabled_apps", mutableSetOf())?.toMutableSet() ?: mutableSetOf()
-
-                        if (isChecked) {
-                            currentSaved.add(appItem.packageName)
-                        } else {
-                            currentSaved.remove(appItem.packageName)
-                        }
-
-                        editor.putStringSet("enabled_apps", currentSaved)
-                        editor.apply()
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AppSelectionHeader(
+    searchQuery: String,
+    onSearchChange: (String) -> Unit,
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(
+            text = stringResource(R.string.app_notifications_title),
+            style = MaterialTheme.typography.headlineMedium,
+            fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+            modifier = Modifier.padding(horizontal = 24.dp, vertical = 18.dp),
+        )
+        TextField(
+            value = searchQuery,
+            onValueChange = onSearchChange,
+            placeholder = { Text(stringResource(R.string.search)) },
+            leadingIcon = {
+                Icon(Icons.Default.Search, contentDescription = stringResource(R.string.search))
+            },
+            trailingIcon = {
+                if (searchQuery.isNotEmpty()) {
+                    IconButton(onClick = { onSearchChange("") }) {
+                        Icon(Icons.Default.Clear, contentDescription = stringResource(R.string.clear))
                     }
                 }
-                item {
-                    Spacer(modifier = Modifier.windowInsetsBottomHeight(WindowInsets.navigationBars))
+            },
+            shape = RoundedCornerShape(50),
+            colors = TextFieldDefaults.colors(
+                focusedIndicatorColor = androidx.compose.ui.graphics.Color.Transparent,
+                unfocusedIndicatorColor = androidx.compose.ui.graphics.Color.Transparent,
+                disabledIndicatorColor = androidx.compose.ui.graphics.Color.Transparent,
+            ),
+            singleLine = true,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+                .padding(bottom = 8.dp),
+        )
+    }
+}
+
+@Composable
+private fun AppSelectionList(
+    items: List<AppItem>,
+    isLoading: Boolean,
+    modifier: Modifier = Modifier,
+    onToggle: (AppItem, Boolean) -> Unit,
+) {
+    if (isLoading) {
+        Box(
+            modifier = modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center,
+        ) {
+            MorphingLoadingIndicator()
+        }
+    } else {
+        LazyColumn(modifier = modifier) {
+            items(items, key = { it.packageName }) { appItem ->
+                AppRow(appItem = appItem) { isChecked ->
+                    onToggle(appItem, isChecked)
                 }
+            }
+            item {
+                Spacer(modifier = Modifier.windowInsetsBottomHeight(WindowInsets.navigationBars))
             }
         }
     }
@@ -261,7 +310,6 @@ fun AppRow(appItem: AppItem, onCheckedChange: (Boolean) -> Unit) {
 
         Column(modifier = Modifier.weight(1f)) {
             Text(text = appItem.name, style = MaterialTheme.typography.bodyLarge)
-            Text(text = appItem.packageName, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
 
         Switch(

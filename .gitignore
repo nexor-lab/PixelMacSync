@@ -11,6 +11,7 @@ HUMAN_INTERVENTION_REQUIRED
 
 # Build artifacts
 Android/build/
+Android/.kotlin/
 Android/app/build/
 Android/notifytest/build/
 Android/local.properties
@@ -18,7 +19,41 @@ Android/keystore/
 Android/*.apk
 MacOS/build/
 MacOS/*.dmg
+MacOS/pam/*.so
 *.apk
 *.idsig
 *.dmg
 *.xcuserstate
+
+# --- Local OpenCode workspace (LOCAL ONLY, never commit) ---
+# NOTE: beta/, demo/, release/, .opencode/ live OUTSIDE this repo (in the
+# workspace root) and therefore cannot be tracked by Git. The patterns below
+# are only a safety net if such directories ever appear at the repo ROOT, so
+# they are anchored ("/beta/") and never match e.g. Android/app/src/beta/.
+/.opencode/
+/beta/
+/demo/
+/release/
+/local-workspace/
+
+# Local logs / test data
+*.log
+evidence/
+test-data/
+local-test-data/
+/scripts/
+
+# Secrets (never commit)
+.env
+.env.*
+*.pem
+*.p12
+*.key
+*.keystore
+*.dSYM.zip
+
+# iOS build artifacts
+iOS/build/
+iOS/build-device/
+iOS/build-sim/
+iOS/DerivedData/

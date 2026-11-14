@@ -1,5 +1,70 @@
 # CHANGELOG.md
 
+## [Unreleased] — Phone biometric unlock of the Mac (2026-10-06)
+
+Lock the Mac and unlock it with the phone's fingerprint/face — passwordless, no password
+stored/typed, no keyboard simulation.
+
+### Added
+
+- **Phone unlock**: lock screen → Android notification → tap → **native BiometricPrompt** →
+  the phone signs a one-time random challenge with a fingerprint-gated **Android Keystore**
+  **ECDSA P-256 / SHA-256** key → BLE → Mac verifies against the paired public key → the Mac
+  authorizes the unlock through native **macOS PAM**. Verified end-to-end on macOS 12.7
+  (Intel): phone fingerprint → auto-unlock, no password.
+- **Pairing/binding** from the Android "connected devices" list (phone-initiated): Mac
+  authorizes with the **login password** (system dialog, never read/stored) and the phone
+  authorizes with a **fingerprint**. Unbind requires a fingerprint + confirmation (red).
+- **Spoof resistance**: a rogue BLE device cannot forge the signature without the phone's
+  private key (never exported); challenges are 32-byte random, single-use, expiring; devices
+  are revocable from both ends.
+- **Auto-lock when away**: lock the Mac when the phone moves away (BLE link lost for a grace
+  period). **Remote wake**: on reconnect, wake the display and allow fingerprint unlock.
+- **Remote unlock security policy** (Android Settings): `auto-lock when away` and
+  `remote wake` switches. Turning *remote wake* off hides the bind/unbind/wake controls in the
+  device list (keeping disconnect/remove).
+- **About**: a new "Remote unlock security" section describing the transport (BLE-only) and
+  the security method.
+
+### Notes
+
+- Lock-screen authorization uses **PAM** (`/etc/pam.d/screensaver`) with a small hardened,
+  signed **universal** (x86_64 + arm64) module; the older SecurityAgent Authorization-plugin
+  path is not used by the lock screen on this macOS.
+- No Mac password is ever stored, transmitted, or typed; the password path is unchanged.
+
+
+## [v2.3-beta.1] — 2026-10-04
+
+Beta optimization + control-plane feature set (GitHub prerelease “v2.3-beta.1（优化版）”).
+
+### Fixed
+
+- **Direct call with privilege**: with root/Shizuku available, a Mac dial now places the
+  call directly (`ACTION_CALL`, no dialer detour). The phone-side “直接拨出” switch is now
+  **on by default**; without privilege it still falls back to the dialer.
+- **Mac dialing country code**: `+86` (default) dials the number as a **local** number
+  (no international prefix); other selected country codes are prepended; a manually typed
+  leading `+` is treated as a full international number.
+- **“远程拨号” switch is now enforced**: when off, the phone rejects `DIAL` with
+  `DIAL_RESULT disabled` and no call is placed. The state is reported to the Mac (telemetry
+  9th field), which disables its dial button and shows a hint.
+
+### Added / changed
+
+- **Session handshake** (`HELLO` / `SESSION_READY`) fixes the false “Mac 已连接” state
+  (BUG-001); legacy v2.2 clients keep working via a command fallback.
+- **Idempotent hotspot control** from real system state (`ALREADY_ON` / `ALREADY_OFF`)
+  removes the spurious “Error” (BUG-002).
+- **Call control** (answer / reject / end / mute) over BLE, **remote dialing**, **encrypted
+  contacts**, **Multi-Mac Phase 1**, debug/beta/release variants, and a size optimization
+  pass (Beta APK R8-minified, 60 MB → 2.6 MB; single **Universal** macOS package).
+- **EXPERIMENTAL — “Mac 本机” call audio (HFP)**: the Mac acts as a Bluetooth hands-free
+  unit (`IOBluetoothHandsFreeDevice`). It requires Bluetooth-Classic pairing, which **can
+  break the BLE link** on the Intel/Broadcom baseline (ADR-028); SCO audio is unverified and
+  may double-play (ADR-026). The UI now labels it **“Mac 本机（实验性）”** and shows a
+  warning; the default call method remains **“手机”**.
+
 ## [android-auth-method + about] — 2026-10-03
 
 Android app: choose how privileged commands run (root or Shizuku), plus an
@@ -34,7 +99,7 @@ About section and a small easter egg. UI, protocol and macOS side untouched.
   content and the card frame animate together (no rubber-band / residual height).
 - Light/dark supported (Material3 theme colors only).
 
-### Verification (real POCO F5 Pro)
+### Verification (real test Android phone)
 
 - Root: status **Available**.
 - Shizuku: permission granted → status **Granted**.
@@ -85,7 +150,7 @@ Enable the app in PixelSync's notification list to have it forwarded.
   inline-reply testing).
 - `POST` log line now includes `canReply=`.
 
-### Verification (real POCO F5 Pro + real Mac, BLE)
+### Verification (real test Android phone + real Mac, BLE)
 
 - Chat notification (`replyable=1`): Mac inline reply → Android `RemoteInput` →
   test app received it; `REPLY_RESULT ok`.
@@ -245,7 +310,7 @@ control), BLE-only, event-driven, no polling.
 - `/Applications/PixelSync.app` re-signed with the Apple Development cert
   (local Apple Development certificate, secure timestamp) **PASS**. The public
   release package is ad-hoc signed instead (no personal certificate).
-- **Real-device music round-trip PASS** (POCO F5 Pro / NetEase Cloud Music):
+- **Real-device music round-trip PASS** (test Android phone / NetEase Cloud Music):
   metadata (`playing - 一封家书 / 石进`), covers cached at
   `~/Pictures/MacSyncCovers/*.jpg` (~9–11 KB), and Mac-driven
   play/pause/next/prev/seek all observed on the phone via
@@ -308,7 +373,7 @@ Branch: **`macos12-port`**. All changes are on top of the untouched upstream com
 
 ## [real-device-validation] — 2026-09-30
 
-Real-device validation performed with a POCO F5 Pro (Android 15 / API 35 /
+Real-device validation performed with a test Android phone (Android 15 / API 35 /
 HyperOS 3.0). Result: notification sync, screen-off delivery, Bluetooth OFF/ON
 recovery and app-restart recovery all **PASS**; incoming-call and Mac sleep/wake
 remain **NOT TESTED**. Full evidence in TEST_REPORT.md.

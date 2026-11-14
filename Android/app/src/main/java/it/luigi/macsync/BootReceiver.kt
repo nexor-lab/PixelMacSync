@@ -23,6 +23,10 @@ class BootReceiver : BroadcastReceiver() {
             Intent.ACTION_BOOT_COMPLETED,
             Intent.ACTION_MY_PACKAGE_REPLACED,
             "android.intent.action.QUICKBOOT_POWERON" -> {
+                if (!hasBlePermissions(context)) {
+                    Log.w("MacSync", "Avvio FGS ignorato: permessi Bluetooth mancanti.")
+                    return
+                }
                 val prefs = context.getSharedPreferences("MacSync_Prefs", Context.MODE_PRIVATE)
                 if (!prefs.getBoolean("auto_start", true)) {
                     Log.d("MacSync", "Avvio automatico disabilitato dall'utente (${intent.action}).")

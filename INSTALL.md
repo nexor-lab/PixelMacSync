@@ -1,7 +1,7 @@
 # INSTALL.md — installing PixelMacSync
 
 > The final communication path is **BLE GATT only**:
-> `POCO F5 Pro ⇄ (Bluetooth LE) ⇄ MacBook Pro 2015`.
+> `test Android phone ⇄ (Bluetooth LE) ⇄ MacBook Pro 2015`.
 > USB / ADB / Wi-Fi / hotspot / LAN / Internet are **not** used at runtime.
 
 ---
@@ -81,7 +81,7 @@ xattr -dr com.apple.quarantine /Applications/PixelSync.app
 
 ---
 
-## HyperOS / MIUI notes (POCO F5 Pro, verified)
+## HyperOS / MIUI notes (test Android phone, verified)
 
 - **Installing via ADB**: HyperOS shows a **"USB安装提示"** dialog per install
   ("正在通过USB安装此应用，是否继续？"). It auto-rejects after a countdown, so tap

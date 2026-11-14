@@ -17,13 +17,21 @@ android {
         // minimum supported. All APIs used are available on API 35.
         minSdk = 35
         targetSdk = 36
-        versionCode = 3
-        versionName = "2.2"
+        versionCode = 5
+        versionName = "2.4.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     buildTypes {
+        debug {
+            // Clearly separate the test build from the release app: it installs
+            // side by side (separate package) and is visibly marked as DEBUG.
+            // This is the ONLY variant with on-device diagnostics (see Diagnostics
+            // / DebugJournal); release must never store that content.
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-debug"
+        }
         release {
             isMinifyEnabled = true // Attiva R8 per offuscare e rimuovere il codice morto
             isShrinkResources = true // Rimuove file grafici e XML inutilizzati
@@ -40,6 +48,7 @@ android {
     buildFeatures {
         compose = true
         aidl = true
+        buildConfig = true
     }
 }
 
@@ -69,4 +78,6 @@ dependencies {
     // Shizuku: privileged shell (hotspot, ecc.) senza root
     implementation("dev.rikka.shizuku:api:13.1.5")
     implementation("dev.rikka.shizuku:provider:13.1.5")
+    // Native biometric prompt (fingerprint / face) for Mac unlock
+    implementation("androidx.biometric:biometric:1.1.0")
 }

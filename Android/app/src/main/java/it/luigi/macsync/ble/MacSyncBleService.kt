@@ -9,6 +9,8 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.PackageManager
+import android.Manifest
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
@@ -16,6 +18,14 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import it.luigi.macsync.ble.BLEAdvertiser
 import it.luigi.macsync.ble.GattServerManager
+import it.luigi.macsync.unlock.PairingController
+import it.luigi.macsync.unlock.PairingNotification
+
+internal fun hasBlePermissions(context: Context): Boolean =
+    context.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) ==
+        PackageManager.PERMISSION_GRANTED &&
+        context.checkSelfPermission(Manifest.permission.BLUETOOTH_ADVERTISE) ==
+        PackageManager.PERMISSION_GRANTED
 
 /**
  * Foreground service that owns the BLE GATT server + advertiser.
@@ -30,6 +40,14 @@ class MacSyncBleService : Service() {
     private lateinit var bleAdvertiser: BLEAdvertiser
 
     private val channelId = "macsync_bg_channel"
+
+    private val userPresentReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == Intent.ACTION_USER_PRESENT) {
+                PairingController.retryPendingBegin(this@MacSyncBleService)
+            }
+        }
+    }
 
     private val bluetoothStateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -55,20 +73,45 @@ class MacSyncBleService : Service() {
     override fun onCreate() {
         super.onCreate()
 
+        // The service is launched with startForegroundService(). It must enter
+        // the foreground before doing any permission checks, otherwise Android
+        // kills the process with ForegroundServiceDidNotStartInTimeException
+        // when the user revokes Bluetooth access while the service is sticky.
         createChannel()
         startForegroundCompat()
+
+        if (!hasBlePermissions(this)) {
+            Log.w("MacSync", "BLE service stopped: Bluetooth permissions are not granted")
+            stopSelf()
+            return
+        }
 
         gattServerManager = GattServerManager.getInstance(this)
         bleAdvertiser = BLEAdvertiser(this)
 
         val filter = IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED)
         registerReceiver(bluetoothStateReceiver, filter)
+        registerReceiver(userPresentReceiver, IntentFilter(Intent.ACTION_USER_PRESENT))
+
+        // Restore a pairing prompt that outlived the process; clear a stale one.
+        PairingController.restore(this)
+        PairingNotification.dismissUnlockRequired(this)
+        PairingController.current()?.let { PairingNotification.post(this, it.macName) }
+            ?: PairingNotification.dismiss(this)
 
         ensureBleRunning()
+        PairingController.retryPendingBegin(this)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         Log.d("MacSync", "onStartCommand (startId=$startId, sticky)")
+        if (!hasBlePermissions(this)) {
+            Log.w("MacSync", "BLE service start skipped: permissions missing")
+            createChannel()
+            startForegroundCompat()
+            stopSelf()
+            return START_NOT_STICKY
+        }
         // Re-assert foreground + make sure BLE is up (idempotent).
         startForegroundCompat()
         ensureBleRunning()
@@ -85,9 +128,10 @@ class MacSyncBleService : Service() {
     }
 
     override fun onDestroy() {
+        try { unregisterReceiver(userPresentReceiver) } catch (_: Exception) {}
         try { unregisterReceiver(bluetoothStateReceiver) } catch (_: Exception) {}
-        gattServerManager.stopServer()
-        bleAdvertiser.stopAdvertising()
+        if (::gattServerManager.isInitialized) gattServerManager.stopServer()
+        if (::bleAdvertiser.isInitialized) bleAdvertiser.stopAdvertising()
         Log.d("MacSync", "MacSyncBleService distrutto.")
         super.onDestroy()
     }
