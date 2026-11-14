@@ -8,6 +8,44 @@
 >
 > **当前版本：2.4.0（2026-11-14）。** 下方 Android 与 macOS 截图均来自本版本正式包实机测试。
 
+## 📦 下载正式版 2.4.0
+
+| Android | macOS |
+| --- | --- |
+| [PixelMacSync-Android-2.4.0.apk](https://github.com/nexor-lab/PixelMacSync/releases/download/v2.4.0/PixelMacSync-Android-2.4.0.apk) | [PixelMacSync-macOS12-2.4.0-Universal.dmg](https://github.com/nexor-lab/PixelMacSync/releases/download/v2.4.0/PixelMacSync-macOS12-2.4.0-Universal.dmg) |
+| Android 15+ · Release 签名 · 版本 2.4.0 (5) | macOS 12.7+ · Universal · 版本 2.4.0 (5) |
+
+## 🚀 2.4.0 本次重点更新
+
+### UI 与交互
+
+- **Android 全新 Pixel / Material You 风格**：动态取色、三栏底部导航、紧凑设备卡片，首页与设置页减少空白和重复说明文字。
+- **通知应用改为直接选择**：点击底部中间的「通知」即可查看应用列表，不再经过额外的“通知与 Mac 同步”页面。
+- **macOS 小窗重排**：压缩无效留白，设备、媒体、设置三栏保持完整展开；高级操作统一左对齐，移除多余折叠区域。
+- **状态体验统一**：Android 深色模式、横竖屏旋转、权限重新授权流程已适配；加载动画在竖屏和横屏下均保持屏幕居中。
+- **Beta 标识清理**：Android 与 macOS 正式包均已移除 Beta 字样，并统一版本号为 `2.4.0 (5)`。
+
+### 重点修复
+
+- **修复远程解锁误报“需重新绑定 Mac”**：恢复生物识别 `CryptoObject` 绑定；临时 Keystore 错误不再清除可信设备。
+- **修复 PAM 公钥不匹配仍尝试解锁**：Mac 检测到公钥不一致时直接阻止解锁并提示重新同步。
+- **修复断开连接状态不同步**：Android 增加断开二级确认，断开后两端连接状态和可信设备列表同步刷新。
+- **修复幽灵设备**：过滤已失效的 BLE 记录，清理重复和不可达的旧设备条目。
+- **修复通知加载页位置错误**：加载动画不再偏到屏幕左侧。
+
+## 📸 2.4.0 实机界面
+
+<p align="center">
+  <img src="docs/screenshots/android-home-2.4.0.png" width="190" alt="Android 2.4.0 首页" />
+  <img src="docs/screenshots/android-notifications-2.4.0.png" width="190" alt="Android 2.4.0 通知应用" />
+  <img src="docs/screenshots/android-settings-2.4.0.png" width="190" alt="Android 2.4.0 设置" />
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/macos-device-2.4.0.png" width="320" alt="macOS 2.4.0 设备页" />
+  <img src="docs/screenshots/macos-settings-2.4.0.png" width="320" alt="macOS 2.4.0 设置页" />
+</p>
+
 ## 适配范围（本 Fork）
 
 > 中文速览。下方意大利语 / 英语正文为上游原文，其中的旧要求（macOS 13+ / Android 16+ / 依赖 MacroDroid）已在本 Fork 更正。
